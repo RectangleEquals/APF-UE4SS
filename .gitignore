@@ -1,0 +1,7 @@
+docs/.claude/
+docs/Architecture/InitialDesign.md
+docs/Implementation/
+*.zip
+*.rar
+*.7z
+*.tar
