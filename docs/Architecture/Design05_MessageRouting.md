@@ -66,16 +66,21 @@ When the AP server sends items to the player:
     "item_name": "Speed Boots",
     "action": "MyUserObj.UnlockTechnology",
     "args": [
-      { "name": "id", "value": "6942100" },
-      { "name": "tier", "value": 2 }
+      { "name": "id", "type": "string", "value": "6942100" },
+      { "name": "tier", "type": "number", "value": 2 },
+      { "name": "position", "type": "property", "value": "MyPlayerObj.player_pos" }
     ]
   }
 }
 ```
 
-### Argument Resolution
+### Argument Resolution (Two-Stage)
 
-Before sending, the framework resolves special variables:
+Arguments are resolved at **two different stages**:
+
+**Stage 1: Framework-Resolved (before IPC send)**
+
+These special variables are replaced by the framework before sending:
 
 | Variable | Resolution |
 |----------|------------|
@@ -83,7 +88,15 @@ Before sending, the framework resolves special variables:
 | `<GET_ITEM_NAME>` | Item name from manifest |
 | `<GET_PROGRESSION_COUNT>` | Current tier (tracked by framework) |
 
-Property-type arguments remain as paths — APClientLib resolves them at execution time.
+**Stage 2: Client-Resolved (at execution time)**
+
+Arguments with `"type": "property"` are **NOT** resolved by the framework. APClientLib resolves them from the mod's Lua state at action execution time:
+
+```json
+{ "name": "position", "type": "property", "value": "MyPlayerObj.player_pos" }
+```
+
+This enables dynamic values (player position, game state) that may change between item receipt and action execution.
 
 ---
 

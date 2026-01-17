@@ -84,14 +84,46 @@ Instructs client to execute a capability action.
     "item_name": "Speed Boots",
     "action": "MyUserObj.UnlockTechnology",
     "args": [
-      { "name": "id", "value": "6942100" },
-      { "name": "tier", "value": 2 }
+      { "name": "id", "type": "string", "value": "6942100" },
+      { "name": "tier", "type": "number", "value": 2 },
+      { "name": "position", "type": "property", "value": "MyPlayerObj.player_pos" }
     ]
   }
 }
 ```
 
-**Args are pre-resolved:** Special variables like `<GET_ITEM_ID>` are already replaced.
+#### Argument Resolution
+
+Arguments are resolved at **two different stages**:
+
+**Framework-Resolved (before IPC send):**
+
+These special variables are replaced by the framework before sending the `execute_action` message:
+
+| Variable | Resolved To |
+|----------|-------------|
+| `<GET_ITEM_ID>` | The assigned item ID (e.g., `6942100`) |
+| `<GET_ITEM_NAME>` | The item name (e.g., `"Speed Boots"`) |
+| `<GET_PROGRESSION_COUNT>` | Current progression tier (e.g., `2`) |
+| `<GET_LOCATION_ID>` | The assigned location ID |
+| `<GET_LOCATION_NAME>` | The location name |
+
+By the time the client receives the message, these are already concrete values.
+
+**Client-Resolved (at execution time):**
+
+Arguments with `"type": "property"` are **NOT** resolved by the framework. The `value` field contains a Lua property path that APClientLib must resolve from the mod's Lua state at the moment of action execution:
+
+```json
+{ "name": "position", "type": "property", "value": "MyPlayerObj.player_pos" }
+```
+
+This allows dynamic values that may change between when the item is received and when the action executes (e.g., player position, current health, game state).
+
+**Why the distinction?**
+- Framework-resolved variables are known at message creation time
+- Property-resolved variables must be evaluated in the client's Lua context
+- The framework has no access to the client mod's Lua state
 
 ### lifecycle
 

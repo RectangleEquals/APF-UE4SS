@@ -27,6 +27,7 @@ Rather than predetermining what can be shuffled, the framework empowers the modd
 | [Design07_APWorldIntegration.md](Design07_APWorldIntegration.md) | Capability config distribution, YAML configuration, and AP World reading |
 | [Design08_ErrorHandling.md](Design08_ErrorHandling.md) | Error response protocol, ERROR_STATE behavior, and recovery commands |
 | [Design09_Dependencies.md](Design09_Dependencies.md) | Full dependency tree, CMake configuration, and folder structures |
+| [Design10_Threading.md](Design10_Threading.md) | Thread model, synchronization primitives, and race condition prevention |
 | [InitialDesign.md](InitialDesign.md) | Original comprehensive design document with all details |
 
 ---
@@ -102,6 +103,7 @@ Mods declare capabilities in their `manifest.json`:
   "mod_id": "myname.palworld.speedmod",
   "name": "Speed Mod",
   "version": "1.0.0",
+  "enabled": true,
   "capabilities": {
     "locations": [
       { "name": "Defeat Forest Boss", "amount": 1, "unique": true }
@@ -118,6 +120,8 @@ Mods declare capabilities in their `manifest.json`:
   }
 }
 ```
+
+**Note:** Set `"enabled": false` to exclude a mod from AP Framework without deleting its manifest.
 
 **See:** [Design02_CapabilitiesSystem.md](Design02_CapabilitiesSystem.md) for full schema and semantics.
 
@@ -226,6 +230,7 @@ Recovery via priority client commands:
 |---------|------------|
 | **Capabilities** | Locations (events mod detects) + Items (things mod can apply) |
 | **Manifest** | `manifest.json` in mod folder declares capabilities |
+| **Enabled** | Set `"enabled": false` in manifest to exclude mod from framework |
 | **Unique** | If `unique: true`, no other mod can claim same name |
 | **Amount (Location)** | Generates N separate LocationIDs |
 | **Amount (Item)** | Progression tiers or max receipt count |
@@ -233,6 +238,7 @@ Recovery via priority client commands:
 | **Checksum** | SHA-1 of (mod IDs + versions + capabilities hash + game + slot) |
 | **Registration** | Explicit `APClientLib.register()` after `lifecycle` message |
 | **Priority Client** | `archipelago.<game>.*` pattern, no capabilities, elevated privileges |
+| **Conflict Resolution** | Use `"enabled": false` in manifest (UE4SS disable doesn't work) |
 
 ---
 

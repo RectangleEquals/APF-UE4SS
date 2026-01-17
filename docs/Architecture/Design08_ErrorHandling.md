@@ -75,11 +75,13 @@ Framework pauses all execution until recovery command received.
 | `CONFIG_INVALID` | fatal | Configuration file invalid or missing |
 | `IPC_FAILED` | fatal | IPC server failed to start |
 | `CONFLICT_DETECTED` | fatal | Capability conflicts between mods |
-| `REGISTRATION_TIMEOUT` | error | Mods didn't register in time |
+| `REGISTRATION_TIMEOUT` | fatal | Mods didn't register in time |
 | `CONNECTION_FAILED` | error | AP server connection failed |
 | `SYNC_FAILED` | error | State synchronization failed |
-| `ACTION_FAILED` | warning | Action execution failed |
-| `PROPERTY_FAILED` | warning | Property resolution failed |
+| `CHECKSUM_MISMATCH` | fatal | Mod ecosystem changed since generation |
+| `ACTION_FAILED` | fatal | Action execution failed or returned error |
+| `ACTION_TIMEOUT` | fatal | Mod didn't send action_result in time |
+| `PROPERTY_FAILED` | fatal | Property resolution failed during action |
 | `MESSAGE_DROPPED` | warning | Message queue overflow |
 
 ### Severity Levels
@@ -90,6 +92,8 @@ Framework pauses all execution until recovery command received.
 | `error` | Enter ERROR_STATE after retries exhausted |
 | `warning` | Log and continue, forward to priority clients |
 | `info` | Log only |
+
+**Note:** Action-related errors (`ACTION_FAILED`, `ACTION_TIMEOUT`, `PROPERTY_FAILED`) are now `fatal` severity. When a mod fails to fulfill its capability contract, the framework enters ERROR_STATE to prevent state desynchronization. The AP Server remains the source of truth, so a resync or restart can recover the session.
 
 ---
 
@@ -249,6 +253,95 @@ Attempt to reconnect to AP server only.
 
 ---
 
+## Action Execution Timeout
+
+When the framework sends `execute_action` to a client mod, it expects an `action_result` response within the configured timeout (default: 5 seconds).
+
+### Timeout Flow
+
+```
+Framework                              Client Mod
+    │                                      │
+    │──── execute_action ────────────────►│
+    │                                      │
+    │     (timeout timer starts)           │
+    │                                      │
+    │     ... waiting for response ...     │
+    │                                      │
+    │     (timeout expires)                │
+    │                                      │
+    ▼                                      │
+ERROR_STATE                                │
+```
+
+### What Happens on Timeout
+
+1. **Framework logs the timeout:**
+   ```
+   [ERROR] [APManager] Action timeout for item 6942100 (Speed Boots)
+     Mod: mymod.palworld.items
+     Action: MyUserObj.UnlockTechnology
+     Timeout: 5000ms
+   ```
+
+2. **Framework enters ERROR_STATE:**
+   - All processing stops
+   - IPC server remains active for recovery commands
+   - Priority clients receive error notification
+
+3. **Error forwarded to priority clients:**
+   ```json
+   {
+     "type": "error",
+     "source": "framework",
+     "target": "priority",
+     "payload": {
+       "code": "ACTION_TIMEOUT",
+       "message": "Mod failed to respond within timeout",
+       "context": {
+         "mod_id": "mymod.palworld.items",
+         "item_id": 6942100,
+         "item_name": "Speed Boots",
+         "timeout_ms": 5000
+       }
+     }
+   }
+   ```
+
+### Why No Retry?
+
+The framework does **NOT** retry failed actions because:
+
+1. **State Corruption Risk:** Retrying an action that partially executed could duplicate effects (e.g., giving an item twice, then game auto-saves)
+
+2. **Source of Truth:** The AP Server is the source of truth for item state. A resync will reconcile properly.
+
+3. **Contract Violation:** A timeout indicates the mod failed its capability contract. This requires investigation, not silent retry.
+
+### Recovery
+
+After an action timeout:
+
+1. **CMD_RESYNC:** Re-register mods, reconnect, and resync from AP Server
+   - Framework will re-receive items from the current index
+   - Mod has another chance to execute actions
+
+2. **CMD_RESTART:** Full re-initialization if resync isn't sufficient
+
+### Configuration
+
+```json
+{
+  "timeouts": {
+    "action_execution_ms": 5000
+  }
+}
+```
+
+See [Design10_Threading.md](Design10_Threading.md) for threading implementation details.
+
+---
+
 ## State Persistence
 
 The framework persists session progress to enable recovery.
@@ -291,9 +384,32 @@ Stored in `ue4ss/Mods/APFrameworkMod/session_state.json`:
    - Mark checked locations as complete
    - Request only items after index from server
 4. If checksums don't match:
-   - Warn player
-   - Start fresh (items re-sent from index 0)
-   - AP Server is source of truth anyway
+   - Enter ERROR_STATE with `CHECKSUM_MISMATCH` error
+   - Display clear error message to player
+   - Do NOT proceed with session
+
+### Checksum Mismatch (User Error)
+
+A checksum mismatch indicates the mod ecosystem has changed since the multiworld was generated. This is a **user error** that must be resolved before the session can continue.
+
+**Common Causes:**
+- Mod was updated to a new version
+- Mod was added or removed
+- Mod's capabilities changed
+- Different game/slot name
+
+**Resolution:**
+1. **Restore original mods:** Downgrade/upgrade mods to match generation
+2. **Regenerate multiworld:** If mod changes are intentional, regenerate the multiworld with the new mod ecosystem
+
+**Why Not Start Fresh?**
+
+The framework does NOT silently restart from index 0 on checksum mismatch because:
+- Item/location IDs may have changed between versions
+- The AP Server has mappings based on the original generation
+- Proceeding would cause silent data corruption or crashes
+
+The checksum exists specifically to catch this user error early.
 
 ---
 
@@ -301,14 +417,17 @@ Stored in `ue4ss/Mods/APFrameworkMod/session_state.json`:
 
 ### Types of Failures
 
-| Failure | Cause | Severity |
-|---------|-------|----------|
-| Invalid function path | Lua object is nil | warning |
-| Function not found | Method doesn't exist | warning |
-| Type mismatch | Wrong argument types | warning |
-| Runtime error | Function throws | warning |
-| Property not found | Invalid property path | warning |
-| Stale Lua state | Mod unloaded | error |
+All action execution failures result in ERROR_STATE because they represent a mod failing its capability contract.
+
+| Failure | Cause | Error Code |
+|---------|-------|------------|
+| Invalid function path | Lua object is nil | `ACTION_FAILED` |
+| Function not found | Method doesn't exist | `ACTION_FAILED` |
+| Type mismatch | Wrong argument types | `ACTION_FAILED` |
+| Runtime error | Function throws | `ACTION_FAILED` |
+| Property not found | Invalid property path | `PROPERTY_FAILED` |
+| No response | Mod didn't send action_result | `ACTION_TIMEOUT` |
+| Stale Lua state | Mod unloaded | `ACTION_FAILED` |
 
 ### Handling Protocol
 

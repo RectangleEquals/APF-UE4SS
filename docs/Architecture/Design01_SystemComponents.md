@@ -308,14 +308,40 @@ The entry point of the entire system. This UE4SS Lua mod should load before any 
 
 ### Load Order
 
-Configure in `<game_root>/<game_name>/Binaries/Win64/ue4ss/Mods/mods.json`:
+Configure in `<game_root>/<game_name>/Binaries/Win64/ue4ss/Mods/mods.txt` (mods load in listed order, top-to-bottom):
+
+```
+; AP Framework must load first
+APFrameworkMod : 1
+
+; Other AP-enabled mods load after
+MyAPClientMod : 1
+AnotherAPMod : 1
+
+; Built-in keybinds, do not move up!
+Keybinds : 1
+```
+
+Or in `mods.json` (array order determines load order):
 
 ```json
-{
-    "APFrameworkMod": { "enabled": true, "priority": 1 },
-    "OtherAPMod": { "enabled": true, "priority": 100 }
-}
+[
+    {
+        "mod_name": "APFrameworkMod",
+        "mod_enabled": true
+    },
+    {
+        "mod_name": "MyAPClientMod",
+        "mod_enabled": true
+    },
+    {
+        "mod_name": "AnotherAPMod",
+        "mod_enabled": true
+    }
+]
 ```
+
+**Important:** APFrameworkMod must appear before any AP-enabled client mods in the load order. UE4SS loads mods sequentially in the order they appear.
 
 ### main.lua Structure
 

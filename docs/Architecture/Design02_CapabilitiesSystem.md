@@ -54,6 +54,7 @@ Each AP-enabled client mod must have a `manifest.json` in its mod folder.
   "mod_id": "string",
   "name": "string",
   "version": "string",
+  "enabled": "boolean",
   "description": "string",
   "incompatible": [
     { "id": "string", "versions": "string | string[]" }
@@ -81,16 +82,38 @@ Each AP-enabled client mod must have a `manifest.json` in its mod folder.
 
 #### Root Fields
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `mod_id` | string | Yes | Unique identifier: `author.game.mod_name` |
-| `name` | string | Yes | Human-readable mod name |
-| `version` | string | Yes | Semantic version (e.g., `1.0.0`) |
-| `description` | string | No | Description of the mod |
-| `incompatible` | array | No | List of incompatible mods |
-| `capabilities` | object | No* | Locations and items. *Required for regular clients. |
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `mod_id` | string | Yes | — | Unique identifier: `author.game.mod_name` |
+| `name` | string | Yes | — | Human-readable mod name |
+| `version` | string | Yes | — | Semantic version (e.g., `1.0.0`) |
+| `enabled` | boolean | No | `true` | If `false`, framework ignores this manifest entirely |
+| `description` | string | No | — | Description of the mod |
+| `incompatible` | array | No | — | List of incompatible mods |
+| `capabilities` | object | No* | — | Locations and items. *Required for regular clients. |
 
 **Note:** Priority Clients (`archipelago.<game>.*`) must NOT have a `capabilities` field.
+
+### The `enabled` Field
+
+The `enabled` field allows players to disable a mod from the AP Framework without deleting the manifest or uninstalling the mod from UE4SS.
+
+**When `enabled: false`:**
+- Framework completely ignores this manifest during discovery
+- Mod's capabilities are NOT included in generation
+- Mod will NOT be expected to register
+- Mod will NOT receive IPC messages from framework
+
+**Use Cases:**
+- Temporarily disable a mod causing conflicts
+- Keep mod installed but exclude from AP session
+- Debug by isolating specific mods
+
+**Important:** This is independent of UE4SS's mod loading. A mod can be:
+- Loaded by UE4SS but disabled for AP (`enabled: false` in manifest)
+- Enabled for AP but not loaded by UE4SS (mod won't register, causing timeout)
+
+For complete mod disabling, players should both set `enabled: false` in the manifest AND disable the mod in UE4SS (`mods.txt` or `mods.json`).
 
 #### Location Fields
 
@@ -255,9 +278,16 @@ If two mods claim the same unique capability name:
 
 ### Resolution Options
 
-1. **Disable one mod** in `mods.json`
-2. **Rename capability** in one mod's manifest
-3. **Mark as non-unique** if both can coexist
+1. **Disable mod in manifest** — Set `"enabled": false` in the conflicting mod's `manifest.json`
+2. **Rename capability** — Change the capability name in one mod's manifest
+3. **Mark as non-unique** — If both can coexist, set `"unique": false`
+
+**Important:** Simply disabling a mod in UE4SS (via `mods.txt` or `mods.json`) does **NOT** resolve the conflict. The framework discovers manifests by scanning the filesystem, not by checking which mods UE4SS has loaded. To exclude a mod from AP Framework:
+
+- **Recommended:** Set `"enabled": false` in the mod's `manifest.json`
+- **Alternative:** Delete the `manifest.json` file entirely (not recommended)
+
+Players may additionally disable the mod in UE4SS if they don't want it running at all, but this is optional and independent of AP Framework conflict resolution.
 
 ### Non-Unique Capabilities
 
@@ -295,6 +325,7 @@ For non-unique capabilities with the same name:
   "mod_id": "myname.palworld.speedmod",
   "name": "Speed Mod",
   "version": "1.1.0",
+  "enabled": true,
   "description": "Adds speed-related items and locations to Palworld",
   "incompatible": [
     { "id": "other.palworld.movement", "versions": "<=0.5.0" }
@@ -358,5 +389,8 @@ checksum = SHA1(sorted_mod_ids + versions + capabilities_hash + game_name + slot
 
 **Usage:**
 - Stored in `session_state.json` and capabilities config
-- Validated on resync
-- Mismatch triggers full re-registration and player warning
+- Validated during SYNCING state when reconnecting
+- Mismatch triggers ERROR_STATE with `CHECKSUM_MISMATCH` error
+
+**On Mismatch:**
+A checksum mismatch indicates the mod ecosystem changed since generation. This is a user error — the framework enters ERROR_STATE and does NOT proceed. See [Design08_ErrorHandling.md](Design08_ErrorHandling.md) for details.

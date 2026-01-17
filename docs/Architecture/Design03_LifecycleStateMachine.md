@@ -100,6 +100,15 @@
 
 Discovery happens during APFrameworkMod's top-level execution, before UE4SS begins its event loop.
 
+### Discovery Process
+
+1. Scan `ue4ss/Mods/*/manifest.json` for all manifest files
+2. Parse each manifest and check `enabled` field
+3. **Skip manifests with `"enabled": false`** — they are completely ignored
+4. Collect enabled manifests for validation
+
+**Note:** Disabling a mod in UE4SS (`mods.txt` or `mods.json`) does NOT prevent discovery. To exclude a mod from AP Framework, set `"enabled": false` in its `manifest.json`.
+
 ### Why This Approach?
 
 1. APFrameworkMod can "consume" UE4SS's event loop during early lifecycle states
@@ -295,6 +304,7 @@ ACTIVE ──(CMD_RESYNC)──► RESYNCING ──► PRIORITY_REGISTRATION
 | Regular Registration | 60 seconds | Yes |
 | AP Connection | 30 seconds | Yes |
 | IPC Message | 5 seconds | Yes |
+| Action Execution | 5 seconds | Yes |
 
 Timeouts are configured in `framework_config.json`:
 
@@ -304,10 +314,47 @@ Timeouts are configured in `framework_config.json`:
     "priority_registration_ms": 30000,
     "registration_ms": 60000,
     "ap_connection_ms": 30000,
-    "ipc_message_ms": 5000
+    "ipc_message_ms": 5000,
+    "action_execution_ms": 5000
   }
 }
 ```
+
+### Timeout Behavior: Registration
+
+**Critical Rule:** If ANY discovered mod (with `enabled: true` in its manifest) fails to register before timeout, the framework enters `ERROR_STATE`.
+
+This applies regardless of:
+- Whether the mod is a priority client or regular client
+- Whether the mod is disabled in UE4SS (`mods.txt` / `mods.json`)
+- How many other mods successfully registered
+
+**Rationale:** The framework discovers manifests by filesystem scan, not by checking UE4SS's load list. If a manifest exists and is enabled, the framework expects that mod to register. A partial registration indicates a misconfiguration that must be resolved.
+
+**Examples:**
+
+| Scenario | Result |
+|----------|--------|
+| 6/6 mods register before timeout | → CONNECTING |
+| 5/6 mods register, timeout expires | → ERROR_STATE |
+| 0/6 mods register, timeout expires | → ERROR_STATE |
+| Mod disabled in UE4SS but enabled in manifest | → ERROR_STATE (mod won't register) |
+| Mod disabled in manifest | → Not expected to register (skipped during discovery) |
+
+**Resolution:** If a mod's manifest exists but the mod should not participate:
+1. Set `"enabled": false` in the mod's `manifest.json`, OR
+2. Delete the `manifest.json` file
+
+### Timeout Behavior: Action Execution
+
+If a mod receives `execute_action` but fails to send `action_result` within the timeout:
+1. Framework logs the timeout with item ID and mod ID
+2. Framework enters `ERROR_STATE`
+3. Priority clients are notified
+
+**Rationale:** A missing action result indicates the mod failed to fulfill its "contract" (the capability it promised in its manifest). This is a critical error that requires investigation. The AP Server remains the source of truth, so a resync or restart can recover the session.
+
+See [Design10_Threading.md](Design10_Threading.md) for implementation details.
 
 ---
 
