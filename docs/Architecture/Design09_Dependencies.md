@@ -89,44 +89,42 @@ APFrameworkMod/
 
 ```
 ipc_2/
-├── src/
-│   ├── framework/
-│   │   ├── APManager.cpp
+├── APFrameworkCore/
+│   ├── include/
 │   │   ├── APManager.h
-│   │   ├── APClient.cpp
 │   │   ├── APClient.h
-│   │   ├── APIPCServer.cpp
 │   │   ├── APIPCServer.h
-│   │   ├── APCapabilities.cpp
 │   │   ├── APCapabilities.h
-│   │   ├── APModRegistry.cpp
 │   │   ├── APModRegistry.h
-│   │   ├── APMessageRouter.cpp
 │   │   ├── APMessageRouter.h
-│   │   ├── APStateManager.cpp
 │   │   ├── APStateManager.h
-│   │   ├── APPollingThread.cpp
 │   │   ├── APPollingThread.h
-│   │   ├── APConfig.cpp
 │   │   ├── APConfig.h
-│   │   ├── APPathUtil.cpp
 │   │   ├── APPathUtil.h
-│   │   ├── APLogger.cpp
 │   │   ├── APLogger.h
 │   │   └── ap_types.h
-│   ├── clientlib/
-│   │   ├── APIPCClient.cpp
+│   ├── src/
+│   │   ├── APClient.cpp
+│   │   ├── APIPCServer.cpp
+│   │   ├── APCapabilities.cpp
+│   │   ├── APModRegistry.cpp
+│   │   ├── APMessageRouter.cpp
+│   │   ├── APStateManager.cpp
+│   │   ├── APPollingThread.cpp
+│   │   ├── APConfig.cpp
+│   │   ├── APPathUtil.cpp
+│   │   └── APLogger.cpp
+├── clientlib/
+│   ├── include/
 │   │   ├── APIPCClient.h
-│   │   ├── APActionExecutor.cpp
 │   │   ├── APActionExecutor.h
-│   │   ├── APPathUtil.cpp      # Shared with framework
 │   │   ├── APPathUtil.h
-│   │   ├── APLogger.cpp        # Shared with framework
 │   │   └── APLogger.h
-│   └── lua/
-│       ├── APFramework.lua
-│       ├── APClient.lua
-│       └── registry_helper.lua
+│   ├── src/
+│   │   ├── APIPCClient.cpp
+│   │   ├── APActionExecutor.cpp
+│   │   ├── APPathUtil.cpp      # Shared with framework
+│   │   └── APLogger.cpp        # Shared with framework
 ├── third_party/
 │   ├── apclientpp/             # Submodule
 │   │   ├── wswrap/             # Submodule
@@ -141,13 +139,20 @@ ipc_2/
 │   │   ├── src/
 │   │   └── CMakeLists.txt
 │   └── lua/
+│       ├── APFramework.lua
+│       ├── APClient.lua
+│       └── registry_helper.lua
 │       ├── lunajson.lua
 │       └── lunajson/
 ├── docs/
+│   ├── Architecture/
+│   │   ├── ARCHITECTURE.md
+│   │   ├── Design01_SystemComponents.md
+│   │   └── ...
 │   └── .claude/
-│       ├── Architecture/
-│       │   ├── ARCHITECTURE.md
-│       │   ├── Design01_SystemComponents.md
+│       ├── Implementation/
+│       │   ├── Implementation.md
+│       │   ├── Phase01_ProjectSetup.md
 │       │   └── ...
 │       └── AP_DOCS/
 ├── CMakeLists.txt
