@@ -209,18 +209,26 @@ Recovery via priority client commands:
 
 ## Dependencies
 
+All dependencies (except sol2 and Lua) are fetched automatically via CMake FetchContent. No submodules or vcpkg required.
+
 **APFrameworkCore:**
-- apclientpp (wswrap, asio, websocketpp, valijson)
-- nlohmann::json
-- sol2
-- lua-5.4.7
+- apclientpp (FetchContent/GIT)
+  - wswrap, asio, websocketpp (FetchContent/URL)
+- nlohmann::json (FetchContent/URL)
+- zlib (FetchContent/GIT)
+- sol2 (local: third_party/sol2/)
+- lua-5.4.7 (local: third_party/lua-5.4.7/)
+
+> **Note:** `valijson` dependency is eliminated via `AP_NO_SCHEMA` preprocessor define.
 
 **APClientLib:**
-- nlohmann::json
-- sol2
-- lua-5.4.7
+- nlohmann::json (FetchContent/URL) - for IPC JSON messages
+- sol2 (local: third_party/sol2/) - for Lua state interaction
+- lua-5.4.7 (local: third_party/lua-5.4.7/) - linked as static lib
 
-**See:** [Design09_Dependencies.md](Design09_Dependencies.md) for full dependency tree and CMake setup.
+> **Note:** `zlib` could optionally be linked in future for IPC compression if message sizes grow large.
+
+**See:** [Design09_Dependencies.md](Design09_Dependencies.md) for full dependency tree, CMake setup, and build instructions.
 
 ---
 

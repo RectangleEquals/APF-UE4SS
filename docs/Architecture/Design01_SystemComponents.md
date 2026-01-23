@@ -44,10 +44,10 @@ Global singleton managing the lifecycle of all other components.
 ```cpp
 class APManager {
 public:
-    static APManager& instance();
+    static APManager& get();
 
     // Lifecycle
-    void initialize();
+    void init();    // Called from luaopen_APFrameworkCore
     void update();  // Called each tick by APFrameworkMod
     void shutdown();
 
@@ -302,8 +302,9 @@ The entry point of the entire system. This UE4SS Lua mod should load before any 
 
 ### Responsibilities
 
-- Load APFrameworkCore via `require("APFrameworkCore")`
-- Register tick functions to call `APManager:Update()`
+- Load APFrameworkCore via `pcall(require, "APFrameworkCore")` with error handling
+- Subscribe to events from C++ background thread via global callback functions
+- Register game-specific tick callbacks to call `AP.update()`
 - Bridge UE4SS's Lua environment and the C++ framework
 
 ### Load Order
@@ -349,23 +350,40 @@ Or in `mods.json` (array order determines load order):
 -- APFrameworkMod/Scripts/main.lua
 print("[APFramework] Loading...\n")
 
-local APFramework = require("APFrameworkCore")
+-- 1. Safe load with error handling
+local success, AP = pcall(require, "APFrameworkCore")
 local RegistryHelper = require("registry_helper")
 
--- Initialize framework
-APFramework.initialize()
+if not success then
+    print("[APFramework] CRITICAL ERROR: Could not load APFrameworkCore.dll\n")
+    print("[APFramework] Error: " .. tostring(AP) .. "\n")
+    return
+end
 
--- Register tick callback
+-- NOTE: init() is called automatically from luaopen_APFrameworkCore
+-- The DLL load triggers background thread startup and Lua environment setup
+
+-- 2. Subscribe to events from the C++ Background Thread (pub-sub style)
+function ap_on_event(name, val)
+    -- Runs on Main Thread when C++ thread pushes events and Tick hook dispatches
+    print(string.format("[APFramework] Event: %s | Value: %d\n", name, val))
+    return val + 1
+end
+
+-- 3. Register game-specific tick callback via registry_helper
+-- This approach allows game-specific object hooks for compatibility across UE4/5 games
 RegistryHelper.add_object("Engine.PlayerController")
 RegistryHelper.add_function("Engine.PlayerController",
     "/Script/Engine.PlayerController:ClientRestart",
     function(className, obj)
-        APFramework.update()
+        AP.update()
     end
 )
 
 print("[APFramework] Initialized\n")
 ```
+
+> **Note:** The exact hook path (`/Script/Engine.PlayerController:ClientRestart`) is game-specific and may need adjustment. The registry_helper approach enables per-game customization of the tick callback, which is required because different games expose different hookable functions.
 
 ---
 

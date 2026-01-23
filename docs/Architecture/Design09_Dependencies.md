@@ -10,28 +10,30 @@
 
 ```
 APFrameworkCore
-├── apclientpp (FetchContent - header-only)
-│   ├── wswrap (FetchContent - header-only)
-│   ├── asio (FetchContent - header-only)
-│   └── websocketpp (FetchContent - header-only)
-├── nlohmann::json (FetchContent - v3.12.0)
-├── sol2 (header-only: third_party/sol2/sol.hpp)
+├── apclientpp (FetchContent/GIT - header-only)
+│   ├── wswrap (FetchContent/URL - header-only)
+│   ├── asio (FetchContent/URL - header-only)
+│   └── websocketpp (FetchContent/URL - header-only)
+├── nlohmann::json (FetchContent/URL - v3.12.0)
+├── sol2 (header-only: third_party/sol2/include/sol/)
 ├── lua-5.4.7 (static lib: third_party/lua-5.4.7/)
-└── zlib (Release builds only - for compression)
+└── zlib (FetchContent/GIT - v1.3.1)
 ```
 
 ### Dependency Details
 
 | Dependency | Type | Version/Commit | Purpose |
 |------------|------|----------------|---------|
-| **apclientpp** | FetchContent | `main` branch | AP server communication (WebSocket client) |
-| **wswrap** | FetchContent | `d0505e0ec53a26743f11051949a0dc66bcf44951` | WebSocket wrapper for apclientpp |
-| **asio** | FetchContent | `f693a3eb7fe72a5f19b975289afc4f437d373d9c` | Async I/O for networking |
-| **websocketpp** | FetchContent | `4dfe1be74e684acca19ac1cf96cce0df9eac2a2d` | WebSocket protocol implementation |
-| **nlohmann::json** | FetchContent | `v3.12.0` | JSON parsing/serialization |
-| **sol2** | Header-only | Manual copy | C++/Lua bindings |
-| **lua-5.4.7** | Static lib | 5.4.7 | Lua interpreter |
-| **zlib** | System/vcpkg | Latest | Compression (Release builds only) |
+| **zlib** | FetchContent/GIT | `v1.3.1` | Compression for AP server communication |
+| **asio** | FetchContent/URL | `f693a3eb7fe72a5f19b975289afc4f437d373d9c` | Async I/O for networking |
+| **nlohmann::json** | FetchContent/URL | `v3.12.0` | JSON parsing/serialization |
+| **websocketpp** | FetchContent/URL | `4dfe1be74e684acca19ac1cf96cce0df9eac2a2d` | WebSocket protocol implementation |
+| **wswrap** | FetchContent/URL | `d0505e0ec53a26743f11051949a0dc66bcf44951` | WebSocket wrapper for apclientpp |
+| **apclientpp** | FetchContent/GIT | `main` branch | AP server communication (WebSocket client) |
+| **sol2** | Header-only | Manual copy | C++/Lua bindings (in `third_party/sol2/include/sol/`) |
+| **lua-5.4.7** | Static lib | 5.4.7 | Lua interpreter (in `third_party/lua-5.4.7/`) |
+
+> **Note:** URL-based FetchContent is preferred where possible as it's faster than git clones - the zip/tarball downloads don't include git history.
 
 ### Version Compatibility Note
 
@@ -43,18 +45,54 @@ The websocketpp and ASIO commit hashes are specifically tested together by the a
 |------------|--------|
 | **valijson** | Removed via `AP_NO_SCHEMA` compile definition - unnecessary for our use case |
 
+### Global Preprocessor Definitions
+
+These definitions are set at the project root level and apply to all targets:
+
+```cmake
+add_compile_definitions(
+    # asio
+    ASIO_STANDALONE
+    ASIO_NO_WIN32_LEAN_AND_MEAN
+
+    # apclientpp
+    AP_NO_SCHEMA                  # Removes valijson dependency
+
+    # wswrap
+    WSWRAP_NO_SSL                 # No SSL support needed for AP
+
+    # websocketpp
+    WEBSOCKETPP_NO_TLS
+    _WEBSOCKETPP_CPP11_STL_
+    _WEBSOCKETPP_CPP11_STRICT_
+    _WEBSOCKETPP_CPP11_CHRONO_
+
+    # sol2
+    SOL_ALL_SAFETIES_ON=1
+)
+
+# Windows-specific
+if(WIN32)
+    add_compile_definitions(
+        _WIN32_WINNT=0x0601         # Windows 7+
+        NOMINMAX                     # Disable min/max macros
+        WIN32_LEAN_AND_MEAN          # Reduce Windows.h bloat
+    )
+endif()
+```
+
 ---
 
 ## APClientLib Dependencies
 
 ```
 APClientLib
-├── nlohmann::json (header-only: third_party/nlohmann/json.hpp)
-├── sol2 (header-only: third_party/sol2/sol.hpp)
+├── nlohmann::json (linked via CMake - same as framework)
+├── sol2 (header-only: third_party/sol2/include/sol/)
 └── lua-5.4.7 (static lib: third_party/lua-5.4.7/)
 ```
 
-APClientLib is intentionally lightweight — it doesn't need apclientpp since all AP communication goes through the framework.
+APClientLib is intentionally lightweight — it doesn't need apclientpp since all AP communication goes through the framework. It shares the sol2, lua, and nlohmann::json dependencies with APFrameworkCore to ensure compatible JSON serialization and Lua bindings.
 
 ---
 
@@ -91,41 +129,44 @@ This is a critical component — without it, the framework cannot participate in
 
 ## Folder Structures
 
-### APFrameworkMod
+### APFrameworkMod (Deployed)
+
+This is the deployed structure in the game's UE4SS Mods folder:
 
 ```
 APFrameworkMod/
 ├── Scripts/
-│   ├── main.lua              # Entry point
-│   ├── APFramework.lua       # Lua wrapper for APFrameworkCore
-│   ├── APFrameworkCore.dll   # C++ framework core
-│   ├── APClient.lua          # Lua wrapper for APClientLib (optional)
-│   ├── APClientLib.dll       # C++ client library
-│   ├── registry_helper.lua   # UE4SS hook utilities
-│   ├── lunajson.lua          # JSON library for Lua
-│   └── lunajson/             # lunajson module folder
+│   ├── main.lua                    # Entry point
+│   ├── APFramework.lua             # Lua wrapper for APFrameworkCore.dll
+│   ├── APFrameworkCore.dll         # C++ framework core (built artifact)
+│   ├── APClient.lua                # Lua wrapper for APClientLib.dll (optional)
+│   ├── APClientLib.dll             # C++ client library (built artifact)
+│   ├── registry_helper.lua         # UE4SS hook utilities
+│   ├── lunajson.lua                # JSON library for Lua (entry point)
+│   └── lunajson/                   # lunajson module folder
 │       ├── decoder.lua
 │       ├── encoder.lua
 │       └── sax.lua
-├── framework_config.json     # Framework configuration
-└── output/                   # Generated files
+├── manifest.json                   # Framework manifest (priority client)
+├── framework_config.json           # Framework configuration
+└── output/                         # Generated files
     └── AP_Capabilities_*.json
 ```
 
-### AP Client Mods
+### AP Client Mods (Deployed)
 
 ```
 <mod_name>/
 ├── Scripts/
-│   ├── main.lua              # Mod entry point
-│   ├── APClient.lua          # Lua wrapper for APClientLib
-│   ├── APClientLib.dll       # C++ client library
-│   ├── lunajson.lua          # JSON library for Lua
-│   └── lunajson/             # lunajson module folder
+│   ├── main.lua                    # Mod entry point
+│   ├── APClient.lua                # Lua wrapper for APClientLib.dll
+│   ├── APClientLib.dll             # C++ client library (built artifact)
+│   ├── lunajson.lua                # JSON library for Lua
+│   └── lunajson/                   # lunajson module folder
 │       ├── decoder.lua
 │       ├── encoder.lua
 │       └── sax.lua
-└── manifest.json             # Mod manifest with capabilities
+└── manifest.json                   # Mod manifest with capabilities
 ```
 
 ### Source Project Structure
@@ -133,92 +174,136 @@ APFrameworkMod/
 ```
 ipc_2/
 ├── APFrameworkCore/
+│   ├── CMakeLists.txt              # Framework build configuration
 │   ├── include/
-│   │   ├── APManager.h
-│   │   ├── APClient.h
-│   │   ├── APIPCServer.h
-│   │   ├── APCapabilities.h
-│   │   ├── APModRegistry.h
-│   │   ├── APMessageRouter.h
-│   │   ├── APStateManager.h
-│   │   ├── APPollingThread.h
-│   │   ├── APConfig.h
-│   │   ├── APPathUtil.h
-│   │   ├── APLogger.h
-│   │   └── ap_types.h
-│   ├── src/
-│   │   ├── APClient.cpp
-│   │   ├── APIPCServer.cpp
-│   │   ├── APCapabilities.cpp
-│   │   ├── APModRegistry.cpp
-│   │   ├── APMessageRouter.cpp
-│   │   ├── APStateManager.cpp
-│   │   ├── APPollingThread.cpp
-│   │   ├── APConfig.cpp
-│   │   ├── APPathUtil.cpp
-│   │   └── APLogger.cpp
+│   │   ├── ap_exports.h            # DLL export macros
+│   │   ├── ap_manager.h            # APManager class (main coordinator)
+│   │   ├── ap_client.h             # APClient (apclientpp wrapper)
+│   │   ├── ap_ipc_server.h         # Named pipe server
+│   │   ├── ap_capabilities.h       # Capability aggregation/ID assignment
+│   │   ├── ap_mod_registry.h       # Mod discovery/registration tracking
+│   │   ├── ap_message_router.h     # Message routing logic
+│   │   ├── ap_state_manager.h      # Session state persistence
+│   │   ├── ap_polling_thread.h     # Background AP server polling
+│   │   ├── ap_config.h             # Configuration loading
+│   │   ├── ap_path_util.h          # Path utilities
+│   │   ├── ap_logger.h             # Logging utilities
+│   │   └── ap_types.h              # Common type definitions
+│   └── src/
+│       ├── main.cpp                # luaopen_APFrameworkCore entry point
+│       ├── ap_exports.cpp          # Export implementation
+│       ├── ap_manager.cpp          # APManager implementation
+│       ├── ap_client.cpp           # APClient implementation
+│       ├── ap_ipc_server.cpp       # IPC server implementation
+│       ├── ap_capabilities.cpp     # Capability implementation
+│       ├── ap_mod_registry.cpp     # Registry implementation
+│       ├── ap_message_router.cpp   # Router implementation
+│       ├── ap_state_manager.cpp    # State manager implementation
+│       ├── ap_polling_thread.cpp   # Polling thread implementation
+│       ├── ap_config.cpp           # Config implementation
+│       ├── ap_path_util.cpp        # Path utilities implementation
+│       └── ap_logger.cpp           # Logger implementation
+│
 ├── APClientLib/
+│   ├── CMakeLists.txt              # Client lib build configuration
 │   ├── include/
-│   │   ├── APIPCClient.h
-│   │   ├── APActionExecutor.h
-│   │   ├── APPathUtil.h
-│   │   └── APLogger.h
-│   ├── src/
-│   │   ├── APIPCClient.cpp
-│   │   ├── APActionExecutor.cpp
-│   │   ├── APPathUtil.cpp      # Shared with framework
-│   │   └── APLogger.cpp        # Shared with framework
+│   │   ├── ap_clientlib_exports.h  # DLL export macros
+│   │   ├── ap_ipc_client.h         # Named pipe client
+│   │   ├── ap_action_executor.h    # Lua function executor
+│   │   ├── ap_path_util.h          # Path utilities (shared)
+│   │   └── ap_logger.h             # Logging utilities (shared)
+│   └── src/
+│       ├── main.cpp                # luaopen_APClientLib entry point
+│       ├── ap_ipc_client.cpp       # IPC client implementation
+│       ├── ap_action_executor.cpp  # Action executor implementation
+│       ├── ap_path_util.cpp        # Path utilities (may be shared)
+│       └── ap_logger.cpp           # Logger (may be shared)
+│
 ├── worlds/
-│   └── apf/                    # AP World Python package
-│       ├── __init__.py         # Main World class (APFWorld)
-│       ├── items.py            # APFItem class and item helpers
-│       ├── locations.py        # APFLocation class and location helpers
-│       ├── options.py          # Player options (capabilities_file, etc.)
-│       ├── regions.py          # Region creation helpers
-│       └── rules.py            # Access rules (optional, for logic)
+│   └── apf/                        # AP World Python package
+│       ├── __init__.py             # Main World class (APFWorld)
+│       ├── items.py                # APFItem class and item helpers
+│       ├── locations.py            # APFLocation class and location helpers
+│       ├── options.py              # Player options (capabilities_file, etc.)
+│       ├── regions.py              # Region creation helpers
+│       └── rules.py                # Access rules (optional, for logic)
+│
 ├── third_party/
-│   ├── _deps/                  # CMake FetchContent downloads (gitignored)
-│   │   ├── apclientpp-src/
-│   │   ├── wswrap-src/
-│   │   ├── websocketpp-src/
-│   │   ├── asio-src/
-│   │   └── json-src/
 │   ├── sol2/
-│   │   └── sol.hpp             # Manual copy
+│   │   └── include/
+│   │       └── sol/
+│   │           ├── config.hpp
+│   │           ├── forward.hpp
+│   │           └── sol.hpp         # Main sol2 header
 │   ├── lua-5.4.7/
-│   │   ├── src/
-│   │   └── CMakeLists.txt
-│   └── lua/
-│       ├── APFramework.lua
-│       ├── APClient.lua
-│       ├── registry_helper.lua
-│       ├── lunajson.lua
-│       └── lunajson/
-├── Mods/
+│   │   ├── CMakeLists.txt          # Builds lua_static library
+│   │   └── src/
+│   │       ├── lua.h
+│   │       ├── luaconf.h
+│   │       └── *.c                 # Lua 5.4.7 source files
+│   └── lua/                        # Lua utilities to deploy with mods
+│       ├── APFramework.lua         # → Mods/APFrameworkMod/Scripts/
+│       ├── APClient.lua            # → Mods/*/Scripts/
+│       ├── registry_helper.lua     # → Mods/*/Scripts/
+│       ├── lunajson.lua            # → Mods/*/Scripts/
+│       └── lunajson/               # → Mods/*/Scripts/lunajson/
+│           ├── decoder.lua
+│           ├── encoder.lua
+│           └── sax.lua
+│
+├── Mods/                           # Development mods for testing
 │   ├── APFrameworkMod/
 │   │   ├── Scripts/
-│   │   │   └── main.lua
+│   │   │   ├── main.lua
+│   │   │   └── *_goes_here         # Placeholder files indicating deployment targets
+│   │   ├── manifest.json
 │   │   └── framework_config.json
 │   └── ExampleClientMod/
 │       ├── Scripts/
-│       │   └── main.lua
+│       │   ├── main.lua
+│       │   └── *_goes_here
 │       └── manifest.json
-├── docs/
-│   ├── Architecture/
-│   │   ├── ARCHITECTURE.md
-│   │   ├── Design01_SystemComponents.md
-│   │   └── ...
-│   └── .claude/
-│       ├── Implementation/
-│       │   ├── Implementation.md
-│       │   ├── Phase01_ProjectSetup.md
-│       │   └── ...
-│       └── AP_DOCS/
+│
 ├── tests/
-│   ├── unit/
-│   └── integration/
-├── CMakeLists.txt
-└── README.md
+│   ├── CMakeLists.txt              # Test build configuration
+│   ├── unit/                       # Unit tests
+│   └── integration/                # Integration tests
+│
+├── docs/
+│   └── Architecture/
+│       ├── ARCHITECTURE.md
+│       ├── InitialDesign.md
+│       └── Design01-10_*.md
+│
+├── CMakeLists.txt                  # Root CMake configuration
+├── CMakePresets.json               # CMake presets for build configurations
+├── compile_commands.json           # Generated by CMake for IDE support
+├── .clangd                         # clangd configuration for intellisense
+└── .gitignore
+```
+
+### Build Output Structure
+
+After running CMake configure and build, the `build/<config>/` directory contains:
+
+```
+build/
+└── <config>/                       # Debug or Release
+    ├── _deps/                      # FetchContent downloads (auto-generated)
+    │   ├── zlib-src/
+    │   ├── zlib-build/
+    │   ├── asio-src/
+    │   ├── json-src/
+    │   ├── websocketpp-src/
+    │   ├── wswrap-src/
+    │   └── apclientpp-src/
+    ├── third_party/
+    │   └── lua-5.4.7/
+    │       └── lua_static.lib      # Static Lua library
+    ├── APFrameworkCore/
+    │   └── APFrameworkCore.dll     # Framework DLL (copy to mod Scripts/)
+    └── APClientLib/
+        └── APClientLib.dll         # Client library DLL (copy to mod Scripts/)
 ```
 
 ### AP World Package Structure
@@ -271,273 +356,348 @@ worlds/apf/
 
 ### Root CMakeLists.txt
 
+The root CMake file configures global settings and fetches all dependencies:
+
 ```cmake
 cmake_minimum_required(VERSION 3.20)
 project(APFramework VERSION 1.0.0 LANGUAGES CXX)
 
+# C++ Standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Export compile commands for clangd (IDE support)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Fix third-party policy warnings
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
+# Limit build configurations
+set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Configurations" FORCE)
+
+# --- Global Preprocessor Settings ---
+# These apply to ALL targets including third-party code
+add_compile_definitions(
+    # asio
+    ASIO_STANDALONE
+    ASIO_NO_WIN32_LEAN_AND_MEAN
+
+    # apclientpp
+    AP_NO_SCHEMA                    # Removes valijson dependency entirely
+
+    # wswrap
+    WSWRAP_NO_SSL                   # No SSL support needed
+
+    # websocketpp
+    WEBSOCKETPP_NO_TLS
+    _WEBSOCKETPP_CPP11_STL_
+    _WEBSOCKETPP_CPP11_STRICT_
+    _WEBSOCKETPP_CPP11_CHRONO_
+
+    # sol2
+    SOL_ALL_SAFETIES_ON=1
+)
+
+if(WIN32)
+    add_compile_definitions(
+        _WIN32_WINNT=0x0601         # Windows 7+
+        NOMINMAX                     # Disable min/max macros
+        WIN32_LEAN_AND_MEAN          # Reduce Windows.h bloat
+    )
+endif()
+
+# MSVC-specific settings
+if(MSVC)
+    add_compile_options(/W4 /permissive-)
+    add_compile_options(/utf-8)     # UTF-8 source and execution charset
+
+    # Disable warnings that are noisy with third-party code (global)
+    add_compile_options(/wd4100)    # unreferenced formal parameter
+    add_compile_options(/wd4244)    # conversion, possible loss of data
+    add_compile_options(/wd4267)    # conversion from 'size_t' to 'int'
+    add_compile_options(/wd4840)    # non-portable use of class in variadic template
+endif()
+
+# Output directories
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Options
-option(BUILD_FRAMEWORK "Build APFrameworkCore" ON)
-option(BUILD_CLIENTLIB "Build APClientLib" ON)
-option(BUILD_TESTS "Build tests" OFF)
+option(AP_BUILD_FRAMEWORK "Build APFrameworkCore" ON)
+option(AP_BUILD_CLIENTLIB "Build APClientLib" ON)
+option(AP_BUILD_TESTS "Build tests" OFF)
+option(AP_ENABLE_TSAN "Enable ThreadSanitizer (Debug builds)" OFF)
 
 # =============================================================================
 # Third-Party Dependencies via FetchContent
 # =============================================================================
-# IMPORTANT: These commit hashes are tested together by apclientpp maintainer.
-# Do NOT update independently - see Version Compatibility Note above.
+# IMPORTANT: Commit hashes are tested together by apclientpp maintainer.
+# URL downloads are preferred (faster than git clones - no history).
 # =============================================================================
 
 include(FetchContent)
-set(FETCHCONTENT_QUIET OFF)
 
-# apclientpp (header-only AP client library)
+# 1. zlib (for AP server compression - always fetched)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    zlib
+    GIT_REPOSITORY https://github.com/madler/zlib.git
+    GIT_TAG        v1.3.1
+)
+
+# 2. asio (async I/O - URL is faster than git clone)
+set(ASIO_STANDALONE ON CACHE BOOL "" FORCE)
+set(ASIO_NO_WIN32_LEAN_AND_MEAN ON CACHE BOOL "" FORCE)
+FetchContent_Declare(asio
+    URL https://github.com/chriskohlhoff/asio/archive/f693a3eb7fe72a5f19b975289afc4f437d373d9c.zip)
+
+# 3. nlohmann/json
+set(JSON_MultipleHeaders OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+
+# 4. websocketpp
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(websocketpp
+    URL https://github.com/zaphoyd/websocketpp/archive/4dfe1be74e684acca19ac1cf96cce0df9eac2a2d.zip)
+
+# 5. wswrap (without SSL submodule)
+set(WSWRAP_NO_SSL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(wswrap
+    URL https://github.com/black-sliver/wswrap/archive/d0505e0ec53a26743f11051949a0dc66bcf44951.zip)
+
+# 6. apclientpp (main branch, git clone needed for proper CMake support)
+set(APCLIENTPP_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     apclientpp
     GIT_REPOSITORY https://github.com/black-sliver/apclientpp.git
     GIT_TAG        main
 )
 
-# wswrap (WebSocket wrapper - specific tested commit)
-FetchContent_Declare(
-    wswrap
-    GIT_REPOSITORY https://github.com/black-sliver/wswrap.git
-    GIT_TAG        d0505e0ec53a26743f11051949a0dc66bcf44951
-)
+FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp)
 
-# websocketpp (specific tested commit - must match asio version)
-FetchContent_Declare(
-    websocketpp
-    GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
-    GIT_TAG        4dfe1be74e684acca19ac1cf96cce0df9eac2a2d
-)
-
-# asio (specific tested commit - must match websocketpp version)
-FetchContent_Declare(
-    asio
-    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-    GIT_TAG        f693a3eb7fe72a5f19b975289afc4f437d373d9c
-)
-
-# nlohmann/json
-FetchContent_Declare(
-    json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.12.0
-)
-
-FetchContent_MakeAvailable(apclientpp wswrap websocketpp asio json)
-
-# =============================================================================
-# apclientpp Interface Library (consolidates all apclientpp dependencies)
-# =============================================================================
-
-add_library(apclientpp_lib INTERFACE)
-
-target_include_directories(apclientpp_lib INTERFACE
-    ${apclientpp_SOURCE_DIR}
-    ${wswrap_SOURCE_DIR}
-    ${websocketpp_SOURCE_DIR}
-    ${asio_SOURCE_DIR}/asio/include
-)
-
-target_compile_definitions(apclientpp_lib INTERFACE
-    ASIO_STANDALONE
-    _WEBSOCKETPP_CPP11_THREAD_
-    AP_NO_SCHEMA          # Remove valijson dependency
-    WSWRAP_NO_SSL         # No SSL support needed
-)
-
-# MSVC-specific flags
-if(MSVC)
-    target_compile_options(apclientpp_lib INTERFACE
-        /Zc:__cplusplus   # Report correct __cplusplus value
-        /bigobj           # Large object file support for templates
-    )
-endif()
-
-# Compression: Disabled in Debug, Required in Release
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(apclientpp_lib INTERFACE
-        WSWRAP_NO_COMPRESSION
-    )
-    message(STATUS "APFramework: Compression DISABLED (Debug build)")
-else()
-    # Release builds require zlib for compression
-    find_package(ZLIB REQUIRED)
-    target_link_libraries(apclientpp_lib INTERFACE ZLIB::ZLIB)
-    message(STATUS "APFramework: Compression ENABLED (Release build)")
-endif()
-
-# =============================================================================
-# Other Dependencies
-# =============================================================================
-
-# Lua
+# Lua (local source)
 add_subdirectory(third_party/lua-5.4.7)
-
-# sol2 (header-only, manual copy)
-add_library(sol2 INTERFACE)
-target_include_directories(sol2 INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
 # =============================================================================
 # Build Targets
 # =============================================================================
 
-if(BUILD_FRAMEWORK)
+if(AP_BUILD_FRAMEWORK)
     add_subdirectory(APFrameworkCore)
 endif()
 
-if(BUILD_CLIENTLIB)
+if(AP_BUILD_CLIENTLIB)
     add_subdirectory(APClientLib)
 endif()
 
-if(BUILD_TESTS)
+if(AP_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# Install rules
+include(GNUInstallDirs)
+install(DIRECTORY Mods/ DESTINATION ${CMAKE_INSTALL_DATADIR}/Mods)
 ```
 
 ### Framework CMakeLists.txt
 
+The framework links against apclientpp and all its transitive dependencies:
+
 ```cmake
 # APFrameworkCore/CMakeLists.txt
+project(APFrameworkCore)
 
-add_library(APFrameworkCore SHARED
-    src/APClient.cpp
-    src/APIPCServer.cpp
-    src/APCapabilities.cpp
-    src/APModRegistry.cpp
-    src/APMessageRouter.cpp
-    src/APStateManager.cpp
-    src/APPollingThread.cpp
-    src/APConfig.cpp
-    src/APPathUtil.cpp
-    src/APLogger.cpp
+set(SOURCES
+    src/main.cpp
+    src/ap_exports.cpp
+    src/ap_manager.cpp
+    src/ap_client.cpp
+    src/ap_ipc_server.cpp
+    src/ap_capabilities.cpp
+    src/ap_mod_registry.cpp
+    src/ap_message_router.cpp
+    src/ap_state_manager.cpp
+    src/ap_polling_thread.cpp
+    src/ap_config.cpp
+    src/ap_path_util.cpp
+    src/ap_logger.cpp
 )
 
+set(HEADERS
+    include/ap_exports.h
+    include/ap_manager.h
+    include/ap_client.h
+    include/ap_ipc_server.h
+    include/ap_capabilities.h
+    include/ap_mod_registry.h
+    include/ap_message_router.h
+    include/ap_state_manager.h
+    include/ap_polling_thread.h
+    include/ap_config.h
+    include/ap_path_util.h
+    include/ap_logger.h
+    include/ap_types.h
+)
+
+add_library(APFrameworkCore SHARED ${SOURCES} ${HEADERS})
+
+# Include directories
+# - Use SYSTEM for third-party to suppress warnings from their headers
 target_include_directories(APFrameworkCore
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lua-5.4.7/src
+    SYSTEM PUBLIC
+        ${json_SOURCE_DIR}/single_include
+        ${wswrap_SOURCE_DIR}/include
+        ${asio_SOURCE_DIR}/asio/include
+        ${websocketpp_SOURCE_DIR}
+        ${zlib_SOURCE_DIR}
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sol2/include
 )
 
-# Link apclientpp_lib interface library (brings all apclientpp deps and flags)
+target_compile_definitions(APFrameworkCore PRIVATE AP_FRAMEWORK_EXPORTS)
+
 target_link_libraries(APFrameworkCore
-    PRIVATE apclientpp_lib
-    PRIVATE nlohmann_json::nlohmann_json
-    PRIVATE sol2
-    PRIVATE lua_static
+    PRIVATE
+        lua_static
+        zlibstatic
+        apclientpp          # Brings websocketpp deps transitively
 )
 
-if(WIN32)
-    target_link_libraries(APFrameworkCore PRIVATE ws2_32)
-endif()
-
-target_compile_definitions(APFrameworkCore PRIVATE
-    AP_FRAMEWORK_EXPORTS
+# Per-target warning suppression for third-party code
+target_compile_options(lua_static PRIVATE
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4127>"    # conditional expression is constant
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4267>"    # size_t to int conversion
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4310>"    # cast truncates constant value
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4324>"    # structure padded
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4701>"    # potentially uninitialized variable
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4702>"    # unreachable code
 )
 
-# Export function for Lua loading
+target_compile_options(zlib PRIVATE
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4127>")
+target_compile_options(zlibstatic PRIVATE
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4127>")
+target_compile_options(apclientpp INTERFACE
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd4127>")
+target_compile_options(APFrameworkCore PRIVATE
+    "$<$<CXX_COMPILER_ID:MSVC>:/wd5321>")   # nonstandard extension
+
+# Output settings - no prefix, exact DLL name
 set_target_properties(APFrameworkCore PROPERTIES
     PREFIX ""
     OUTPUT_NAME "APFrameworkCore"
-)
-
-# Install
-install(TARGETS APFrameworkCore
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
 )
 ```
 
 ### ClientLib CMakeLists.txt
 
-```cmake
-# src/clientlib/CMakeLists.txt
+The client library is lightweight - no apclientpp dependency:
 
-add_library(APClientLib SHARED
-    APIPCClient.cpp
-    APActionExecutor.cpp
-    APPathUtil.cpp
-    APLogger.cpp
+```cmake
+# APClientLib/CMakeLists.txt
+project(APClientLib)
+
+set(SOURCES
+    src/main.cpp
+    src/ap_ipc_client.cpp
+    src/ap_action_executor.cpp
+    src/ap_path_util.cpp
+    src/ap_logger.cpp
 )
+
+set(HEADERS
+    include/ap_clientlib_exports.h
+    include/ap_ipc_client.h
+    include/ap_action_executor.h
+    include/ap_path_util.h
+    include/ap_logger.h
+)
+
+add_library(APClientLib SHARED ${SOURCES} ${HEADERS})
 
 target_include_directories(APClientLib
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lua-5.4.7/src
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sol2/include
 )
 
-target_link_libraries(APClientLib
-    PRIVATE nlohmann_json
-    PRIVATE sol2
-    PRIVATE lua_static
-)
+target_compile_definitions(APClientLib PRIVATE AP_CLIENTLIB_EXPORTS)
 
-target_compile_definitions(APClientLib
-    PRIVATE AP_CLIENTLIB_EXPORTS
-)
+target_link_libraries(APClientLib PRIVATE lua_static)
 
-# Export function for Lua loading
 set_target_properties(APClientLib PROPERTIES
     PREFIX ""
     OUTPUT_NAME "APClientLib"
-)
-
-# Install
-install(TARGETS APClientLib
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
 )
 ```
 
 ### Lua CMakeLists.txt
 
+Lua is built as a static library linked into both DLLs:
+
 ```cmake
 # third_party/lua-5.4.7/CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(lua C)
 
-add_library(lua_static STATIC
+set(LUA_CORE_SOURCES
     src/lapi.c
-    src/lauxlib.c
-    src/lbaselib.c
     src/lcode.c
-    src/lcorolib.c
     src/lctype.c
-    src/ldblib.c
     src/ldebug.c
     src/ldo.c
     src/ldump.c
     src/lfunc.c
     src/lgc.c
-    src/linit.c
-    src/liolib.c
     src/llex.c
-    src/lmathlib.c
     src/lmem.c
-    src/loadlib.c
     src/lobject.c
     src/lopcodes.c
-    src/loslib.c
     src/lparser.c
     src/lstate.c
     src/lstring.c
-    src/lstrlib.c
     src/ltable.c
-    src/ltablib.c
     src/ltm.c
     src/lundump.c
-    src/lutf8lib.c
     src/lvm.c
     src/lzio.c
+    src/lauxlib.c
+    src/lbaselib.c
+    src/lcorolib.c
+    src/ldblib.c
+    src/liolib.c
+    src/lmathlib.c
+    src/loadlib.c
+    src/loslib.c
+    src/lstrlib.c
+    src/ltablib.c
+    src/lutf8lib.c
+    src/linit.c
 )
+
+add_library(lua_static STATIC ${LUA_CORE_SOURCES})
 
 target_include_directories(lua_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-if(WIN32)
-    target_compile_definitions(lua_static PRIVATE LUA_BUILD_AS_DLL)
-endif()
+set_target_properties(lua_static PROPERTIES
+    OUTPUT_NAME "lua"
+    POSITION_INDEPENDENT_CODE ON
+)
 ```
 
 ---
@@ -595,9 +755,11 @@ extern "C" {
 ### Prerequisites
 
 - CMake 3.20+
-- Visual Studio 2019+ (Windows)
+- Visual Studio 2019+ (Windows) or compatible compiler
 - Git (for FetchContent cloning)
-- **Release builds only**: zlib (via vcpkg or system package)
+- Ninja (optional, for faster builds and compile_commands.json generation)
+
+> **Note**: All dependencies including zlib are fetched automatically via CMake FetchContent. No vcpkg or manual dependency installation required.
 
 ### Clone Repository
 
@@ -608,71 +770,82 @@ cd ap-framework
 
 > **Note**: No `--recursive` needed! Dependencies are fetched automatically via CMake FetchContent.
 
-### Install zlib (Release builds only)
+### Build with CMake Presets (Recommended)
 
-Release builds require zlib for AP server compression support. Install via vcpkg:
+The project includes CMakePresets.json for easy configuration:
 
 ```bash
-# Install vcpkg if needed
-git clone https://github.com/microsoft/vcpkg.git
-cd vcpkg && bootstrap-vcpkg.bat && cd ..
+# Configure (Debug)
+cmake --preset debug
 
-# Install zlib
-vcpkg install zlib:x64-windows
+# Build
+cmake --build --preset debug
+
+# Or for Release
+cmake --preset release
+cmake --build --preset release
 ```
 
-### Build Debug (no compression)
+### Build Manually
 
 ```bash
-mkdir build-debug
-cd build-debug
-cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Debug
-cmake --build . --config Debug
-```
+# Debug build
+mkdir build && cd build
+cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Debug
+cmake --build .
 
-### Build Release (with compression)
-
-```bash
-mkdir build-release
-cd build-release
-cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=<vcpkg_root>/scripts/buildsystems/vcpkg.cmake
-cmake --build . --config Release
+# Release build
+cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+cmake --build .
 ```
 
 ### Output
 
-After building:
+After building, DLLs are located at:
 
 ```
-build-release/
-├── Release/
-│   ├── APFrameworkCore.dll
-│   └── APClientLib.dll
+build/<config>/bin/
+├── APFrameworkCore.dll
+└── APClientLib.dll
 ```
 
 ### First Build Note
 
 The first build will take longer as CMake FetchContent downloads:
-- apclientpp (~1MB)
-- wswrap (~50KB)
-- websocketpp (~5MB)
-- asio (~10MB)
-- nlohmann/json (~50MB)
+- zlib (~1MB)
+- asio (~3MB as zip)
+- nlohmann/json (~3MB as tarball)
+- websocketpp (~1MB as zip)
+- wswrap (~50KB as zip)
+- apclientpp (~1MB via git)
 
-These are cached in `build/_deps/` and won't re-download on subsequent builds.
+These are cached in `build/<config>/_deps/` and won't re-download on subsequent builds. URL-based downloads (zip/tarball) are significantly faster than git clones because they don't include git history.
 
 ### Deploy
 
-Copy to UE4SS mod folders:
+Copy DLLs and Lua files to UE4SS mod folders:
 
 ```bash
 # Framework mod
-cp Release/APFrameworkCore.dll <game>/Binaries/Win64/ue4ss/Mods/APFrameworkMod/Scripts/
-cp Release/APClientLib.dll <game>/Binaries/Win64/ue4ss/Mods/APFrameworkMod/Scripts/
+cp build/Release/bin/APFrameworkCore.dll <game>/Binaries/Win64/ue4ss/Mods/APFrameworkMod/Scripts/
+cp build/Release/bin/APClientLib.dll <game>/Binaries/Win64/ue4ss/Mods/APFrameworkMod/Scripts/
+cp third_party/lua/*.lua <game>/Binaries/Win64/ue4ss/Mods/APFrameworkMod/Scripts/
+cp -r third_party/lua/lunajson <game>/Binaries/Win64/ue4ss/Mods/APFrameworkMod/Scripts/
 
 # Client mods
-cp Release/APClientLib.dll <game>/Binaries/Win64/ue4ss/Mods/<mod_name>/Scripts/
+cp build/Release/bin/APClientLib.dll <game>/Binaries/Win64/ue4ss/Mods/<mod_name>/Scripts/
+cp third_party/lua/APClient.lua <game>/Binaries/Win64/ue4ss/Mods/<mod_name>/Scripts/
+cp third_party/lua/lunajson.lua <game>/Binaries/Win64/ue4ss/Mods/<mod_name>/Scripts/
+cp -r third_party/lua/lunajson <game>/Binaries/Win64/ue4ss/Mods/<mod_name>/Scripts/
 ```
+
+### IDE Support (clangd)
+
+The project generates `compile_commands.json` for clangd-based intellisense. After running CMake configure:
+
+1. The file is generated at `build/<config>/compile_commands.json`
+2. A symlink/copy is created at the project root for IDE discovery
+3. Configure your `.clangd` file as needed (one is provided in the repo)
 
 ---
 
