@@ -6,30 +6,42 @@
 
 ## APFrameworkCore Dependencies
 
+> **IMPORTANT**: All apclientpp-related dependencies use specific commit hashes tested for compatibility. Do NOT update these independently - websocketpp and ASIO versions must be tested together!
+
 ```
 APFrameworkCore
-├── apclientpp (submodule: third_party/apclientpp)
-│   ├── wswrap (submodule: third_party/wswrap)
-│   ├── asio (FetchContent: third_party/asio)
-│   ├── websocketpp (submodule: third_party/websocketpp)
-│   └── valijson (submodule: third_party/valijson)
-├── nlohmann::json (header-only: third_party/nlohmann/json.hpp)
+├── apclientpp (FetchContent - header-only)
+│   ├── wswrap (FetchContent - header-only)
+│   ├── asio (FetchContent - header-only)
+│   └── websocketpp (FetchContent - header-only)
+├── nlohmann::json (FetchContent - v3.12.0)
 ├── sol2 (header-only: third_party/sol2/sol.hpp)
-└── lua-5.4.7 (static lib: third_party/lua-5.4.7/)
+├── lua-5.4.7 (static lib: third_party/lua-5.4.7/)
+└── zlib (Release builds only - for compression)
 ```
 
 ### Dependency Details
 
-| Dependency | Type | Purpose |
-|------------|------|---------|
-| **apclientpp** | Submodule | AP server communication (WebSocket client) |
-| **wswrap** | Submodule | WebSocket wrapper for apclientpp |
-| **asio** | FetchContent | Async I/O for networking |
-| **websocketpp** | Submodule | WebSocket protocol implementation |
-| **valijson** | Submodule | JSON schema validation |
-| **nlohmann::json** | Header-only | JSON parsing/serialization |
-| **sol2** | Header-only | C++/Lua bindings |
-| **lua-5.4.7** | Static lib | Lua interpreter |
+| Dependency | Type | Version/Commit | Purpose |
+|------------|------|----------------|---------|
+| **apclientpp** | FetchContent | `main` branch | AP server communication (WebSocket client) |
+| **wswrap** | FetchContent | `d0505e0ec53a26743f11051949a0dc66bcf44951` | WebSocket wrapper for apclientpp |
+| **asio** | FetchContent | `f693a3eb7fe72a5f19b975289afc4f437d373d9c` | Async I/O for networking |
+| **websocketpp** | FetchContent | `4dfe1be74e684acca19ac1cf96cce0df9eac2a2d` | WebSocket protocol implementation |
+| **nlohmann::json** | FetchContent | `v3.12.0` | JSON parsing/serialization |
+| **sol2** | Header-only | Manual copy | C++/Lua bindings |
+| **lua-5.4.7** | Static lib | 5.4.7 | Lua interpreter |
+| **zlib** | System/vcpkg | Latest | Compression (Release builds only) |
+
+### Version Compatibility Note
+
+The websocketpp and ASIO commit hashes are specifically tested together by the apclientpp maintainer. These commits are referenced in [apclientpp/test/CMakeLists.txt](https://github.com/black-sliver/apclientpp/blob/main/test/CMakeLists.txt). Do not update them independently or mixing incompatible versions may cause runtime crashes.
+
+### Removed Dependencies
+
+| Dependency | Reason |
+|------------|--------|
+| **valijson** | Removed via `AP_NO_SCHEMA` compile definition - unnecessary for our use case |
 
 ---
 
@@ -165,22 +177,21 @@ ipc_2/
 │       ├── regions.py          # Region creation helpers
 │       └── rules.py            # Access rules (optional, for logic)
 ├── third_party/
-│   ├── apclientpp/             # Submodule
-│   │   ├── wswrap/             # Submodule
-│   │   ├── websocketpp/        # Submodule
-│   │   └── valijson/           # Submodule
-│   ├── asio/                   # FetchContent
-│   ├── nlohmann/
-│   │   └── json.hpp
+│   ├── _deps/                  # CMake FetchContent downloads (gitignored)
+│   │   ├── apclientpp-src/
+│   │   ├── wswrap-src/
+│   │   ├── websocketpp-src/
+│   │   ├── asio-src/
+│   │   └── json-src/
 │   ├── sol2/
-│   │   └── sol.hpp
+│   │   └── sol.hpp             # Manual copy
 │   ├── lua-5.4.7/
 │   │   ├── src/
 │   │   └── CMakeLists.txt
 │   └── lua/
 │       ├── APFramework.lua
 │       ├── APClient.lua
-│       └── registry_helper.lua
+│       ├── registry_helper.lua
 │       ├── lunajson.lua
 │       └── lunajson/
 ├── Mods/
@@ -272,40 +283,116 @@ option(BUILD_FRAMEWORK "Build APFrameworkCore" ON)
 option(BUILD_CLIENTLIB "Build APClientLib" ON)
 option(BUILD_TESTS "Build tests" OFF)
 
-# Dependencies
-include(FetchContent)
+# =============================================================================
+# Third-Party Dependencies via FetchContent
+# =============================================================================
+# IMPORTANT: These commit hashes are tested together by apclientpp maintainer.
+# Do NOT update independently - see Version Compatibility Note above.
+# =============================================================================
 
-# Asio (standalone, header-only)
+include(FetchContent)
+set(FETCHCONTENT_QUIET OFF)
+
+# apclientpp (header-only AP client library)
 FetchContent_Declare(
-    asio_fetch
-    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-    GIT_TAG asio-1-12-2
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio
+    apclientpp
+    GIT_REPOSITORY https://github.com/black-sliver/apclientpp.git
+    GIT_TAG        main
 )
-FetchContent_MakeAvailable(asio_fetch)
+
+# wswrap (WebSocket wrapper - specific tested commit)
+FetchContent_Declare(
+    wswrap
+    GIT_REPOSITORY https://github.com/black-sliver/wswrap.git
+    GIT_TAG        d0505e0ec53a26743f11051949a0dc66bcf44951
+)
+
+# websocketpp (specific tested commit - must match asio version)
+FetchContent_Declare(
+    websocketpp
+    GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
+    GIT_TAG        4dfe1be74e684acca19ac1cf96cce0df9eac2a2d
+)
+
+# asio (specific tested commit - must match websocketpp version)
+FetchContent_Declare(
+    asio
+    GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+    GIT_TAG        f693a3eb7fe72a5f19b975289afc4f437d373d9c
+)
+
+# nlohmann/json
+FetchContent_Declare(
+    json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.12.0
+)
+
+FetchContent_MakeAvailable(apclientpp wswrap websocketpp asio json)
+
+# =============================================================================
+# apclientpp Interface Library (consolidates all apclientpp dependencies)
+# =============================================================================
+
+add_library(apclientpp_lib INTERFACE)
+
+target_include_directories(apclientpp_lib INTERFACE
+    ${apclientpp_SOURCE_DIR}
+    ${wswrap_SOURCE_DIR}
+    ${websocketpp_SOURCE_DIR}
+    ${asio_SOURCE_DIR}/asio/include
+)
+
+target_compile_definitions(apclientpp_lib INTERFACE
+    ASIO_STANDALONE
+    _WEBSOCKETPP_CPP11_THREAD_
+    AP_NO_SCHEMA          # Remove valijson dependency
+    WSWRAP_NO_SSL         # No SSL support needed
+)
+
+# MSVC-specific flags
+if(MSVC)
+    target_compile_options(apclientpp_lib INTERFACE
+        /Zc:__cplusplus   # Report correct __cplusplus value
+        /bigobj           # Large object file support for templates
+    )
+endif()
+
+# Compression: Disabled in Debug, Required in Release
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(apclientpp_lib INTERFACE
+        WSWRAP_NO_COMPRESSION
+    )
+    message(STATUS "APFramework: Compression DISABLED (Debug build)")
+else()
+    # Release builds require zlib for compression
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(apclientpp_lib INTERFACE ZLIB::ZLIB)
+    message(STATUS "APFramework: Compression ENABLED (Release build)")
+endif()
+
+# =============================================================================
+# Other Dependencies
+# =============================================================================
 
 # Lua
 add_subdirectory(third_party/lua-5.4.7)
 
-# Header-only libraries
-add_library(nlohmann_json INTERFACE)
-target_include_directories(nlohmann_json INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
-
+# sol2 (header-only, manual copy)
 add_library(sol2 INTERFACE)
 target_include_directories(sol2 INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-# Submodules
-add_subdirectory(third_party/apclientpp)
+# =============================================================================
+# Build Targets
+# =============================================================================
 
-# Build targets
 if(BUILD_FRAMEWORK)
-    add_subdirectory(src/framework)
+    add_subdirectory(APFrameworkCore)
 endif()
 
 if(BUILD_CLIENTLIB)
-    add_subdirectory(src/clientlib)
+    add_subdirectory(APClientLib)
 endif()
 
 if(BUILD_TESTS)
@@ -317,41 +404,40 @@ endif()
 ### Framework CMakeLists.txt
 
 ```cmake
-# src/framework/CMakeLists.txt
+# APFrameworkCore/CMakeLists.txt
 
 add_library(APFrameworkCore SHARED
-    APManager.cpp
-    APClient.cpp
-    APIPCServer.cpp
-    APCapabilities.cpp
-    APModRegistry.cpp
-    APMessageRouter.cpp
-    APStateManager.cpp
-    APPollingThread.cpp
-    APConfig.cpp
-    APPathUtil.cpp
-    APLogger.cpp
+    src/APClient.cpp
+    src/APIPCServer.cpp
+    src/APCapabilities.cpp
+    src/APModRegistry.cpp
+    src/APMessageRouter.cpp
+    src/APStateManager.cpp
+    src/APPollingThread.cpp
+    src/APConfig.cpp
+    src/APPathUtil.cpp
+    src/APLogger.cpp
 )
 
 target_include_directories(APFrameworkCore
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/apclientpp/include
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/asio/asio/include
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+# Link apclientpp_lib interface library (brings all apclientpp deps and flags)
 target_link_libraries(APFrameworkCore
-    PRIVATE apclientpp
-    PRIVATE nlohmann_json
+    PRIVATE apclientpp_lib
+    PRIVATE nlohmann_json::nlohmann_json
     PRIVATE sol2
     PRIVATE lua_static
-    PRIVATE ws2_32  # Windows sockets
 )
 
-target_compile_definitions(APFrameworkCore
-    PRIVATE ASIO_STANDALONE
-    PRIVATE _WEBSOCKETPP_CPP11_THREAD_
-    PRIVATE AP_FRAMEWORK_EXPORTS
+if(WIN32)
+    target_link_libraries(APFrameworkCore PRIVATE ws2_32)
+endif()
+
+target_compile_definitions(APFrameworkCore PRIVATE
+    AP_FRAMEWORK_EXPORTS
 )
 
 # Export function for Lua loading
@@ -510,21 +596,46 @@ extern "C" {
 
 - CMake 3.20+
 - Visual Studio 2019+ (Windows)
-- Git (for submodules)
+- Git (for FetchContent cloning)
+- **Release builds only**: zlib (via vcpkg or system package)
 
-### Clone with Submodules
+### Clone Repository
 
 ```bash
-git clone --recursive https://github.com/user/ap-framework.git
+git clone https://github.com/user/ap-framework.git
 cd ap-framework
 ```
 
-### Build
+> **Note**: No `--recursive` needed! Dependencies are fetched automatically via CMake FetchContent.
+
+### Install zlib (Release builds only)
+
+Release builds require zlib for AP server compression support. Install via vcpkg:
 
 ```bash
-mkdir build
-cd build
-cmake .. -G "Visual Studio 17 2022" -A x64
+# Install vcpkg if needed
+git clone https://github.com/microsoft/vcpkg.git
+cd vcpkg && bootstrap-vcpkg.bat && cd ..
+
+# Install zlib
+vcpkg install zlib:x64-windows
+```
+
+### Build Debug (no compression)
+
+```bash
+mkdir build-debug
+cd build-debug
+cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Debug
+cmake --build . --config Debug
+```
+
+### Build Release (with compression)
+
+```bash
+mkdir build-release
+cd build-release
+cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=<vcpkg_root>/scripts/buildsystems/vcpkg.cmake
 cmake --build . --config Release
 ```
 
@@ -533,11 +644,22 @@ cmake --build . --config Release
 After building:
 
 ```
-build/
+build-release/
 ├── Release/
 │   ├── APFrameworkCore.dll
 │   └── APClientLib.dll
 ```
+
+### First Build Note
+
+The first build will take longer as CMake FetchContent downloads:
+- apclientpp (~1MB)
+- wswrap (~50KB)
+- websocketpp (~5MB)
+- asio (~10MB)
+- nlohmann/json (~50MB)
+
+These are cached in `build/_deps/` and won't re-download on subsequent builds.
 
 ### Deploy
 

@@ -1,0 +1,32 @@
+CompileFlags:
+    Add:
+        [
+            '-m64',
+            '-fms-extensions',
+            '-fms-compatibility',
+            '-fdelayed-template-parsing',
+            '-Wno-microsoft-include',
+            '-Wno-unknown-pragmas',
+        ]
+
+Index:
+    Background: Build
+    StandardLibrary: Yes
+
+Diagnostics:
+    UnusedIncludes: Strict
+    ClangTidy:
+        Add:
+            - modernize-*
+            - bugprone-*
+            - performance-*
+        Remove:
+            - modernize-use-trailing-return-type
+
+InlayHints:
+    Enabled: Yes
+    ParameterNames: Yes
+    DeducedTypes: Yes
+
+Hover:
+    ShowAKA: Yes
