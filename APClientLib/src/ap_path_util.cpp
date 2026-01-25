@@ -1,5 +1,5 @@
 #include "ap_path_util.h"
-#include "ap_clientlib_exports.h"
+#include "ap_client_manager.h"
 
 #include <sol/sol.hpp>
 
@@ -14,23 +14,6 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 #endif
 
 namespace ap::client {
-
-// =============================================================================
-// Cached Lua State
-// =============================================================================
-
-static std::unique_ptr<sol::state_view> g_cached_lua = nullptr;
-
-void update_cached_lua(lua_State* L) {
-    if (L) {
-        g_cached_lua = std::make_unique<sol::state_view>(L);
-        (*g_cached_lua)["print"]("[APClientLib]: Updated cached lua state.\n");
-    }
-}
-
-sol::state_view* get_cached_lua() {
-    return g_cached_lua.get();
-}
 
 // =============================================================================
 // Static Member Initialization
@@ -94,8 +77,8 @@ void APPathUtil::reinitialize_cache() {
 }
 
 bool APPathUtil::try_init_from_lua() {
-    // Access the library's cached Lua state (updated via update() calls)
-    sol::state_view* lua = get_cached_lua();
+    // Access the library's cached Lua state from APClientManager
+    sol::state_view* lua = APClientManager::instance().get_lua_state();
     if (!lua) {
         return false;
     }
@@ -342,6 +325,51 @@ bool APPathUtil::write_file(const std::filesystem::path& path, const std::string
 
     file << content;
     return file.good();
+}
+
+// =============================================================================
+// Current Mod Folder Discovery via debug.getinfo
+// =============================================================================
+
+std::filesystem::path APPathUtil::discover_current_mod_folder(lua_State* L) {
+    if (!L) {
+        return {};
+    }
+
+    sol::state_view lua(L);
+
+    try {
+        // Execute: debug.getinfo(level, "S").source
+        sol::table debug_table = lua["debug"];
+        sol::protected_function getinfo = debug_table["getinfo"];
+
+        // Try different stack levels to find the calling script
+        for (int level = 2; level <= 10; ++level) {
+            auto result = getinfo(level, "S");
+            if (!result.valid()) continue;
+
+            sol::table info = result;
+            sol::optional<std::string> source = info["source"];
+
+            if (source && source->length() > 1 && (*source)[0] == '@') {
+                std::string path = source->substr(1); // Remove leading @
+                std::filesystem::path script_path(path);
+
+                // Script should be in <ModFolder>/Scripts/main.lua
+                // So mod folder is script_path.parent_path().parent_path()
+                if (script_path.has_parent_path()) {
+                    auto scripts_folder = script_path.parent_path();
+                    if (scripts_folder.filename() == "Scripts" && scripts_folder.has_parent_path()) {
+                        return scripts_folder.parent_path();
+                    }
+                }
+            }
+        }
+    } catch (...) {
+        // Fallback handled by caller
+    }
+
+    return {};
 }
 
 } // namespace ap::client

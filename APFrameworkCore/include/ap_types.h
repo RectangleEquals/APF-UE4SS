@@ -502,7 +502,7 @@ namespace IPCMessageType {
     constexpr const char* LOG = "log";
     constexpr const char* ACTION_RESULT = "action_result";
 
-    // Priority Client -> Framework
+    // Priority Client -> Framework (legacy specific commands)
     constexpr const char* CMD_RESTART = "cmd_restart";
     constexpr const char* CMD_RESYNC = "cmd_resync";
     constexpr const char* CMD_RECONNECT = "cmd_reconnect";
@@ -513,10 +513,14 @@ namespace IPCMessageType {
     constexpr const char* SEND_MESSAGE = "send_message";
     constexpr const char* BROADCAST = "broadcast";
 
-    // Framework -> Priority Client
+    // Framework -> Priority Client (legacy responses)
     constexpr const char* GET_MODS_RESPONSE = "get_mods_response";
     constexpr const char* GET_LOGS_RESPONSE = "get_logs_response";
     constexpr const char* GET_DATA_PACKAGE_RESPONSE = "get_data_package_response";
+
+    // Generic Command System (new)
+    constexpr const char* COMMAND = "command";               // Client -> Framework
+    constexpr const char* COMMAND_RESPONSE = "command_response";  // Framework -> Client
 }
 
 // =============================================================================

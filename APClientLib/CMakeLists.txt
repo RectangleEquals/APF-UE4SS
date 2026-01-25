@@ -6,10 +6,13 @@ set(SOURCES
     src/ap_ipc_client.cpp
     src/ap_path_util.cpp
     src/ap_action_executor.cpp
+    src/ap_client_manager.cpp
 )
 
 set(HEADERS
     include/ap_clientlib_exports.h
+    include/ap_client_types.h
+    include/ap_client_manager.h
     include/ap_ipc_client.h
     include/ap_path_util.h
     include/ap_action_executor.h

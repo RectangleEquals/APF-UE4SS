@@ -2,6 +2,7 @@
 #include <sol/sol.hpp>
 #include <nlohmann/json.hpp>
 #include "ap_clientlib_exports.h"
+#include "ap_client_manager.h"
 #include "ap_ipc_client.h"
 #include "ap_action_executor.h"
 #include "ap_path_util.h"
@@ -15,33 +16,11 @@
 namespace ap::client {
 
 // =============================================================================
-// Forward Declarations
-// =============================================================================
-
-void update_cached_lua(lua_State* L);
-sol::state_view* get_cached_lua();
-
-// =============================================================================
-// Configuration Structures
-// =============================================================================
-
-struct LoggingConfig {
-    std::string level = "info";
-    std::string file = "ap_framework.log";
-    bool console = true;
-};
-
-struct FrameworkConfig {
-    std::string game_name;
-    std::string version;
-    LoggingConfig logging;
-    bool loaded = false;
-};
-
-// =============================================================================
 // Global State
 // =============================================================================
 
+// These remain in main.cpp because they're only used here for callbacks and
+// message handling. The manager owns Lua state, IPC client, and action executor.
 static std::unique_ptr<ap::APIPCClient> g_ipc_client;
 static std::unique_ptr<APActionExecutor> g_action_executor;
 static std::string g_mod_id;
@@ -50,6 +29,9 @@ static std::filesystem::path g_mod_folder;
 static FrameworkConfig g_framework_config;
 static std::ofstream g_log_file;
 static std::mutex g_log_mutex;
+
+// Cached lifecycle state - updated before callbacks are invoked
+static std::string g_current_lifecycle_state = "UNINITIALIZED";
 
 // =============================================================================
 // Callback Storage
@@ -68,24 +50,10 @@ static std::optional<sol::protected_function> g_callback_registration_rejected;
 static std::optional<sol::protected_function> g_callback_item_received;
 static std::optional<sol::protected_function> g_callback_state_active;
 static std::optional<sol::protected_function> g_callback_state_error;
+static std::optional<sol::protected_function> g_callback_command_response;
 
-// =============================================================================
-// Message Type Constants (must match APFrameworkCore)
-// =============================================================================
-
-namespace IPCMessageType {
-    constexpr const char* REGISTER = "register";
-    constexpr const char* REGISTRATION_RESPONSE = "registration_response";
-    constexpr const char* LOCATION_CHECK = "location_check";
-    constexpr const char* LOCATION_SCOUT = "location_scout";
-    constexpr const char* LOG = "log";
-    constexpr const char* ACTION_RESULT = "action_result";
-    constexpr const char* EXECUTE_ACTION = "execute_action";
-    constexpr const char* LIFECYCLE = "lifecycle";
-    constexpr const char* AP_MESSAGE = "ap_message";
-    constexpr const char* ERROR_MSG = "error";
-    constexpr const char* CALLBACK_ERROR = "callback_error";
-}
+// IPCMessageType constants are now in ap_client_types.h (ap::IPCMessageType)
+using namespace ap;
 
 // =============================================================================
 // Logging Functions
@@ -121,7 +89,7 @@ static void log_internal(const std::string& level, const std::string& message) {
 
     // Write to UE4SS console if enabled
     if (g_framework_config.logging.console) {
-        sol::state_view* lua = get_cached_lua();
+        sol::state_view* lua = APClientManager::instance().get_lua_state();
         if (lua) {
             try {
                 sol::protected_function print_fn = (*lua)["print"];
@@ -249,6 +217,9 @@ void handle_message(const ap::ClientIPCMessage& msg) {
         std::string state = msg.payload.value("state", "");
         std::string message = msg.payload.value("message", "");
 
+        // Cache state BEFORE invoking callbacks so get_current_state() works in callbacks
+        g_current_lifecycle_state = state;
+
         // Generic lifecycle callback
         invoke_optional_callback(g_callback_lifecycle, "on_lifecycle", [&](sol::protected_function& cb) {
             return cb(state, message);
@@ -289,6 +260,25 @@ void handle_message(const ap::ClientIPCMessage& msg) {
 
         invoke_optional_callback(g_callback_error, "on_error", [&](sol::protected_function& cb) {
             return cb(code, error_message);
+        });
+
+    } else if (msg.type == IPCMessageType::COMMAND_RESPONSE) {
+        std::string command = msg.payload.value("command", "");
+        bool success = msg.payload.value("success", false);
+        std::string error = msg.payload.value("error", "");
+        nlohmann::json data = msg.payload.value("data", nlohmann::json::object());
+
+        invoke_optional_callback(g_callback_command_response, "on_command_response", [&](sol::protected_function& cb) {
+            // Create result table for Lua
+            sol::state_view* lua = APClientManager::instance().get_lua_state();
+            if (!lua) return sol::protected_function_result();
+
+            sol::table result = lua->create_table();
+            result["success"] = success;
+            result["error"] = error;
+            result["data"] = data.dump();  // Pass as JSON string, Lua can parse if needed
+
+            return cb(command, result);
         });
     }
 }
@@ -418,7 +408,7 @@ int create_lua_module(lua_State* L) {
     sol::table module = lua.create_table();
 
     // Update cached Lua state immediately
-    update_cached_lua(L);
+    APClientManager::instance().update_lua_state(L);
 
     // Discover mod folder from calling script
     g_mod_folder = discover_mod_folder_from_lua(L);
@@ -479,11 +469,16 @@ int create_lua_module(lua_State* L) {
         return g_ipc_client && g_ipc_client->is_connected();
     };
 
+    // get_current_state() -> string (returns cached lifecycle state)
+    module["get_current_state"] = []() -> std::string {
+        return g_current_lifecycle_state;
+    };
+
     // update() - Must be called every tick
     module["update"] = [](sol::this_state ts) {
         // Update cached Lua state using sol::this_state to get the lua_State*
         lua_State* L = ts.lua_state();
-        update_cached_lua(L);
+        APClientManager::instance().update_lua_state(L);
 
         // Poll for IPC messages (will trigger handle_message for each)
         if (g_ipc_client) {
@@ -564,6 +559,40 @@ int create_lua_module(lua_State* L) {
     };
 
     // =========================================================================
+    // Command Functions (Priority Client Only)
+    // =========================================================================
+
+    // command(command_name, payload?) -> boolean
+    // Send a command to the framework. Only works for priority clients.
+    module["command"] = [](const std::string& command, sol::optional<sol::table> payload) -> bool {
+        if (!g_ipc_client || !g_ipc_client->is_connected()) return false;
+
+        ap::ClientIPCMessage msg;
+        msg.type = IPCMessageType::COMMAND;
+        msg.source = g_mod_id;
+        msg.target = "framework";
+        msg.payload = {{"command", command}};
+
+        // Add optional payload if provided
+        if (payload && payload->valid()) {
+            for (auto& pair : *payload) {
+                std::string key = pair.first.as<std::string>();
+                if (pair.second.is<std::string>()) {
+                    msg.payload["payload"][key] = pair.second.as<std::string>();
+                } else if (pair.second.is<double>()) {
+                    msg.payload["payload"][key] = pair.second.as<double>();
+                } else if (pair.second.is<bool>()) {
+                    msg.payload["payload"][key] = pair.second.as<bool>();
+                } else if (pair.second.is<int>()) {
+                    msg.payload["payload"][key] = pair.second.as<int>();
+                }
+            }
+        }
+
+        return g_ipc_client->send_message(msg);
+    };
+
+    // =========================================================================
     // Callback Registration - Generic
     // =========================================================================
 
@@ -609,6 +638,10 @@ int create_lua_module(lua_State* L) {
 
     module["on_state_error"] = [](sol::protected_function callback) {
         g_callback_state_error = callback;
+    };
+
+    module["on_command_response"] = [](sol::protected_function callback) {
+        g_callback_command_response = callback;
     };
 
     return sol::stack::push(L, module);

@@ -94,6 +94,23 @@ public:
             handle_ipc_message(client_id, msg);
         });
 
+        // Set up connect handler to send current lifecycle state to new clients
+        ipc_server_->set_connect_handler([this](const std::string& client_id) {
+            APLogger::instance().log(LogLevel::Trace,
+                "IPC client connected: " + client_id);
+
+            // Send current lifecycle state to newly connected client
+            IPCMessage state_msg;
+            state_msg.type = IPCMessageType::LIFECYCLE;
+            state_msg.source = IPCTarget::FRAMEWORK;
+            state_msg.target = client_id;
+            state_msg.payload = {
+                {"state", lifecycle_state_to_string(current_state_.get())},
+                {"message", "Current state on connect"}
+            };
+            ipc_server_->send_message(client_id, state_msg);
+        });
+
         // Transition to DISCOVERY
         transition_to_unlocked(LifecycleState::DISCOVERY, "Scanning for mods");
 
@@ -444,6 +461,98 @@ private:
                 cmd_reconnect();
             }
         }
+        // Generic command system
+        else if (msg.type == IPCMessageType::COMMAND) {
+            handle_command(client_id, msg);
+        }
+    }
+
+    void handle_command(const std::string& client_id, const IPCMessage& msg) {
+        std::string command = msg.payload.value("command", "");
+
+        APLogger::instance().log(LogLevel::Debug,
+            "Command received from " + client_id + ": " + command);
+
+        // Verify priority client status
+        if (!mod_registry_->is_priority_client(client_id)) {
+            APLogger::instance().log(LogLevel::Warn,
+                "Command rejected - not a priority client: " + client_id);
+
+            IPCMessage response;
+            response.type = IPCMessageType::COMMAND_RESPONSE;
+            response.source = IPCTarget::FRAMEWORK;
+            response.target = client_id;
+            response.payload = {
+                {"command", command},
+                {"success", false},
+                {"error", "Not a priority client"}
+            };
+            ipc_server_->send_message(client_id, response);
+            return;
+        }
+
+        // Execute command
+        nlohmann::json result;
+
+        if (command == "restart") {
+            cmd_restart();
+            result = {{"success", true}};
+        }
+        else if (command == "resync") {
+            cmd_resync();
+            result = {{"success", true}};
+        }
+        else if (command == "reconnect") {
+            cmd_reconnect();
+            result = {{"success", true}};
+        }
+        else if (command == "status") {
+            size_t total = mod_registry_->count();
+            size_t pending = mod_registry_->get_pending_registrations().size();
+            size_t registered = total - pending;
+
+            result = {
+                {"success", true},
+                {"data", {
+                    {"state", lifecycle_state_to_string(current_state_.get())},
+                    {"connected_clients", ipc_server_->get_client_count()},
+                    {"ap_connected", ap_client_ ? ap_client_->is_slot_connected() : false},
+                    {"registered_mods", registered},
+                    {"total_mods", total}
+                }}
+            };
+        }
+        else if (command == "get_mods") {
+            auto manifests = mod_registry_->get_enabled_manifests();
+            nlohmann::json mods_arr = nlohmann::json::array();
+            for (const auto& m : manifests) {
+                mods_arr.push_back({
+                    {"mod_id", m.mod_id},
+                    {"name", m.name},
+                    {"version", m.version},
+                    {"registered", mod_registry_->is_registered(m.mod_id)}
+                });
+            }
+            result = {
+                {"success", true},
+                {"data", {{"mods", mods_arr}}}
+            };
+        }
+        else {
+            result = {
+                {"success", false},
+                {"error", "Unknown command: " + command}
+            };
+        }
+
+        // Send response
+        IPCMessage response;
+        response.type = IPCMessageType::COMMAND_RESPONSE;
+        response.source = IPCTarget::FRAMEWORK;
+        response.target = client_id;
+        response.payload = result;
+        response.payload["command"] = command;
+        ipc_server_->send_message(client_id, response);
     }
 
     void handle_framework_event(const FrameworkEvent& event) {

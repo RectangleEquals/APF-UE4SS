@@ -1,5 +1,5 @@
 #include "ap_action_executor.h"
-#include "ap_clientlib_exports.h"
+#include "ap_client_manager.h"
 
 #include <sol/sol.hpp>
 
@@ -24,8 +24,8 @@ public:
         result.item_id = item_id;
         result.item_name = item_name;
 
-        // Get cached Lua state
-        sol::state_view* lua = get_cached_lua();
+        // Get cached Lua state from APClientManager
+        sol::state_view* lua = APClientManager::instance().get_lua_state();
         if (!lua) {
             result.success = false;
             result.error = "Lua state not available";

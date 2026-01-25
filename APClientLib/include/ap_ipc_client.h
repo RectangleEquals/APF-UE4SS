@@ -1,43 +1,15 @@
 #pragma once
 
 #include "ap_clientlib_exports.h"
+#include "ap_client_types.h"
 
 #include <string>
 #include <vector>
 #include <memory>
 #include <functional>
 #include <optional>
-#include <nlohmann/json.hpp>
 
 namespace ap {
-
-/**
- * @brief IPC Message structure (duplicated from APFrameworkCore for independence).
- */
-struct ClientIPCMessage {
-    std::string type;
-    std::string source;
-    std::string target;
-    nlohmann::json payload;
-
-    nlohmann::json to_json() const {
-        return {
-            {"type", type},
-            {"source", source},
-            {"target", target},
-            {"payload", payload}
-        };
-    }
-
-    static ClientIPCMessage from_json(const nlohmann::json& j) {
-        ClientIPCMessage msg;
-        msg.type = j.value("type", "");
-        msg.source = j.value("source", "");
-        msg.target = j.value("target", "");
-        msg.payload = j.value("payload", nlohmann::json::object());
-        return msg;
-    }
-};
 
 /**
  * @brief Named pipes client for IPC with the framework.

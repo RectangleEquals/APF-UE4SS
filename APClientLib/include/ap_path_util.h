@@ -6,14 +6,18 @@
 #include <filesystem>
 #include <optional>
 
+// Forward declaration
+struct lua_State;
+
 namespace ap::client {
 
 /**
  * Static utility class for client-side path resolution.
  *
- * Uses a two-tier discovery strategy:
- * 1. Primary: Call UE4SS's IterateGameDirectories() via cached Lua state
- * 2. Fallback: Search upward from DLL location
+ * Uses a three-tier discovery strategy:
+ * 1. Primary: debug.getinfo trick to find calling script's location
+ * 2. Secondary: Call UE4SS's IterateGameDirectories() via cached Lua state
+ * 3. Fallback: Search upward from DLL location
  *
  * The framework mod folder is identified by content (framework_config.json + manifest.json),
  * not by name, allowing users to rename the mod folder.
@@ -62,6 +66,20 @@ public:
      * Searches for folder containing both framework_config.json AND manifest.json.
      */
     static std::optional<std::filesystem::path> find_framework_mod_folder();
+
+    /**
+     * Discover the calling mod's folder using debug.getinfo.
+     * @param L Lua state from which to query debug.getinfo.
+     * @return Path to the mod folder if found, empty path otherwise.
+     *
+     * This is the PRIMARY discovery method and should be called during
+     * library initialization (luaopen_APClientLib) to find the mod folder
+     * from the calling Lua script's location.
+     *
+     * Uses: debug.getinfo(level, "S").source to find the calling script,
+     * then navigates up from Scripts/ to the mod folder.
+     */
+    static std::filesystem::path discover_current_mod_folder(lua_State* L);
 
     // =========================================================================
     // Well-Known File Paths
