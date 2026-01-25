@@ -1,0 +1,7 @@
+{
+    "mod_id": "archipelago.palworld.framework",
+    "name": "AP Framework",
+    "version": "1.0.0",
+    "description": "Core framework for Archipelago Multiworld integration",
+    "enabled": true
+}

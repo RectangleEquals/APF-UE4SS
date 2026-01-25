@@ -3,12 +3,38 @@ project(APFrameworkCore)
 set(SOURCES
     src/ap_manager.cpp
     src/ap_exports.cpp
+    src/ap_logger.cpp
+    src/ap_path_util.cpp
+    src/ap_config.cpp
+    src/ap_ipc_server.cpp
+    src/ap_client.cpp
+    src/ap_polling_thread.cpp
+    src/ap_mod_registry.cpp
+    src/ap_capabilities.cpp
+    src/ap_state_manager.cpp
+    src/ap_message_router.cpp
     src/main.cpp
 )
 
 set(HEADERS
     include/ap_manager.h
     include/ap_exports.h
+    include/ap_types.h
+    include/ap_logger.h
+    include/ap_path_util.h
+    include/ap_config.h
+    include/ap_ipc_server.h
+    include/ap_client.h
+    include/ap_polling_thread.h
+    include/ap_mod_registry.h
+    include/ap_capabilities.h
+    include/ap_state_manager.h
+    include/ap_message_router.h
+    include/thread_safe_queue.h
+    include/atomic_state.h
+    include/stop_token.h
+    include/retry_util.h
+    include/message_queues.h
 )
 
 add_library(APFrameworkCore SHARED ${SOURCES} ${HEADERS})

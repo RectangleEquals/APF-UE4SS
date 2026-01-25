@@ -1,0 +1,65 @@
+{
+    "mod_id": "example.mygame.clientmod",
+    "name": "Example Client Mod",
+    "version": "1.0.0",
+    "description": "Example mod demonstrating AP Framework integration",
+    "enabled": true,
+    "capabilities": {
+        "items": [
+            {
+                "name": "Speed Boost",
+                "type": "useful",
+                "amount": 5,
+                "action": "ExampleMod.GrantSpeedBoost",
+                "args": [
+                    {"name": "duration", "type": "number", "value": 30}
+                ]
+            },
+            {
+                "name": "Health Pack",
+                "type": "filler",
+                "amount": -1,
+                "action": "ExampleMod.HealPlayer",
+                "args": [
+                    {"name": "amount", "type": "number", "value": 50}
+                ]
+            },
+            {
+                "name": "Golden Key",
+                "type": "progression",
+                "amount": 1,
+                "action": "ExampleMod.UnlockDoor",
+                "args": [
+                    {"name": "door_id", "type": "string", "value": "golden_door"}
+                ]
+            },
+            {
+                "name": "Poison Trap",
+                "type": "trap",
+                "amount": -1,
+                "action": "ExampleMod.ApplyPoison",
+                "args": [
+                    {"name": "damage", "type": "number", "value": 10}
+                ]
+            }
+        ],
+        "locations": [
+            {
+                "name": "Starting Chest",
+                "amount": 1
+            },
+            {
+                "name": "Boss Reward",
+                "amount": 1
+            },
+            {
+                "name": "Hidden Alcove",
+                "amount": 1
+            },
+            {
+                "name": "Shop Purchase",
+                "amount": 3
+            }
+        ]
+    }
+}

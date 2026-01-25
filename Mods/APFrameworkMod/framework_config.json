@@ -1,0 +1,39 @@
+{
+    "game_name": "Palworld",
+    "version": "1.0.0",
+    "id_base": 6942067,
+    "connection": {
+        "server": "localhost",
+        "port": 38281,
+        "slot_name": "Player1",
+        "password": "",
+        "auto_reconnect": true
+    },
+    "logging": {
+        "level": "trace",
+        "file": "ap_framework.log",
+        "console": true
+    },
+    "timeouts": {
+        "priority_registration_ms": 30000,
+        "registration_ms": 60000,
+        "connection_ms": 30000,
+        "ipc_message_ms": 5000,
+        "action_execution_ms": 5000,
+        "retry": {
+            "max": {
+                "connection": 3,
+                "ipc_message": 3
+            },
+            "initial_delay_ms": 1000,
+            "backoff_multiplier": 2.0,
+            "max_delay_ms": 10000
+        }
+    },
+    "threading": {
+        "polling_interval_ms": 16,
+        "ipc_poll_interval_ms": 10,
+        "queue_max_size": 1000,
+        "shutdown_timeout_ms": 5000
+    }
+}
