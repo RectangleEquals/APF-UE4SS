@@ -90,6 +90,8 @@ target_compile_options(apclientpp
 
 target_compile_options(APFrameworkCore
     PRIVATE
+        "$<$<CXX_COMPILER_ID:MSVC>:/wd4251>"    # needs to have dll-interface to be used by clients of class
+        "$<$<CXX_COMPILER_ID:MSVC>:/wd4702>"    # unreachable code
         "$<$<CXX_COMPILER_ID:MSVC>:/wd5321>"    # nonstandard extension used
 )
 
