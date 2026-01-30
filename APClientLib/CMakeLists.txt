@@ -37,6 +37,12 @@ target_compile_definitions(APClientLib PRIVATE
 
 target_link_libraries(APClientLib PRIVATE lua_static)
 
+target_compile_options(APClientLib
+    PRIVATE
+        "$<$<CXX_COMPILER_ID:MSVC>:/wd4251>"    # needs to have dll-interface to be used by clients of class
+        "$<$<CXX_COMPILER_ID:MSVC>:/wd5321>"    # nonstandard extension used
+)
+
 set_target_properties(APClientLib PROPERTIES
     PREFIX ""
     OUTPUT_NAME "APClientLib"

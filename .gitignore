@@ -81,11 +81,12 @@ APFramework.log
 Thumbs.db
 desktop.ini
 
-# Temporary files
+# Temporary files and folders
 *.tmp
 *.temp
 *.bak
 *.backup
+.cache/
 
 # Documentation build artifacts
 docs/_build/
