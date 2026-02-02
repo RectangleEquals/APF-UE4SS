@@ -126,6 +126,9 @@ FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp)
 
 add_subdirectory(third_party/lua-5.4.7)
 
+# Shared library (must be built before framework and client)
+add_subdirectory(shared)
+
 # Build targets
 if(AP_BUILD_FRAMEWORK)
     add_subdirectory(APFrameworkCore)

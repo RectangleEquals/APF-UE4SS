@@ -1,20 +1,21 @@
 # APClientLib CMakeLists.txt
 project(APClientLib)
 
+# Note: ap_path_util.cpp is now in APShared
 set(SOURCES
     src/main.cpp
     src/ap_ipc_client.cpp
-    src/ap_path_util.cpp
     src/ap_action_executor.cpp
+	src/ap_callbacks.cpp
     src/ap_client_manager.cpp
 )
 
+# Note: ap_path_util.h is now in APShared
 set(HEADERS
-    include/ap_clientlib_exports.h
     include/ap_client_types.h
     include/ap_client_manager.h
+	include/ap_callbacks.h
     include/ap_ipc_client.h
-    include/ap_path_util.h
     include/ap_action_executor.h
 )
 
@@ -23,6 +24,7 @@ add_library(APClientLib SHARED ${SOURCES} ${HEADERS})
 target_include_directories(APClientLib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lua-5.4.7/src
     SYSTEM PUBLIC
         ${json_SOURCE_DIR}/single_include
@@ -31,11 +33,9 @@ target_include_directories(APClientLib
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sol2/include
 )
 
-target_compile_definitions(APClientLib PRIVATE
-    AP_CLIENTLIB_EXPORTS
-)
+target_compile_definitions(APClientLib PRIVATE AP_EXPORTS)
 
-target_link_libraries(APClientLib PRIVATE lua_static)
+target_link_libraries(APClientLib PRIVATE APShared lua_static)
 
 target_compile_options(APClientLib
     PRIVATE

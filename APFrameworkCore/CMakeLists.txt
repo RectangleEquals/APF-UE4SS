@@ -1,11 +1,8 @@
 project(APFrameworkCore)
 
+# Note: ap_logger.cpp, ap_path_util.cpp, ap_config.cpp are now in APShared
 set(SOURCES
     src/ap_manager.cpp
-    src/ap_exports.cpp
-    src/ap_logger.cpp
-    src/ap_path_util.cpp
-    src/ap_config.cpp
     src/ap_ipc_server.cpp
     src/ap_client.cpp
     src/ap_polling_thread.cpp
@@ -16,13 +13,10 @@ set(SOURCES
     src/main.cpp
 )
 
+# Note: ap_logger.h, ap_path_util.h, ap_config.h are now in APShared
 set(HEADERS
     include/ap_manager.h
-    include/ap_exports.h
     include/ap_types.h
-    include/ap_logger.h
-    include/ap_path_util.h
-    include/ap_config.h
     include/ap_ipc_server.h
     include/ap_client.h
     include/ap_polling_thread.h
@@ -42,6 +36,7 @@ add_library(APFrameworkCore SHARED ${SOURCES} ${HEADERS})
 target_include_directories(APFrameworkCore
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lua-5.4.7/src
     SYSTEM PUBLIC
         ${json_SOURCE_DIR}/single_include
@@ -54,10 +49,11 @@ target_include_directories(APFrameworkCore
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sol2/include
 )
 
-target_compile_definitions(APFrameworkCore PRIVATE AP_FRAMEWORK_EXPORTS)
+target_compile_definitions(APFrameworkCore PRIVATE AP_EXPORTS)
 
 target_link_libraries(APFrameworkCore
     PRIVATE
+        APShared
         lua_static
         zlibstatic
         apclientpp

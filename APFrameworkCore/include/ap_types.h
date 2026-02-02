@@ -1,10 +1,15 @@
 #pragma once
 
+// Include shared types from APShared library
+#include "Types/ap_shared_enums.h"
+#include "Types/ap_shared_ipc_types.h"
+#include "Types/ap_shared_config_types.h"
+#include "Types/ap_shared_manifest_types.h"
+
 #include <chrono>
 #include <cstdint>
 #include <map>
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -12,7 +17,7 @@
 namespace ap {
 
 // =============================================================================
-// Enumerations
+// Framework-Specific Enumerations
 // =============================================================================
 
 enum class LifecycleState {
@@ -30,20 +35,7 @@ enum class LifecycleState {
   ERROR_STATE
 };
 
-enum class LogLevel {
-  Trace = 0,
-  Debug = 1,
-  Info = 2,
-  Warn = 3,
-  Error = 4,
-  Fatal = 5
-};
-
 enum class ModType { Regular, Priority };
-
-enum class ItemType { Progression, Useful, Filler, Trap };
-
-enum class ArgType { String, Number, Boolean, Property };
 
 enum class ClientStatus {
   Unknown = 0,
@@ -105,119 +97,6 @@ inline std::string lifecycle_state_to_string(LifecycleState state) {
     return "UNKNOWN";
   }
 }
-
-inline std::string log_level_to_string(LogLevel level) {
-  switch (level) {
-  case LogLevel::Trace:
-    return "TRACE";
-  case LogLevel::Debug:
-    return "DEBUG";
-  case LogLevel::Info:
-    return "INFO";
-  case LogLevel::Warn:
-    return "WARN";
-  case LogLevel::Error:
-    return "ERROR";
-  case LogLevel::Fatal:
-    return "FATAL";
-  default:
-    return "UNKNOWN";
-  }
-}
-
-inline std::string item_type_to_string(ItemType type) {
-  switch (type) {
-  case ItemType::Progression:
-    return "progression";
-  case ItemType::Useful:
-    return "useful";
-  case ItemType::Filler:
-    return "filler";
-  case ItemType::Trap:
-    return "trap";
-  default:
-    return "unknown";
-  }
-}
-
-inline ItemType item_type_from_string(const std::string &str) {
-  if (str == "progression")
-    return ItemType::Progression;
-  if (str == "useful")
-    return ItemType::Useful;
-  if (str == "filler")
-    return ItemType::Filler;
-  if (str == "trap")
-    return ItemType::Trap;
-  return ItemType::Filler;
-}
-
-inline std::string arg_type_to_string(ArgType type) {
-  switch (type) {
-  case ArgType::String:
-    return "string";
-  case ArgType::Number:
-    return "number";
-  case ArgType::Boolean:
-    return "boolean";
-  case ArgType::Property:
-    return "property";
-  default:
-    return "unknown";
-  }
-}
-
-inline ArgType arg_type_from_string(const std::string &str) {
-  if (str == "string")
-    return ArgType::String;
-  if (str == "number")
-    return ArgType::Number;
-  if (str == "boolean")
-    return ArgType::Boolean;
-  if (str == "property")
-    return ArgType::Property;
-  return ArgType::String;
-}
-
-// =============================================================================
-// Manifest Structures (Design02)
-// =============================================================================
-
-struct ActionArg {
-  std::string name;
-  ArgType type = ArgType::String;
-  nlohmann::json value;
-};
-
-struct LocationDef {
-  std::string name;
-  int amount = 1;
-  bool unique = false;
-};
-
-struct ItemDef {
-  std::string name;
-  ItemType type = ItemType::Filler;
-  int amount = 1;
-  std::string action;
-  std::vector<ActionArg> args;
-};
-
-struct IncompatibilityRule {
-  std::string id;
-  std::vector<std::string> versions;
-};
-
-struct Manifest {
-  std::string mod_id;
-  std::string name;
-  std::string version;
-  bool enabled = true;
-  std::string description;
-  std::vector<IncompatibilityRule> incompatible;
-  std::vector<LocationDef> locations;
-  std::vector<ItemDef> items;
-};
 
 // =============================================================================
 // Registry and Ownership Structures (Design05)
@@ -285,33 +164,6 @@ struct ValidationResult {
   bool valid = true;
   std::vector<Conflict> conflicts;
   std::vector<std::string> warnings;
-};
-
-// =============================================================================
-// IPC Message Structure (Design04)
-// =============================================================================
-
-struct IPCMessage {
-  std::string type;
-  std::string source;
-  std::string target;
-  nlohmann::json payload;
-
-  nlohmann::json to_json() const {
-    return {{"type", type},
-            {"source", source},
-            {"target", target},
-            {"payload", payload}};
-  }
-
-  static IPCMessage from_json(const nlohmann::json &j) {
-    IPCMessage msg;
-    msg.type = j.value("type", "");
-    msg.source = j.value("source", "");
-    msg.target = j.value("target", "");
-    msg.payload = j.value("payload", nlohmann::json::object());
-    return msg;
-  }
 };
 
 // =============================================================================
@@ -447,103 +299,5 @@ struct CapabilitiesConfig {
             {"items", items_arr}};
   }
 };
-
-// =============================================================================
-// Configuration Structures (Design03)
-// =============================================================================
-
-struct TimeoutConfig {
-  int priority_registration_ms = 30000;
-  int registration_ms = 60000;
-  int connection_ms = 30000;
-  int ipc_message_ms = 5000;
-  int action_execution_ms = 5000;
-};
-
-struct RetryConfig {
-  int max_retries = 3;
-  int initial_delay_ms = 1000;
-  double backoff_multiplier = 2.0;
-  int max_delay_ms = 10000;
-};
-
-struct ThreadingConfig {
-  int polling_interval_ms = 16;
-  int ipc_poll_interval_ms = 10;
-  int queue_max_size = 1000;
-  int shutdown_timeout_ms = 5000;
-};
-
-struct APServerConfig {
-  std::string server = "localhost";
-  int port = 38281;
-  std::string slot_name;
-  std::string password;
-  bool auto_reconnect = true;
-};
-
-struct FrameworkConfig {
-  int64_t id_base = 6942067;
-  std::string game_name;
-  LogLevel log_level = LogLevel::Info;
-  std::string log_file = "ap_framework.log";
-  bool log_to_console = true;
-  TimeoutConfig timeouts;
-  RetryConfig retry;
-  ThreadingConfig threading;
-  APServerConfig ap_server;
-};
-
-// =============================================================================
-// IPC Message Type Constants (Design04)
-// =============================================================================
-
-namespace IPCMessageType {
-// Framework -> Client
-constexpr const char *AP_MESSAGE = "ap_message";
-constexpr const char *EXECUTE_ACTION = "execute_action";
-constexpr const char *LIFECYCLE = "lifecycle";
-constexpr const char *ERROR_MSG =
-    "error"; // Note: ERROR conflicts with Windows macro
-constexpr const char *REGISTRATION_RESPONSE = "registration_response";
-
-// Client -> Framework
-constexpr const char *REGISTER = "register";
-constexpr const char *LOCATION_CHECK = "location_check";
-constexpr const char *LOCATION_SCOUT = "location_scout";
-constexpr const char *LOG = "log";
-constexpr const char *ACTION_RESULT = "action_result";
-
-// Priority Client -> Framework (legacy specific commands)
-constexpr const char *CMD_RESTART = "cmd_restart";
-constexpr const char *CMD_RESYNC = "cmd_resync";
-constexpr const char *CMD_RECONNECT = "cmd_reconnect";
-constexpr const char *GET_MODS = "get_mods";
-constexpr const char *GET_LOGS = "get_logs";
-constexpr const char *GET_DATA_PACKAGE = "get_data_package";
-constexpr const char *SET_CONFIG = "set_config";
-constexpr const char *SEND_MESSAGE = "send_message";
-constexpr const char *BROADCAST = "broadcast";
-
-// Framework -> Priority Client (legacy responses)
-constexpr const char *GET_MODS_RESPONSE = "get_mods_response";
-constexpr const char *GET_LOGS_RESPONSE = "get_logs_response";
-constexpr const char *GET_DATA_PACKAGE_RESPONSE = "get_data_package_response";
-
-// Generic Command System (new)
-constexpr const char *COMMAND = "command"; // Client -> Framework
-constexpr const char *COMMAND_RESPONSE =
-    "command_response"; // Framework -> Client
-} // namespace IPCMessageType
-
-// =============================================================================
-// IPC Target Constants (Design04)
-// =============================================================================
-
-namespace IPCTarget {
-constexpr const char *FRAMEWORK = "framework";
-constexpr const char *BROADCAST = "broadcast";
-constexpr const char *PRIORITY = "priority";
-} // namespace IPCTarget
 
 } // namespace ap

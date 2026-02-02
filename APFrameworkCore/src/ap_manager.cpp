@@ -38,24 +38,25 @@ int APManager::init(lua_State *L)
 
     update_cached_lua(L);
 
+    // Register this manager for shared code access (APPathUtil, APLogger, etc.)
+    APManagerAccessor::set(this);
+
     // Initialize logging
     APLogger::set_thread_name("Main");
 
     // Transition to INITIALIZATION
     transition_to_unlocked(LifecycleState::INITIALIZATION, "Starting framework");
 
-    // Load configuration
-    if (!APConfig::instance().load_default())
+    // Load configuration (shared singleton)
+    if (!APConfig::get()->load_default())
     {
-        APLogger::instance().log(LogLevel::Warn, "Using default configuration");
+        APLogger::get()->log(LogLevel::Warn, "Using default configuration");
     }
-    config_ = &APConfig::instance();
 
-    // Initialize logger with config
-    APLogger::instance().init(config_->get_log_level(), APPathUtil::get_log_path().string(),
-                              config_->get_log_to_console());
+    // Initialize logger (reads settings from APConfig)
+    APLogger::get()->init();
 
-    APLogger::instance().log(LogLevel::Info, "AP Framework initializing...");
+    APLogger::get()->log(LogLevel::Info, "AP Framework initializing...");
 
     // Create components
     ipc_server_ = std::make_unique<APIPCServer>();
@@ -78,7 +79,7 @@ int APManager::init(lua_State *L)
         [this](const std::vector<int64_t> &ids, bool hints) { ap_client_->send_location_scouts(ids, hints); });
 
     // Start IPC server
-    std::string game_name = config_->get_game_name();
+    std::string game_name = APConfig::get()->get_game_name();
     if (game_name.empty())
     {
         game_name = "APFramework";
@@ -91,7 +92,7 @@ int APManager::init(lua_State *L)
 
     // Set up connect handler to send current lifecycle state to new clients
     ipc_server_->set_connect_handler([this](const std::string &client_id) {
-        APLogger::instance().log(LogLevel::Trace, "IPC client connected: " + client_id);
+        APLogger::get()->log(LogLevel::Trace, "IPC client connected: " + client_id);
 
         // Send current lifecycle state to newly connected client
         IPCMessage state_msg;
@@ -107,11 +108,7 @@ int APManager::init(lua_State *L)
     transition_to_unlocked(LifecycleState::DISCOVERY, "Scanning for mods");
 
     // Discover manifests
-    auto mods_folder = APPathUtil::find_mods_folder();
-    if (mods_folder)
-    {
-        mod_registry_->discover_manifests(*mods_folder);
-    }
+    mod_registry_->discover_manifests();
 
     // Add manifests to capabilities
     for (const auto &manifest : mod_registry_->get_enabled_manifests())
@@ -128,7 +125,7 @@ int APManager::init(lua_State *L)
     {
         for (const auto &conflict : validation.conflicts)
         {
-            APLogger::instance().log(LogLevel::Error, "Conflict: " + conflict.description);
+            APLogger::get()->log(LogLevel::Error, "Conflict: " + conflict.description);
         }
         transition_to_unlocked(LifecycleState::ERROR_STATE, "Capability conflicts detected");
 
@@ -140,10 +137,10 @@ int APManager::init(lua_State *L)
     transition_to_unlocked(LifecycleState::GENERATION, "Generating capabilities");
 
     // Assign IDs
-    capabilities_->assign_ids(config_->get_id_base());
+    capabilities_->assign_ids(APConfig::get()->get_id_base());
 
     // Compute and store checksum
-    std::string slot_name = config_->get_ap_server().slot_name;
+    std::string slot_name = APConfig::get()->get_ap_server().slot_name;
     std::string checksum = capabilities_->compute_checksum(game_name, slot_name);
     state_manager_->set_checksum(checksum);
     state_manager_->set_game_name(game_name);
@@ -167,7 +164,7 @@ int APManager::init(lua_State *L)
         state_entered_at_ = std::chrono::steady_clock::now();
     }
 
-    APLogger::instance().log(LogLevel::Info, "AP Framework initialized successfully");
+    APLogger::get()->log(LogLevel::Info, "AP Framework initialized successfully");
 
     return create_lua_module(L);
 }
@@ -182,7 +179,7 @@ int APManager::update(lua_State *L)
     // On first update, reinitialize APPathUtil to use IterateGameDirectories
     if (!first_update_done_)
     {
-        APPathUtil::reinitialize_cache();
+        APPathUtil::get()->reinitialize_cache();
         first_update_done_ = true;
     }
 
@@ -238,7 +235,7 @@ int APManager::update(lua_State *L)
 
 void APManager::shutdown()
 {
-    APLogger::instance().log(LogLevel::Info, "AP Framework shutting down...");
+    APLogger::get()->log(LogLevel::Info, "AP Framework shutting down...");
 
     // Save state
     if (state_manager_)
@@ -250,7 +247,7 @@ void APManager::shutdown()
     // Stop polling thread
     if (polling_thread_)
     {
-        polling_thread_->stop(config_ ? config_->get_threading().shutdown_timeout_ms : 5000);
+        polling_thread_->stop(APConfig::get()->get_threading().shutdown_timeout_ms);
     }
 
     // Disconnect from AP server
@@ -265,7 +262,7 @@ void APManager::shutdown()
         ipc_server_->stop();
     }
 
-    APLogger::instance().log(LogLevel::Info, "AP Framework shutdown complete");
+    APLogger::get()->log(LogLevel::Info, "AP Framework shutdown complete");
 }
 
 LifecycleState APManager::get_state() const
@@ -297,17 +294,17 @@ bool APManager::register_mod(const std::string &mod_id, const std::string &versi
     auto state = current_state_.get();
     if (state != LifecycleState::PRIORITY_REGISTRATION && state != LifecycleState::REGISTRATION)
     {
-        APLogger::instance().log(LogLevel::Warn, "Registration rejected - not in registration phase: " + mod_id);
+        APLogger::get()->log(LogLevel::Warn, "Registration rejected - not in registration phase: " + mod_id);
         return false;
     }
 
     if (!mod_registry_->mark_registered(mod_id))
     {
-        APLogger::instance().log(LogLevel::Warn, "Unknown mod registration attempt: " + mod_id);
+        APLogger::get()->log(LogLevel::Warn, "Unknown mod registration attempt: " + mod_id);
         return false;
     }
 
-    APLogger::instance().log(LogLevel::Info, "Mod registered: " + mod_id + " v" + version);
+    APLogger::get()->log(LogLevel::Info, "Mod registered: " + mod_id + " v" + version);
 
     // Send registration response
     IPCMessage response;
@@ -324,7 +321,7 @@ bool APManager::register_priority_client(const std::string &mod_id, const std::s
 {
     if (!mod_registry_->is_priority_client(mod_id))
     {
-        APLogger::instance().log(LogLevel::Warn, "Non-priority mod tried to register as priority: " + mod_id);
+        APLogger::get()->log(LogLevel::Warn, "Non-priority mod tried to register as priority: " + mod_id);
         return false;
     }
 
@@ -334,7 +331,7 @@ bool APManager::register_priority_client(const std::string &mod_id, const std::s
 void APManager::cmd_restart()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    APLogger::instance().log(LogLevel::Info, "Restart command received");
+    APLogger::get()->log(LogLevel::Info, "Restart command received");
 
     // Reset state and restart
     mod_registry_->reset_registrations();
@@ -344,7 +341,7 @@ void APManager::cmd_restart()
 void APManager::cmd_resync()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    APLogger::instance().log(LogLevel::Info, "Resync command received");
+    APLogger::get()->log(LogLevel::Info, "Resync command received");
 
     transition_to_unlocked(LifecycleState::RESYNCING, "Manual resync requested");
 }
@@ -352,16 +349,11 @@ void APManager::cmd_resync()
 void APManager::cmd_reconnect()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    APLogger::instance().log(LogLevel::Info, "Reconnect command received");
+    APLogger::get()->log(LogLevel::Info, "Reconnect command received");
 
     ap_client_->disconnect();
     transition_to_unlocked(LifecycleState::CONNECTING, "Reconnecting to AP server");
     state_entered_at_ = std::chrono::steady_clock::now();
-}
-
-APConfig *APManager::get_config()
-{
-    return config_;
 }
 
 APModRegistry *APManager::get_mod_registry()
@@ -405,9 +397,9 @@ bool APManager::transition_to_unlocked(LifecycleState new_state, const std::stri
     current_state_.set(new_state);
     state_entered_at_ = std::chrono::steady_clock::now();
 
-    APLogger::instance().log(LogLevel::Info, "State: " + lifecycle_state_to_string(old_state) + " -> " +
-                                                 lifecycle_state_to_string(new_state) +
-                                                 (message.empty() ? "" : " (" + message + ")"));
+    APLogger::get()->log(LogLevel::Info, "State: " + lifecycle_state_to_string(old_state) + " -> " +
+                                             lifecycle_state_to_string(new_state) +
+                                             (message.empty() ? "" : " (" + message + ")"));
 
     // Broadcast lifecycle change
     if (message_router_)
@@ -425,9 +417,6 @@ int APManager::create_lua_module(lua_State *L)
 
     // Register update function
     module["update"] = [](lua_State *L) { return APManager::get()->update(L); };
-
-    // Register state query
-    module["get_state"] = []() { return lifecycle_state_to_string(APManager::get()->get_state()); };
 
     // Register shutdown
     module["shutdown"] = []() { APManager::get()->shutdown(); };
@@ -454,7 +443,7 @@ int APManager::update_cached_lua(lua_State *L)
 
 void APManager::handle_ipc_message(const std::string &client_id, const IPCMessage &msg)
 {
-    APLogger::instance().log(LogLevel::Debug, "IPC message from " + client_id + ": " + msg.type);
+    APLogger::get()->log(LogLevel::Debug, "IPC message from " + client_id + ": " + msg.type);
 
     if (msg.type == IPCMessageType::REGISTER)
     {
@@ -501,7 +490,7 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
             level = LogLevel::Warn;
         else if (level_str == "error")
             level = LogLevel::Error;
-        APLogger::instance().log(level, "[" + client_id + "] " + message);
+        APLogger::get()->log(level, "[" + client_id + "] " + message);
     }
     // Priority client commands
     else if (msg.type == IPCMessageType::CMD_RESTART)
@@ -536,12 +525,12 @@ void APManager::handle_command(const std::string &client_id, const IPCMessage &m
 {
     std::string command = msg.payload.value("command", "");
 
-    APLogger::instance().log(LogLevel::Debug, "Command received from " + client_id + ": " + command);
+    APLogger::get()->log(LogLevel::Debug, "Command received from " + client_id + ": " + command);
 
     // Verify priority client status
     if (!mod_registry_->is_priority_client(client_id))
     {
-        APLogger::instance().log(LogLevel::Warn, "Command rejected - not a priority client: " + client_id);
+        APLogger::get()->log(LogLevel::Warn, "Command rejected - not a priority client: " + client_id);
 
         IPCMessage response;
         response.type = IPCMessageType::COMMAND_RESPONSE;
@@ -670,9 +659,9 @@ void APManager::handle_priority_registration(int64_t elapsed_ms)
     }
 
     // Check timeout
-    if (elapsed_ms >= config_->get_timeouts().priority_registration_ms)
+    if (elapsed_ms >= APConfig::get()->get_timeouts().priority_registration_ms)
     {
-        APLogger::instance().log(LogLevel::Warn, "Priority registration timeout, continuing anyway");
+        APLogger::get()->log(LogLevel::Warn, "Priority registration timeout, continuing anyway");
         transition_to_unlocked(LifecycleState::REGISTRATION, "Priority timeout");
         state_entered_at_ = std::chrono::steady_clock::now();
     }
@@ -690,11 +679,11 @@ void APManager::handle_registration(int64_t elapsed_ms)
     }
 
     // Check timeout
-    if (elapsed_ms >= config_->get_timeouts().registration_ms)
+    if (elapsed_ms >= APConfig::get()->get_timeouts().registration_ms)
     {
         auto pending = mod_registry_->get_pending_registrations();
-        APLogger::instance().log(LogLevel::Warn,
-                                 "Registration timeout. Pending: " + std::to_string(pending.size()) + " mods");
+        APLogger::get()->log(LogLevel::Warn,
+                             "Registration timeout. Pending: " + std::to_string(pending.size()) + " mods");
         transition_to_unlocked(LifecycleState::CONNECTING, "Registration timeout");
         state_entered_at_ = std::chrono::steady_clock::now();
         start_ap_connection();
@@ -712,7 +701,7 @@ void APManager::handle_connecting(int64_t elapsed_ms)
     }
 
     // Check timeout
-    if (elapsed_ms >= config_->get_timeouts().connection_ms)
+    if (elapsed_ms >= APConfig::get()->get_timeouts().connection_ms)
     {
         transition_to_unlocked(LifecycleState::ERROR_STATE, "Connection timeout");
         message_router_->broadcast_error(ErrorCode::CONNECTION_FAILED, "Failed to connect to AP server",
@@ -731,7 +720,7 @@ void APManager::handle_syncing(int64_t elapsed_ms)
 
     // Validate checksum
     std::string current_checksum =
-        capabilities_->compute_checksum(config_->get_game_name(), config_->get_ap_server().slot_name);
+        capabilities_->compute_checksum(APConfig::get()->get_game_name(), APConfig::get()->get_ap_server().slot_name);
 
     if (!state_manager_->validate_checksum(current_checksum))
     {
@@ -783,7 +772,7 @@ void APManager::handle_resyncing(int64_t elapsed_ms)
     }
 
     // Check timeout
-    if (elapsed_ms >= config_->get_timeouts().connection_ms * 2)
+    if (elapsed_ms >= APConfig::get()->get_timeouts().connection_ms * 2)
     {
         transition_to_unlocked(LifecycleState::ERROR_STATE, "Reconnection failed");
     }
@@ -791,22 +780,22 @@ void APManager::handle_resyncing(int64_t elapsed_ms)
 
 void APManager::start_ap_connection()
 {
-    const auto &ap_config = config_->get_ap_server();
+    const auto &ap_config = APConfig::get()->get_ap_server();
 
     // Generate UUID for this client
     std::string uuid = "APFramework_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
 
     // Set up AP client callbacks
     ap_client_->set_room_info_callback([this](const RoomInfo &info) {
-        APLogger::instance().log(LogLevel::Debug, "Room info received");
+        APLogger::get()->log(LogLevel::Debug, "Room info received");
 
         // Connect to slot after room info
-        const auto &ap = config_->get_ap_server();
+        const auto &ap = APConfig::get()->get_ap_server();
         ap_client_->connect_slot(ap.slot_name, ap.password, 0x7);
     });
 
     ap_client_->set_slot_connected_callback([this](const SlotInfo &info) {
-        APLogger::instance().log(LogLevel::Info, "Slot connected: " + info.slot_name);
+        APLogger::get()->log(LogLevel::Info, "Slot connected: " + info.slot_name);
 
         // Sync checked locations from server
         std::set<int64_t> server_checked(info.checked_locations.begin(), info.checked_locations.end());
@@ -815,14 +804,14 @@ void APManager::start_ap_connection()
 
     ap_client_->set_slot_refused_callback([this](const std::vector<std::string> &errors) {
         std::string error_msg = errors.empty() ? "Unknown error" : errors[0];
-        APLogger::instance().log(LogLevel::Error, "Slot refused: " + error_msg);
+        APLogger::get()->log(LogLevel::Error, "Slot refused: " + error_msg);
     });
 
     // Connect
-    ap_client_->connect(ap_config.server, ap_config.port, config_->get_game_name(), uuid);
+    ap_client_->connect(ap_config.host, ap_config.port, APConfig::get()->get_game_name(), uuid);
 
     // Start polling thread
-    polling_thread_->start(ap_client_.get(), config_->get_threading().polling_interval_ms);
+    polling_thread_->start(ap_client_.get(), APConfig::get()->get_threading().polling_interval_ms);
 }
 
 } // namespace ap

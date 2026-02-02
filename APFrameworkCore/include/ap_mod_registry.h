@@ -3,14 +3,15 @@
 #include "ap_exports.h"
 #include "ap_types.h"
 
-#include <string>
-#include <vector>
-#include <optional>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
-namespace ap {
+namespace ap
+{
 
 /**
  * @brief Registry for discovered and registered mods.
@@ -21,16 +22,17 @@ namespace ap {
  * - Registration tracking
  * - Priority client detection (mod_id starting with "archipelago.<game>.")
  */
-class AP_API APModRegistry {
-public:
+class AP_API APModRegistry
+{
+  public:
     APModRegistry();
     ~APModRegistry();
 
     // Delete copy/move
-    APModRegistry(const APModRegistry&) = delete;
-    APModRegistry& operator=(const APModRegistry&) = delete;
-    APModRegistry(APModRegistry&&) = delete;
-    APModRegistry& operator=(APModRegistry&&) = delete;
+    APModRegistry(const APModRegistry &) = delete;
+    APModRegistry &operator=(const APModRegistry &) = delete;
+    APModRegistry(APModRegistry &&) = delete;
+    APModRegistry &operator=(APModRegistry &&) = delete;
 
     // ==========================================================================
     // Discovery
@@ -38,20 +40,19 @@ public:
 
     /**
      * @brief Discover manifests from the mods folder.
-     * @param mods_folder Path to the Mods directory.
      * @return Number of manifests discovered.
      *
      * Scans each subdirectory for manifest.json files.
      * Invalid manifests are skipped with warnings.
      */
-    size_t discover_manifests(const std::filesystem::path& mods_folder);
+    size_t discover_manifests();
 
     /**
      * @brief Add a manifest manually (for testing).
      * @param manifest Manifest to add.
      * @return true if added, false if mod_id already exists.
      */
-    bool add_manifest(const Manifest& manifest);
+    bool add_manifest(const Manifest &manifest);
 
     /**
      * @brief Clear all discovered manifests.
@@ -67,14 +68,14 @@ public:
      * @param mod_id Mod identifier.
      * @return true if mod was found and marked.
      */
-    bool mark_registered(const std::string& mod_id);
+    bool mark_registered(const std::string &mod_id);
 
     /**
      * @brief Check if a mod is registered.
      * @param mod_id Mod identifier.
      * @return true if registered.
      */
-    bool is_registered(const std::string& mod_id) const;
+    bool is_registered(const std::string &mod_id) const;
 
     /**
      * @brief Check if all discovered mods are registered.
@@ -114,21 +115,21 @@ public:
      * @param mod_id Mod identifier.
      * @return Manifest if found.
      */
-    std::optional<Manifest> get_manifest(const std::string& mod_id) const;
+    std::optional<Manifest> get_manifest(const std::string &mod_id) const;
 
     /**
      * @brief Get mod type (Priority or Regular).
      * @param mod_id Mod identifier.
      * @return ModType::Priority if mod_id matches pattern "archipelago.<game>.*"
      */
-    ModType get_mod_type(const std::string& mod_id) const;
+    ModType get_mod_type(const std::string &mod_id) const;
 
     /**
      * @brief Check if a mod is a priority client.
      * @param mod_id Mod identifier.
      * @return true if priority client.
      */
-    bool is_priority_client(const std::string& mod_id) const;
+    bool is_priority_client(const std::string &mod_id) const;
 
     /**
      * @brief Get all priority client mod IDs.
@@ -163,16 +164,16 @@ public:
      * @param json_content JSON string content.
      * @return Parsed manifest, or std::nullopt on error.
      */
-    static std::optional<Manifest> parse_manifest(const std::string& json_content);
+    static std::optional<Manifest> parse_manifest(const std::string &json_content);
 
     /**
      * @brief Parse a manifest from a file.
      * @param file_path Path to manifest.json.
      * @return Parsed manifest, or std::nullopt on error.
      */
-    static std::optional<Manifest> parse_manifest_file(const std::filesystem::path& file_path);
+    static std::optional<Manifest> parse_manifest_file(const std::filesystem::path &file_path);
 
-private:
+  private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

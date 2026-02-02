@@ -318,9 +318,9 @@ class APCapabilities::Impl
             item.item_id = current_id++;
         }
 
-        APLogger::instance().log(LogLevel::Info, "Assigned IDs: " + std::to_string(locations_.size()) + " locations, " +
-                                                     std::to_string(items_.size()) +
-                                                     " items, base=" + std::to_string(base_id));
+        APLogger::get()->log(LogLevel::Info, "Assigned IDs: " + std::to_string(locations_.size()) + " locations, " +
+                                                 std::to_string(items_.size()) +
+                                                 " items, base=" + std::to_string(base_id));
     }
 
     int64_t get_location_id(const std::string &mod_id, const std::string &location_name, int instance) const
@@ -477,34 +477,34 @@ class APCapabilities::Impl
     {
         auto config = generate_capabilities_config(slot_name, game_name);
         std::string json_content = config.to_json().dump(2);
-        APLogger::instance().log(LogLevel::Info, "Writing capabilities config: " + output_path.string());
-        return APPathUtil::write_file(output_path, json_content);
+        APLogger::get()->log(LogLevel::Info, "Writing capabilities config: " + output_path.string());
+        return APPathUtil::get()->write_file(output_path, json_content);
     }
 
     // @REFACTORED: Added APLogger trace logging
     std::filesystem::path write_capabilities_config_default(const std::string &slot_name,
                                                             const std::string &game_name) const
     {
-        APLogger::instance().log(LogLevel::Info, "> APCapabilities::Impl::write_capabilities_config_default()");
+        APLogger::get()->log(LogLevel::Info, "> APCapabilities::Impl::write_capabilities_config_default()");
 
-        auto output_folder = APPathUtil::find_output_folder();
+        auto output_folder = APPathUtil::get()->find_output_folder();
         if (!output_folder)
         {
-            APLogger::instance().log(LogLevel::Error, "Could not find output folder for capabilities config");
+            APLogger::get()->log(LogLevel::Error, "Could not find output folder for capabilities config");
             return {};
         }
 
         std::string filename = "AP_Capabilities_" + slot_name + ".json";
         auto output_path = *output_folder / filename;
-        APLogger::instance().log(LogLevel::Info, "> OUTPUT FOLDER: " + output_path.string());
+        APLogger::get()->log(LogLevel::Info, "> OUTPUT FOLDER: " + output_path.string());
 
         if (write_capabilities_config(output_path, slot_name, game_name))
         {
-            APLogger::instance().log(LogLevel::Info, "Wrote capabilities config: " + output_path.string());
+            APLogger::get()->log(LogLevel::Info, "Wrote capabilities config: " + output_path.string());
             return output_path;
         }
 
-        APLogger::instance().log(LogLevel::Info, "< APCapabilities::Impl::write_capabilities_config_default()");
+        APLogger::get()->log(LogLevel::Info, "< APCapabilities::Impl::write_capabilities_config_default()");
         return {};
     }
 

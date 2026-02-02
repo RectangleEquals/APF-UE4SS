@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ap_exports.h"
+#include "ap_manager_base.h"
 #include "ap_types.h"
 #include "atomic_state.h"
 #include "message_queues.h"
@@ -19,7 +20,6 @@ class APCapabilities;
 class APModRegistry;
 class APMessageRouter;
 class APStateManager;
-class APConfig;
 class APPollingThread;
 
 /**
@@ -46,7 +46,7 @@ class APPollingThread;
  * - RESYNCING: Reconnecting after disconnect
  * - ERROR_STATE: Error occurred, waiting for recovery
  */
-class AP_API APManager
+class AP_API APManager : public IAPManager
 {
   public:
     // Pass-key Idiom for singleton
@@ -171,7 +171,6 @@ class AP_API APManager
     // Component Access
     // ==========================================================================
 
-    APConfig *get_config();
     APModRegistry *get_mod_registry();
     APCapabilities *get_capabilities();
     APStateManager *get_state_manager();
@@ -180,9 +179,22 @@ class AP_API APManager
     APClient *get_ap_client();
 
     // ==========================================================================
-    // Lua Access
+    // IAPManager Interface
     // ==========================================================================
-    sol::state_view *get_cached_lua();
+
+    /**
+     * @brief Get the cached Lua state (implements IAPManager).
+     * @return Pointer to the cached sol::state_view.
+     */
+    sol::state_view *get_cached_lua() override;
+
+  protected:
+    /*
+    @brief Create a Lua module table.
+    @param L Lua state.
+    @return Number of return values pushed to Lua stack.
+    */
+    int create_lua_module(lua_State *L) override;
 
   private:
     // ==========================================================================
@@ -196,13 +208,6 @@ class AP_API APManager
     @return true if transition was allowed (currently always true).
     */
     bool transition_to_unlocked(LifecycleState new_state, const std::string &message);
-
-    /*
-    @brief Create a Lua module table.
-    @param L Lua state.
-    @return Number of return values pushed to Lua stack.
-    */
-    int create_lua_module(lua_State *L);
 
     /*
     @brief Update the cached Lua state.
@@ -290,7 +295,6 @@ class AP_API APManager
     AtomicState current_state_;
     std::chrono::steady_clock::time_point state_entered_at_;
 
-    APConfig *config_ = nullptr;
     std::unique_ptr<APIPCServer> ipc_server_;
     std::unique_ptr<APClient> ap_client_;
     std::unique_ptr<APPollingThread> polling_thread_;

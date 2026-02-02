@@ -1,15 +1,16 @@
 #pragma once
 
-#include "ap_clientlib_exports.h"
 #include "ap_client_types.h"
+#include "ap_exports.h"
 
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
-#include <memory>
-#include <functional>
-#include <optional>
 
-namespace ap {
+namespace ap
+{
 
 /**
  * @brief Named pipes client for IPC with the framework.
@@ -17,9 +18,10 @@ namespace ap {
  * Connects to APFrameworkCore's IPC server to send/receive messages.
  * Uses length-prefixed JSON messages (4-byte LE length + JSON body).
  */
-class APCLIENT_API APIPCClient {
-public:
-    using MessageHandler = std::function<void(const ClientIPCMessage&)>;
+class AP_API APIPCClient
+{
+  public:
+    using MessageHandler = std::function<void(const ClientIPCMessage &)>;
     using ConnectHandler = std::function<void()>;
     using DisconnectHandler = std::function<void()>;
 
@@ -27,17 +29,17 @@ public:
     ~APIPCClient();
 
     // Delete copy/move operations
-    APIPCClient(const APIPCClient&) = delete;
-    APIPCClient& operator=(const APIPCClient&) = delete;
-    APIPCClient(APIPCClient&&) = delete;
-    APIPCClient& operator=(APIPCClient&&) = delete;
+    APIPCClient(const APIPCClient &) = delete;
+    APIPCClient &operator=(const APIPCClient &) = delete;
+    APIPCClient(APIPCClient &&) = delete;
+    APIPCClient &operator=(APIPCClient &&) = delete;
 
     /**
      * @brief Connect to the framework's IPC server.
      * @param game_name Game name used in pipe path: \\.\pipe\APFramework_<game_name>
      * @return true if connected successfully.
      */
-    bool connect(const std::string& game_name);
+    bool connect(const std::string &game_name);
 
     /**
      * @brief Disconnect from the server.
@@ -55,7 +57,7 @@ public:
      * @param message Message to send.
      * @return true if message was sent successfully.
      */
-    bool send_message(const ClientIPCMessage& message);
+    bool send_message(const ClientIPCMessage &message);
 
     /**
      * @brief Poll for incoming messages (non-blocking).
@@ -121,7 +123,7 @@ public:
      */
     std::string get_pipe_name() const;
 
-private:
+  private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };
