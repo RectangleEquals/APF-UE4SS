@@ -7,7 +7,6 @@
 #include <ctime>
 #include <iomanip>
 #include <map>
-#include <mutex>
 #include <nlohmann/json.hpp>
 #include <sstream>
 
@@ -165,7 +164,6 @@ class APCapabilities::Impl
   public:
     void add_manifest(const Manifest &manifest)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         manifests_[manifest.mod_id] = manifest;
 
@@ -198,7 +196,6 @@ class APCapabilities::Impl
 
     void clear()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         manifests_.clear();
         locations_.clear();
         items_.clear();
@@ -207,7 +204,6 @@ class APCapabilities::Impl
 
     ValidationResult validate() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         ValidationResult result;
         result.valid = true;
 
@@ -302,7 +298,6 @@ class APCapabilities::Impl
 
     void assign_ids(int64_t base_id)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         base_id_ = base_id;
         int64_t current_id = base_id;
 
@@ -325,7 +320,6 @@ class APCapabilities::Impl
 
     int64_t get_location_id(const std::string &mod_id, const std::string &location_name, int instance) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         for (const auto &loc : locations_)
         {
@@ -339,7 +333,6 @@ class APCapabilities::Impl
 
     int64_t get_item_id(const std::string &mod_id, const std::string &item_name) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         for (const auto &item : items_)
         {
@@ -353,7 +346,6 @@ class APCapabilities::Impl
 
     std::optional<LocationOwnership> get_location_by_id(int64_t location_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         for (const auto &loc : locations_)
         {
@@ -367,7 +359,6 @@ class APCapabilities::Impl
 
     std::optional<ItemOwnership> get_item_by_id(int64_t item_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         for (const auto &item : items_)
         {
@@ -381,7 +372,6 @@ class APCapabilities::Impl
 
     std::string compute_checksum(const std::string &game_name, const std::string &slot_name) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         // Sort mod IDs for deterministic checksum
         std::vector<std::string> sorted_mod_ids;
@@ -423,7 +413,6 @@ class APCapabilities::Impl
 
     CapabilitiesConfig generate_capabilities_config(const std::string &slot_name, const std::string &game_name) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         CapabilitiesConfig config;
         config.version = "1.0.0";
@@ -510,19 +499,16 @@ class APCapabilities::Impl
 
     std::vector<LocationOwnership> get_all_locations() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return locations_;
     }
 
     std::vector<ItemOwnership> get_all_items() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return items_;
     }
 
     std::vector<LocationOwnership> get_locations_for_mod(const std::string &mod_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<LocationOwnership> result;
 
         for (const auto &loc : locations_)
@@ -538,7 +524,6 @@ class APCapabilities::Impl
 
     std::vector<ItemOwnership> get_items_for_mod(const std::string &mod_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<ItemOwnership> result;
 
         for (const auto &item : items_)
@@ -554,19 +539,16 @@ class APCapabilities::Impl
 
     size_t get_location_count() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return locations_.size();
     }
 
     size_t get_item_count() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return items_.size();
     }
 
     int64_t get_base_id() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return base_id_;
     }
 
@@ -608,7 +590,6 @@ class APCapabilities::Impl
         return sha.final_hex();
     }
 
-    mutable std::mutex mutex_;
     std::map<std::string, Manifest> manifests_;
     std::vector<LocationOwnership> locations_;
     std::vector<ItemOwnership> items_;

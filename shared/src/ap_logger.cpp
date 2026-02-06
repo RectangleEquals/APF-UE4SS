@@ -288,9 +288,16 @@ std::string APLogger::format_log_entry(LogLevel level, const std::string &messag
 
 void APLogger::print_to_console(LogLevel level, const std::string &formatted)
 {
+    // Ensure we have a newline-terminated version for Lua/Raw output
+    std::string message = formatted;
+    if (message.empty() || !message.ends_with('\n'))
+    {
+        message += '\n';
+    }
+
     // Try to use Lua print if available (for UE4SS console integration)
     auto *manager = APManagerAccessor::get();
-    if (manager)
+    if (manager && initialized_)
     {
         sol::state_view *lua = manager->get_cached_lua();
         if (lua)
@@ -300,7 +307,7 @@ void APLogger::print_to_console(LogLevel level, const std::string &formatted)
                 sol::function print_func = (*lua)["print"];
                 if (print_func.valid())
                 {
-                    print_func(formatted);
+                    print_func(message);
                     return;
                 }
             }
@@ -314,11 +321,11 @@ void APLogger::print_to_console(LogLevel level, const std::string &formatted)
     // Fallback to standard streams
     if (level >= LogLevel::Error)
     {
-        std::cerr << formatted << std::endl;
+        std::cerr << formatted << std::flush;
     }
     else
     {
-        std::cout << formatted << std::endl;
+        std::cout << formatted << std::flush;
     }
 }
 

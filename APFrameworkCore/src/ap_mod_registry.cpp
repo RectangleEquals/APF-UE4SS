@@ -2,7 +2,6 @@
 #include "ap_logger.h"
 #include "ap_path_util.h"
 
-#include <mutex>
 #include <nlohmann/json.hpp>
 #include <regex>
 
@@ -14,7 +13,6 @@ class APModRegistry::Impl
   public:
     size_t discover_manifests()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         auto mods_folder = APPathUtil::get()->find_mods_folder();
         if (!mods_folder)
@@ -68,7 +66,6 @@ class APModRegistry::Impl
 
     bool add_manifest(const Manifest &manifest)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         if (manifests_.find(manifest.mod_id) != manifests_.end())
         {
@@ -81,14 +78,12 @@ class APModRegistry::Impl
 
     void clear()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         manifests_.clear();
         registered_.clear();
     }
 
     bool mark_registered(const std::string &mod_id)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         if (manifests_.find(mod_id) == manifests_.end())
         {
@@ -104,13 +99,11 @@ class APModRegistry::Impl
 
     bool is_registered(const std::string &mod_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return registered_.find(mod_id) != registered_.end();
     }
 
     bool all_registered() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         for (const auto &[mod_id, manifest] : manifests_)
         {
@@ -124,7 +117,6 @@ class APModRegistry::Impl
 
     std::vector<std::string> get_pending_registrations() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<std::string> pending;
 
         for (const auto &[mod_id, manifest] : manifests_)
@@ -140,13 +132,11 @@ class APModRegistry::Impl
 
     void reset_registrations()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         registered_.clear();
     }
 
     std::vector<Manifest> get_discovered_manifests() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<Manifest> result;
         result.reserve(manifests_.size());
 
@@ -160,7 +150,6 @@ class APModRegistry::Impl
 
     std::vector<Manifest> get_enabled_manifests() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<Manifest> result;
 
         for (const auto &[mod_id, manifest] : manifests_)
@@ -176,7 +165,6 @@ class APModRegistry::Impl
 
     std::optional<Manifest> get_manifest(const std::string &mod_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         auto it = manifests_.find(mod_id);
         if (it != manifests_.end())
@@ -204,7 +192,6 @@ class APModRegistry::Impl
 
     std::vector<std::string> get_priority_clients() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<std::string> result;
 
         for (const auto &[mod_id, manifest] : manifests_)
@@ -220,7 +207,6 @@ class APModRegistry::Impl
 
     std::vector<std::string> get_regular_mods() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<std::string> result;
 
         for (const auto &[mod_id, manifest] : manifests_)
@@ -236,7 +222,6 @@ class APModRegistry::Impl
 
     std::vector<ModInfo> get_mod_infos() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<ModInfo> result;
         result.reserve(manifests_.size());
 
@@ -257,12 +242,10 @@ class APModRegistry::Impl
 
     size_t count() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return manifests_.size();
     }
 
   private:
-    mutable std::mutex mutex_;
     std::unordered_map<std::string, Manifest> manifests_;
     std::unordered_set<std::string> registered_;
 };

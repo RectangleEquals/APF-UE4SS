@@ -3,7 +3,6 @@
 #include "ap_path_util.h"
 
 #include <chrono>
-#include <mutex>
 #include <nlohmann/json.hpp>
 
 namespace ap
@@ -14,7 +13,6 @@ class APStateManager::Impl
   public:
     bool save_state(const std::filesystem::path &path)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         try
         {
@@ -40,7 +38,6 @@ class APStateManager::Impl
 
     bool load_state(const std::filesystem::path &path)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         std::string content = APPathUtil::get()->read_file(path);
         if (content.empty())
@@ -76,105 +73,88 @@ class APStateManager::Impl
 
     void clear()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_ = SessionState{};
         loaded_ = false;
     }
 
     bool is_loaded() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return loaded_;
     }
 
     void set_received_item_index(int index)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.received_item_index = index;
     }
 
     int get_received_item_index() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.received_item_index;
     }
 
     int increment_received_item_index()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return ++state_.received_item_index;
     }
 
     void add_checked_location(int64_t location_id)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.checked_locations.insert(location_id);
     }
 
     bool is_location_checked(int64_t location_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.checked_locations.find(location_id) != state_.checked_locations.end();
     }
 
     std::set<int64_t> get_checked_locations() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.checked_locations;
     }
 
     size_t get_checked_location_count() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.checked_locations.size();
     }
 
     void set_checked_locations(const std::set<int64_t> &locations)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.checked_locations = locations;
     }
 
     void set_item_progression_count(int64_t item_id, int count)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.item_progression_counts[item_id] = count;
     }
 
     int get_item_progression_count(int64_t item_id) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         auto it = state_.item_progression_counts.find(item_id);
         return (it != state_.item_progression_counts.end()) ? it->second : 0;
     }
 
     int increment_item_progression_count(int64_t item_id)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return ++state_.item_progression_counts[item_id];
     }
 
     std::map<int64_t, int> get_all_item_progression_counts() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.item_progression_counts;
     }
 
     void set_checksum(const std::string &checksum)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.checksum = checksum;
     }
 
     std::string get_checksum() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.checksum;
     }
 
     bool validate_checksum(const std::string &current_checksum) const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
 
         if (state_.checksum.empty())
         {
@@ -193,68 +173,57 @@ class APStateManager::Impl
 
     void set_slot_name(const std::string &slot_name)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.slot_name = slot_name;
     }
 
     std::string get_slot_name() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.slot_name;
     }
 
     void set_game_name(const std::string &game_name)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.game_name = game_name;
     }
 
     std::string get_game_name() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.game_name;
     }
 
     void set_server_info(const std::string &server, int port)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.ap_server = server;
         state_.ap_port = port;
     }
 
     std::string get_server() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.ap_server;
     }
 
     int get_port() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_.ap_port;
     }
 
     void touch()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_.last_active = std::chrono::system_clock::now();
     }
 
     SessionState get_state() const
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         return state_;
     }
 
     void set_state(const SessionState &state)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         state_ = state;
         loaded_ = true;
     }
 
   private:
-    mutable std::mutex mutex_;
     SessionState state_;
     bool loaded_ = false;
 };

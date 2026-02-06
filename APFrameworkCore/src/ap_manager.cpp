@@ -11,7 +11,6 @@
 #include "ap_state_manager.h"
 
 #include <chrono>
-#include <mutex>
 
 namespace ap
 {
@@ -34,8 +33,6 @@ APManager::~APManager()
 
 int APManager::init(lua_State *L)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
     update_cached_lua(L);
 
     // Register this manager for shared code access (APPathUtil, APLogger, etc.)
@@ -171,12 +168,10 @@ int APManager::init(lua_State *L)
 
 int APManager::update(lua_State *L)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
     // Update cached Lua state for APPathUtil and other components
     update_cached_lua(L);
 
-    // On first update, reinitialize APPathUtil to use IterateGameDirectories
+    // On first update, reinitialize APPathUtil to use debug.getinfo
     if (!first_update_done_)
     {
         APPathUtil::get()->reinitialize_cache();
@@ -272,7 +267,6 @@ LifecycleState APManager::get_state() const
 
 bool APManager::transition_to(LifecycleState new_state, const std::string &message)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     return transition_to_unlocked(new_state, message);
 }
 
@@ -289,8 +283,6 @@ bool APManager::is_error() const
 
 bool APManager::register_mod(const std::string &mod_id, const std::string &version)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
     auto state = current_state_.get();
     if (state != LifecycleState::PRIORITY_REGISTRATION && state != LifecycleState::REGISTRATION)
     {
@@ -330,7 +322,6 @@ bool APManager::register_priority_client(const std::string &mod_id, const std::s
 
 void APManager::cmd_restart()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     APLogger::get()->log(LogLevel::Info, "Restart command received");
 
     // Reset state and restart
@@ -340,7 +331,6 @@ void APManager::cmd_restart()
 
 void APManager::cmd_resync()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     APLogger::get()->log(LogLevel::Info, "Resync command received");
 
     transition_to_unlocked(LifecycleState::RESYNCING, "Manual resync requested");
@@ -348,7 +338,6 @@ void APManager::cmd_resync()
 
 void APManager::cmd_reconnect()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     APLogger::get()->log(LogLevel::Info, "Reconnect command received");
 
     ap_client_->disconnect();

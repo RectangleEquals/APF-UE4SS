@@ -291,7 +291,6 @@ class AP_API APManager : public IAPManager
     // ==========================================================================
     std::unique_ptr<sol::state_view> cached_lua_ = nullptr;
 
-    std::mutex mutex_;
     AtomicState current_state_;
     std::chrono::steady_clock::time_point state_entered_at_;
 
