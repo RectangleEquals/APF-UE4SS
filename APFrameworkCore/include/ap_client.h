@@ -1,95 +1,75 @@
 #pragma once
 
+#include "ap_client_protocol_types.h"
 #include "ap_exports.h"
 #include "ap_types.h"
 
-#include <string>
-#include <memory>
+#include <atomic>
 #include <functional>
-#include <vector>
+#include <memory>
 #include <optional>
-#include <cstdint>
+#include <string>
+#include <vector>
 
-namespace ap {
+// Forward declaration for external APClient library
+class APClient;
 
-/**
- * @brief Received item information.
- */
-struct ReceivedItem {
-    int64_t item_id = 0;
-    int64_t location_id = 0;
-    int player_id = 0;
-    std::string item_name;
-    std::string player_name;
-    int index = 0;  // Position in items list
-};
+namespace ap
+{
 
 /**
- * @brief Location scout result.
- */
-struct ScoutResult {
-    int64_t location_id = 0;
-    int64_t item_id = 0;
-    int player_id = 0;
-    std::string item_name;
-    std::string player_name;
-};
-
-/**
- * @brief Room information from AP server.
- */
-struct RoomInfo {
-    std::string version;
-    std::vector<std::string> tags;
-    std::string seed_name;
-    bool password_required = false;
-};
-
-/**
- * @brief Slot connection result.
- */
-struct SlotInfo {
-    int slot_id = 0;
-    std::string slot_name;
-    std::string game;
-    std::vector<int64_t> checked_locations;
-    std::vector<int64_t> missing_locations;
-};
-
-/**
- * @brief Wrapper around apclientpp for AP server communication.
- *
- * Uses PIMPL pattern to hide apclientpp implementation details.
+ * @brief Singleton wrapper around apclientpp for AP server communication.
  *
  * CRITICAL FLOW:
- * 1. Create APClient and call connect()
+ * 1. Call connect() to establish WebSocket connection
  * 2. Set ALL handlers BEFORE any polling
  * 3. Call poll() repeatedly - room_info_callback fires when server responds
  * 4. In room_info_callback, call connect_slot() with credentials
  * 5. slot_connected_callback or slot_refused_callback fires
  * 6. Continue polling to receive items/messages
+ *
+ * Singleton Pattern: Pass-Key + Meyers
+ * - get() implementation in .cpp file
  */
-class AP_API APClient {
-public:
+class AP_API APArchipelagoClient
+{
+  public:
     // Callback types
-    using RoomInfoCallback = std::function<void(const RoomInfo&)>;
-    using SlotConnectedCallback = std::function<void(const SlotInfo&)>;
-    using SlotRefusedCallback = std::function<void(const std::vector<std::string>&)>;
-    using ItemReceivedCallback = std::function<void(const ReceivedItem&)>;
-    using LocationScoutedCallback = std::function<void(const std::vector<ScoutResult>&)>;
+    using RoomInfoCallback = std::function<void(const RoomInfo &)>;
+    using SlotConnectedCallback = std::function<void(const SlotInfo &)>;
+    using SlotRefusedCallback = std::function<void(const std::vector<std::string> &)>;
+    using ItemReceivedCallback = std::function<void(const ReceivedItem &)>;
+    using LocationScoutedCallback = std::function<void(const std::vector<ScoutResult> &)>;
     using DisconnectedCallback = std::function<void()>;
-    using PrintCallback = std::function<void(const std::string&)>;
-    using PrintJsonCallback = std::function<void(const std::string& type, const nlohmann::json& data)>;
-    using BouncedCallback = std::function<void(const nlohmann::json& data)>;
+    using PrintCallback = std::function<void(const std::string &)>;
+    using PrintJsonCallback = std::function<void(const std::string &type, const nlohmann::json &data)>;
+    using BouncedCallback = std::function<void(const nlohmann::json &data)>;
 
-    APClient();
-    ~APClient();
+    // =========================================================================
+    // Pass-Key + Meyers Singleton Pattern
+    // =========================================================================
+
+    struct ConstructorKey
+    {
+      private:
+        friend class APArchipelagoClient;
+        explicit ConstructorKey() = default;
+    };
+
+    explicit APArchipelagoClient(ConstructorKey);
+    ~APArchipelagoClient();
 
     // Delete copy/move
-    APClient(const APClient&) = delete;
-    APClient& operator=(const APClient&) = delete;
-    APClient(APClient&&) = delete;
-    APClient& operator=(APClient&&) = delete;
+    APArchipelagoClient(const APArchipelagoClient &) = delete;
+    APArchipelagoClient &operator=(const APArchipelagoClient &) = delete;
+    APArchipelagoClient(APArchipelagoClient &&) = delete;
+    APArchipelagoClient &operator=(APArchipelagoClient &&) = delete;
+
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to the APArchipelagoClient singleton.
+     */
+    static APArchipelagoClient *get();
 
     // ==========================================================================
     // Connection
@@ -285,9 +265,36 @@ public:
      */
     void set_bounced_callback(BouncedCallback callback);
 
-private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+  private:
+    // =========================================================================
+    // Private Methods
+    // =========================================================================
+    void setup_callbacks();
+
+    // =========================================================================
+    // Private Member Variables
+    // =========================================================================
+    std::unique_ptr<::APClient> client_;
+
+    std::string game_;
+    std::string uuid_;
+    std::string slot_name_;
+    std::string password_;
+
+    std::atomic<bool> slot_connected_{false};
+    std::optional<SlotInfo> slot_info_;
+    std::atomic<int> received_item_index_{0};
+
+    // Callbacks
+    RoomInfoCallback room_info_callback_;
+    SlotConnectedCallback slot_connected_callback_;
+    SlotRefusedCallback slot_refused_callback_;
+    ItemReceivedCallback item_received_callback_;
+    LocationScoutedCallback location_scouted_callback_;
+    DisconnectedCallback disconnected_callback_;
+    PrintCallback print_callback_;
+    PrintJsonCallback print_json_callback_;
+    BouncedCallback bounced_callback_;
 };
 
 } // namespace ap

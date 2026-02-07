@@ -30,6 +30,24 @@ struct ActionArg {
 };
 
 // =============================================================================
+// Action Result (shared between framework and client)
+// =============================================================================
+
+/**
+ * @brief Result of executing an item action.
+ *
+ * Used by client to report action execution results,
+ * and by framework to track and route those results.
+ */
+struct ActionResult {
+    std::string mod_id;         ///< ID of the mod that executed the action
+    int64_t item_id = 0;        ///< Item that triggered the action
+    std::string item_name;      ///< Name of the item
+    bool success = false;       ///< Whether the action succeeded
+    std::string error;          ///< Error message if failed
+};
+
+// =============================================================================
 // Location Definition (capabilities)
 // =============================================================================
 

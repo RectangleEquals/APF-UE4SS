@@ -141,13 +141,7 @@ struct PendingAction {
   std::chrono::steady_clock::time_point started_at;
 };
 
-struct ActionResult {
-  std::string mod_id;
-  int64_t item_id = 0;
-  std::string item_name;
-  bool success = false;
-  std::string error;
-};
+// ActionResult is now defined in shared/include/Types/ap_shared_manifest_types.h
 
 // =============================================================================
 // Validation Structures (Design02)

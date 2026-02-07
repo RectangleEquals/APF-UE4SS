@@ -59,16 +59,12 @@ int APClientManager::init(lua_State *L)
 
         APLogger::get()->log(LogLevel::Trace, "APClientManager", "Initializing for mod: " + manifest_.get_mod_id());
 
-        // 6. Initialize components (we own these)
-        ipc_client_ = std::make_unique<ap::APIPCClient>();
-        action_executor_ = std::make_unique<APActionExecutor>();
+        // 6. Set up IPC handlers (delegates to handle_ipc_message)
+        APIPCClient::get()->set_message_handler([this](const ap::ClientIPCMessage &msg) { handle_ipc_message(msg); });
 
-        // 7. Set up IPC handlers (delegates to handle_ipc_message)
-        ipc_client_->set_message_handler([this](const ap::ClientIPCMessage &msg) { handle_ipc_message(msg); });
+        APIPCClient::get()->set_connect_handler([]() { APCallbacks::get()->invoke_connect(); });
 
-        ipc_client_->set_connect_handler([]() { APCallbacks::get()->invoke_connect(); });
-
-        ipc_client_->set_disconnect_handler([]() { APCallbacks::get()->invoke_disconnect(); });
+        APIPCClient::get()->set_disconnect_handler([]() { APCallbacks::get()->invoke_disconnect(); });
 
         initialized_ = true;
 
@@ -86,10 +82,7 @@ void APClientManager::update(lua_State *L)
     update_cached_lua(L);
 
     // Poll for IPC messages
-    if (ipc_client_)
-    {
-        ipc_client_->poll();
-    }
+    APIPCClient::get()->poll();
 }
 
 void APClientManager::shutdown()
@@ -102,10 +95,7 @@ void APClientManager::shutdown()
     APLogger::get()->log(LogLevel::Trace, "APClientManager", "Shutting down");
 
     // Disconnect IPC
-    if (ipc_client_)
-    {
-        ipc_client_->disconnect();
-    }
+    APIPCClient::get()->disconnect();
 
     // Clear callbacks
     APCallbacks::get()->clear_all();
@@ -150,55 +140,6 @@ void APClientManager::set_current_lifecycle_state(const std::string &state)
 }
 
 // =============================================================================
-// Component Access
-// =============================================================================
-
-ap::APIPCClient *APClientManager::get_ipc_client() const
-{
-    return ipc_client_.get();
-}
-
-APActionExecutor *APClientManager::get_action_executor() const
-{
-    return action_executor_.get();
-}
-
-// =============================================================================
-// IPC Helpers
-// =============================================================================
-
-bool APClientManager::is_connected() const
-{
-    return ipc_client_ && ipc_client_->is_connected();
-}
-
-bool APClientManager::connect()
-{
-    if (!ipc_client_)
-    {
-        return false;
-    }
-    return ipc_client_->connect(APConfig::get()->get_game_name());
-}
-
-void APClientManager::disconnect()
-{
-    if (ipc_client_)
-    {
-        ipc_client_->disconnect();
-    }
-}
-
-bool APClientManager::send_message(const ap::ClientIPCMessage &msg)
-{
-    if (!ipc_client_ || !ipc_client_->is_connected())
-    {
-        return false;
-    }
-    return ipc_client_->send_message(msg);
-}
-
-// =============================================================================
 // Private Methods
 // =============================================================================
 
@@ -220,40 +161,33 @@ void APClientManager::handle_ipc_message(const ap::ClientIPCMessage &msg)
     // Handle specific message types
     if (msg.type == IPCMessageType::EXECUTE_ACTION)
     {
-        if (action_executor_)
+        auto result = APActionExecutor::get()->execute_from_payload(msg.payload);
+
+        // Invoke item received callback
+        int64_t item_id = msg.payload.value("item_id", int64_t(0));
+        std::string item_name = msg.payload.value("item_name", "");
+        std::string sender = msg.payload.value("sender", "");
+
+        callbacks->invoke_item_received(item_id, item_name, sender);
+
+        // Send result back to framework
+        if (APIPCClient::get()->is_connected())
         {
-            auto result = action_executor_->execute_from_payload(msg.payload);
-
-            // Invoke item received callback
-            int64_t item_id = msg.payload.value("item_id", int64_t(0));
-            std::string item_name = msg.payload.value("item_name", "");
-            std::string sender = msg.payload.value("sender", "");
-
-            callbacks->invoke_item_received(item_id, item_name, sender);
-
-            // Send result back to framework
-            if (is_connected())
-            {
-                ap::ClientIPCMessage response;
-                response.type = IPCMessageType::ACTION_RESULT;
-                response.source = manifest_.get_mod_id();
-                response.target = IPCTarget::FRAMEWORK;
-                response.payload = {{"item_id", result.item_id},
-                                    {"item_name", result.item_name},
-                                    {"success", result.success},
-                                    {"error", result.error}};
-                send_message(response);
-            }
-
-            if (!result.success)
-            {
-                APLogger::get()->log(LogLevel::Error, "APClientManager",
-                                     "Action failed for " + item_name + ": " + result.error);
-            }
+            ap::ClientIPCMessage response;
+            response.type = IPCMessageType::ACTION_RESULT;
+            response.source = manifest_.get_mod_id();
+            response.target = IPCTarget::FRAMEWORK;
+            response.payload = {{"item_id", result.item_id},
+                                {"item_name", result.item_name},
+                                {"success", result.success},
+                                {"error", result.error}};
+            APIPCClient::get()->send_message(response);
         }
-        else
+
+        if (!result.success)
         {
-            APLogger::get()->log(LogLevel::Error, "APClientManager", "Action executor not initialized");
+            APLogger::get()->log(LogLevel::Error, "APClientManager",
+                                 "Action failed for " + item_name + ": " + result.error);
         }
     }
     else if (msg.type == IPCMessageType::LIFECYCLE)
@@ -318,11 +252,11 @@ int APClientManager::create_lua_module(lua_State *L)
     // Connection Functions
     // =========================================================================
 
-    module["connect"] = []() -> bool { return APClientManager::get()->connect(); };
+    module["connect"] = []() -> bool { return APIPCClient::get()->connect(APConfig::get()->get_game_name()); };
 
-    module["disconnect"] = []() { APClientManager::get()->disconnect(); };
+    module["disconnect"] = []() { APIPCClient::get()->disconnect(); };
 
-    module["is_connected"] = []() -> bool { return APClientManager::get()->is_connected(); };
+    module["is_connected"] = []() -> bool { return APIPCClient::get()->is_connected(); };
 
     module["get_current_state"] = []() -> std::string { return APClientManager::get()->get_current_lifecycle_state(); };
 
@@ -336,11 +270,11 @@ int APClientManager::create_lua_module(lua_State *L)
     // =========================================================================
 
     module["register_mod"] = []() -> bool {
-        auto *mgr = APClientManager::get();
-        if (!mgr->is_connected())
+        if (!APIPCClient::get()->is_connected())
             return false;
 
-        const auto &mod_id = mgr->get_manifest().get_mod_id();
+        const auto &manifest = APClientManager::get()->get_manifest();
+        const auto &mod_id = manifest.get_mod_id();
         if (mod_id.empty())
             return false;
 
@@ -348,9 +282,9 @@ int APClientManager::create_lua_module(lua_State *L)
         msg.type = IPCMessageType::REGISTER;
         msg.source = mod_id;
         msg.target = IPCTarget::FRAMEWORK;
-        msg.payload = {{"mod_id", mod_id}, {"version", mgr->get_manifest().get_version()}};
+        msg.payload = {{"mod_id", mod_id}, {"version", manifest.get_version()}};
 
-        return mgr->send_message(msg);
+        return APIPCClient::get()->send_message(msg);
     };
 
     // =========================================================================
@@ -358,22 +292,20 @@ int APClientManager::create_lua_module(lua_State *L)
     // =========================================================================
 
     module["check_location"] = [](const std::string &location_name, sol::optional<int> instance) -> bool {
-        auto *mgr = APClientManager::get();
-        if (!mgr->is_connected())
+        if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::LOCATION_CHECK;
-        msg.source = mgr->get_manifest().get_mod_id();
+        msg.source = APClientManager::get()->get_manifest().get_mod_id();
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"location", location_name}, {"instance", instance.value_or(1)}};
 
-        return mgr->send_message(msg);
+        return APIPCClient::get()->send_message(msg);
     };
 
     module["scout_locations"] = [](sol::table locations) -> bool {
-        auto *mgr = APClientManager::get();
-        if (!mgr->is_connected())
+        if (!APIPCClient::get()->is_connected())
             return false;
 
         std::vector<std::string> location_names;
@@ -387,11 +319,11 @@ int APClientManager::create_lua_module(lua_State *L)
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::LOCATION_SCOUT;
-        msg.source = mgr->get_manifest().get_mod_id();
+        msg.source = APClientManager::get()->get_manifest().get_mod_id();
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"locations", location_names}};
 
-        return mgr->send_message(msg);
+        return APIPCClient::get()->send_message(msg);
     };
 
     // =========================================================================
@@ -408,13 +340,12 @@ int APClientManager::create_lua_module(lua_State *L)
     // =========================================================================
 
     module["command"] = [](const std::string &command, sol::optional<sol::table> payload) -> bool {
-        auto *mgr = APClientManager::get();
-        if (!mgr->is_connected())
+        if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::COMMAND;
-        msg.source = mgr->get_manifest().get_mod_id();
+        msg.source = APClientManager::get()->get_manifest().get_mod_id();
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"command", command}};
 
@@ -442,7 +373,7 @@ int APClientManager::create_lua_module(lua_State *L)
             }
         }
 
-        return mgr->send_message(msg);
+        return APIPCClient::get()->send_message(msg);
     };
 
     // =========================================================================

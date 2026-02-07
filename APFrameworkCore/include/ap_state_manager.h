@@ -3,18 +3,19 @@
 #include "ap_exports.h"
 #include "ap_types.h"
 
-#include <string>
-#include <set>
-#include <map>
+#include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
-#include <cstdint>
+#include <set>
+#include <string>
 
-namespace ap {
+namespace ap
+{
 
 /**
- * @brief Manages session state persistence and checksum validation.
+ * @brief Singleton managing session state persistence and checksum validation.
  *
  * Handles:
  * - Saving/loading session state to JSON file
@@ -22,17 +23,41 @@ namespace ap {
  * - Tracking checked locations
  * - Checksum validation during SYNCING
  * - Item progression counts for stackable items
+ *
+ * Data Ownership:
+ * - SessionState: Owned (persisted to/from JSON)
+ *
+ * Singleton Pattern: Pass-Key + Meyers
+ * - get() implementation in .cpp file
  */
-class AP_API APStateManager {
-public:
-    APStateManager();
+class AP_API APStateManager
+{
+  public:
+    // =========================================================================
+    // Pass-Key + Meyers Singleton Pattern
+    // =========================================================================
+
+    struct ConstructorKey
+    {
+      private:
+        friend class APStateManager;
+        explicit ConstructorKey() = default;
+    };
+
+    explicit APStateManager(ConstructorKey);
     ~APStateManager();
 
     // Delete copy/move
-    APStateManager(const APStateManager&) = delete;
-    APStateManager& operator=(const APStateManager&) = delete;
-    APStateManager(APStateManager&&) = delete;
-    APStateManager& operator=(APStateManager&&) = delete;
+    APStateManager(const APStateManager &) = delete;
+    APStateManager &operator=(const APStateManager &) = delete;
+    APStateManager(APStateManager &&) = delete;
+    APStateManager &operator=(APStateManager &&) = delete;
+
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to the APStateManager singleton.
+     */
+    static APStateManager *get();
 
     // ==========================================================================
     // Persistence
@@ -254,9 +279,12 @@ public:
      */
     void set_state(const SessionState& state);
 
-private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+  private:
+    // =========================================================================
+    // Private Member Variables
+    // =========================================================================
+    SessionState state_;
+    bool loaded_ = false;
 };
 
 } // namespace ap

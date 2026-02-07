@@ -8,253 +8,269 @@
 namespace ap
 {
 
-class APModRegistry::Impl
+// =============================================================================
+// Pass-Key + Meyers Singleton
+// =============================================================================
+
+APModRegistry *APModRegistry::get()
 {
-  public:
-    size_t discover_manifests()
+    static std::unique_ptr<APModRegistry> instance = std::make_unique<APModRegistry>(ConstructorKey{});
+    return instance.get();
+}
+
+APModRegistry::APModRegistry(ConstructorKey)
+{
+    // Default initialization
+}
+
+APModRegistry::~APModRegistry() = default;
+
+// =============================================================================
+// Discovery
+// =============================================================================
+
+size_t APModRegistry::discover_manifests()
+{
+    auto mods_folder = APPathUtil::get()->find_mods_folder();
+    if (!mods_folder)
     {
-
-        auto mods_folder = APPathUtil::get()->find_mods_folder();
-        if (!mods_folder)
-        {
-            APLogger::get()->log(LogLevel::Warn, "Mods folder not found: " + mods_folder.value().string());
-            return 0;
-        }
-
-        size_t count = 0;
-        std::error_code ec;
-
-        for (const auto &entry : std::filesystem::directory_iterator(*mods_folder, ec))
-        {
-            if (!entry.is_directory(ec))
-            {
-                continue;
-            }
-
-            // Look for manifest.json in each mod folder
-            auto manifest_path = entry.path() / "manifest.json";
-            if (!APPathUtil::get()->file_exists(manifest_path))
-            {
-                continue;
-            }
-
-            auto manifest = parse_manifest_file(manifest_path);
-            if (!manifest)
-            {
-                APLogger::get()->log(LogLevel::Warn, "Failed to parse manifest: " + manifest_path.string());
-                continue;
-            }
-
-            // Skip if mod_id already exists
-            if (manifests_.find(manifest->mod_id) != manifests_.end())
-            {
-                APLogger::get()->log(LogLevel::Warn, "Duplicate mod_id: " + manifest->mod_id);
-                continue;
-            }
-
-            APLogger::get()->log(LogLevel::Debug, "Discovered mod: " + manifest->mod_id + " v" + manifest->version +
-                                                      (manifest->enabled ? "" : " (disabled)"));
-
-            add_manifest(*manifest);
-            count++;
-        }
-
-        APLogger::get()->log(LogLevel::Info, "Discovered " + std::to_string(count) + " mods");
-
-        return count;
+        APLogger::get()->log(LogLevel::Warn, "Mods folder not found");
+        return 0;
     }
 
-    bool add_manifest(const Manifest &manifest)
-    {
+    size_t count = 0;
+    std::error_code ec;
 
-        if (manifests_.find(manifest.mod_id) != manifests_.end())
+    for (const auto &entry : std::filesystem::directory_iterator(*mods_folder, ec))
+    {
+        if (!entry.is_directory(ec))
+        {
+            continue;
+        }
+
+        // Look for manifest.json in each mod folder
+        auto manifest_path = entry.path() / "manifest.json";
+        if (!APPathUtil::get()->file_exists(manifest_path))
+        {
+            continue;
+        }
+
+        auto manifest = parse_manifest_file(manifest_path);
+        if (!manifest)
+        {
+            APLogger::get()->log(LogLevel::Warn, "Failed to parse manifest: " + manifest_path.string());
+            continue;
+        }
+
+        // Skip if mod_id already exists
+        if (manifests_.find(manifest->mod_id) != manifests_.end())
+        {
+            APLogger::get()->log(LogLevel::Warn, "Duplicate mod_id: " + manifest->mod_id);
+            continue;
+        }
+
+        APLogger::get()->log(LogLevel::Debug, "Discovered mod: " + manifest->mod_id + " v" + manifest->version +
+                                                  (manifest->enabled ? "" : " (disabled)"));
+
+        add_manifest(*manifest);
+        count++;
+    }
+
+    APLogger::get()->log(LogLevel::Info, "Discovered " + std::to_string(count) + " mods");
+
+    return count;
+}
+
+bool APModRegistry::add_manifest(const Manifest &manifest)
+{
+    if (manifests_.find(manifest.mod_id) != manifests_.end())
+    {
+        return false;
+    }
+
+    manifests_[manifest.mod_id] = manifest;
+    return true;
+}
+
+void APModRegistry::clear()
+{
+    manifests_.clear();
+    registered_.clear();
+}
+
+// =============================================================================
+// Registration
+// =============================================================================
+
+bool APModRegistry::mark_registered(const std::string &mod_id)
+{
+    if (manifests_.find(mod_id) == manifests_.end())
+    {
+        return false;
+    }
+
+    registered_.insert(mod_id);
+
+    APLogger::get()->log(LogLevel::Debug, "Mod registered: " + mod_id);
+
+    return true;
+}
+
+bool APModRegistry::is_registered(const std::string &mod_id) const
+{
+    return registered_.find(mod_id) != registered_.end();
+}
+
+bool APModRegistry::all_registered() const
+{
+    for (const auto &[mod_id, manifest] : manifests_)
+    {
+        if (manifest.enabled && registered_.find(mod_id) == registered_.end())
         {
             return false;
         }
-
-        manifests_[manifest.mod_id] = manifest;
-        return true;
     }
+    return true;
+}
 
-    void clear()
+std::vector<std::string> APModRegistry::get_pending_registrations() const
+{
+    std::vector<std::string> pending;
+
+    for (const auto &[mod_id, manifest] : manifests_)
     {
-        manifests_.clear();
-        registered_.clear();
-    }
-
-    bool mark_registered(const std::string &mod_id)
-    {
-
-        if (manifests_.find(mod_id) == manifests_.end())
+        if (manifest.enabled && registered_.find(mod_id) == registered_.end())
         {
-            return false;
+            pending.push_back(mod_id);
         }
-
-        registered_.insert(mod_id);
-
-        APLogger::get()->log(LogLevel::Debug, "Mod registered: " + mod_id);
-
-        return true;
     }
 
-    bool is_registered(const std::string &mod_id) const
+    return pending;
+}
+
+void APModRegistry::reset_registrations()
+{
+    registered_.clear();
+}
+
+// =============================================================================
+// Queries
+// =============================================================================
+
+std::vector<Manifest> APModRegistry::get_discovered_manifests() const
+{
+    std::vector<Manifest> result;
+    result.reserve(manifests_.size());
+
+    for (const auto &[mod_id, manifest] : manifests_)
     {
-        return registered_.find(mod_id) != registered_.end();
+        result.push_back(manifest);
     }
 
-    bool all_registered() const
+    return result;
+}
+
+std::vector<Manifest> APModRegistry::get_enabled_manifests() const
+{
+    std::vector<Manifest> result;
+
+    for (const auto &[mod_id, manifest] : manifests_)
     {
-
-        for (const auto &[mod_id, manifest] : manifests_)
-        {
-            if (manifest.enabled && registered_.find(mod_id) == registered_.end())
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    std::vector<std::string> get_pending_registrations() const
-    {
-        std::vector<std::string> pending;
-
-        for (const auto &[mod_id, manifest] : manifests_)
-        {
-            if (manifest.enabled && registered_.find(mod_id) == registered_.end())
-            {
-                pending.push_back(mod_id);
-            }
-        }
-
-        return pending;
-    }
-
-    void reset_registrations()
-    {
-        registered_.clear();
-    }
-
-    std::vector<Manifest> get_discovered_manifests() const
-    {
-        std::vector<Manifest> result;
-        result.reserve(manifests_.size());
-
-        for (const auto &[mod_id, manifest] : manifests_)
+        if (manifest.enabled)
         {
             result.push_back(manifest);
         }
-
-        return result;
     }
 
-    std::vector<Manifest> get_enabled_manifests() const
-    {
-        std::vector<Manifest> result;
+    return result;
+}
 
-        for (const auto &[mod_id, manifest] : manifests_)
+std::optional<Manifest> APModRegistry::get_manifest(const std::string &mod_id) const
+{
+    auto it = manifests_.find(mod_id);
+    if (it != manifests_.end())
+    {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+ModType APModRegistry::get_mod_type(const std::string &mod_id) const
+{
+    // Priority clients match pattern: archipelago.<game>.*
+    static const std::regex priority_pattern(R"(^archipelago\.[^.]+\..*)");
+    if (std::regex_match(mod_id, priority_pattern))
+    {
+        return ModType::Priority;
+    }
+    return ModType::Regular;
+}
+
+bool APModRegistry::is_priority_client(const std::string &mod_id) const
+{
+    return get_mod_type(mod_id) == ModType::Priority;
+}
+
+std::vector<std::string> APModRegistry::get_priority_clients() const
+{
+    std::vector<std::string> result;
+
+    for (const auto &[mod_id, manifest] : manifests_)
+    {
+        if (manifest.enabled && is_priority_client(mod_id))
         {
-            if (manifest.enabled)
-            {
-                result.push_back(manifest);
-            }
+            result.push_back(mod_id);
         }
-
-        return result;
     }
 
-    std::optional<Manifest> get_manifest(const std::string &mod_id) const
-    {
+    return result;
+}
 
-        auto it = manifests_.find(mod_id);
-        if (it != manifests_.end())
+std::vector<std::string> APModRegistry::get_regular_mods() const
+{
+    std::vector<std::string> result;
+
+    for (const auto &[mod_id, manifest] : manifests_)
+    {
+        if (manifest.enabled && !is_priority_client(mod_id))
         {
-            return it->second;
+            result.push_back(mod_id);
         }
-        return std::nullopt;
     }
 
-    ModType get_mod_type(const std::string &mod_id) const
+    return result;
+}
+
+std::vector<ModInfo> APModRegistry::get_mod_infos() const
+{
+    std::vector<ModInfo> result;
+    result.reserve(manifests_.size());
+
+    for (const auto &[mod_id, manifest] : manifests_)
     {
-        // Priority clients match pattern: archipelago.<game>.*
-        static const std::regex priority_pattern(R"(^archipelago\.[^.]+\..*)");
-        if (std::regex_match(mod_id, priority_pattern))
-        {
-            return ModType::Priority;
-        }
-        return ModType::Regular;
+        ModInfo info;
+        info.mod_id = mod_id;
+        info.name = manifest.name;
+        info.version = manifest.version;
+        info.type = get_mod_type(mod_id);
+        info.is_registered = (registered_.find(mod_id) != registered_.end());
+        info.has_conflict = false; // Set later by APCapabilities
+        result.push_back(info);
     }
 
-    bool is_priority_client(const std::string &mod_id) const
-    {
-        return get_mod_type(mod_id) == ModType::Priority;
-    }
+    return result;
+}
 
-    std::vector<std::string> get_priority_clients() const
-    {
-        std::vector<std::string> result;
-
-        for (const auto &[mod_id, manifest] : manifests_)
-        {
-            if (manifest.enabled && is_priority_client(mod_id))
-            {
-                result.push_back(mod_id);
-            }
-        }
-
-        return result;
-    }
-
-    std::vector<std::string> get_regular_mods() const
-    {
-        std::vector<std::string> result;
-
-        for (const auto &[mod_id, manifest] : manifests_)
-        {
-            if (manifest.enabled && !is_priority_client(mod_id))
-            {
-                result.push_back(mod_id);
-            }
-        }
-
-        return result;
-    }
-
-    std::vector<ModInfo> get_mod_infos() const
-    {
-        std::vector<ModInfo> result;
-        result.reserve(manifests_.size());
-
-        for (const auto &[mod_id, manifest] : manifests_)
-        {
-            ModInfo info;
-            info.mod_id = mod_id;
-            info.name = manifest.name;
-            info.version = manifest.version;
-            info.type = get_mod_type(mod_id);
-            info.is_registered = (registered_.find(mod_id) != registered_.end());
-            info.has_conflict = false; // Set later by APCapabilities
-            result.push_back(info);
-        }
-
-        return result;
-    }
-
-    size_t count() const
-    {
-        return manifests_.size();
-    }
-
-  private:
-    std::unordered_map<std::string, Manifest> manifests_;
-    std::unordered_set<std::string> registered_;
-};
+size_t APModRegistry::count() const
+{
+    return manifests_.size();
+}
 
 // =============================================================================
-// Static Parsing Functions
+// Manifest Parsing
 // =============================================================================
 
-std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_content)
+std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_content) const
 {
     try
     {
@@ -358,7 +374,7 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
     }
 }
 
-std::optional<Manifest> APModRegistry::parse_manifest_file(const std::filesystem::path &file_path)
+std::optional<Manifest> APModRegistry::parse_manifest_file(const std::filesystem::path &file_path) const
 {
     std::string content = APPathUtil::get()->read_file(file_path);
     if (content.empty())
@@ -366,100 +382,6 @@ std::optional<Manifest> APModRegistry::parse_manifest_file(const std::filesystem
         return std::nullopt;
     }
     return parse_manifest(content);
-}
-
-// =============================================================================
-// Public API
-// =============================================================================
-
-APModRegistry::APModRegistry() : impl_(std::make_unique<Impl>())
-{
-}
-APModRegistry::~APModRegistry() = default;
-
-size_t APModRegistry::discover_manifests()
-{
-    return impl_->discover_manifests();
-}
-
-bool APModRegistry::add_manifest(const Manifest &manifest)
-{
-    return impl_->add_manifest(manifest);
-}
-
-void APModRegistry::clear()
-{
-    impl_->clear();
-}
-
-bool APModRegistry::mark_registered(const std::string &mod_id)
-{
-    return impl_->mark_registered(mod_id);
-}
-
-bool APModRegistry::is_registered(const std::string &mod_id) const
-{
-    return impl_->is_registered(mod_id);
-}
-
-bool APModRegistry::all_registered() const
-{
-    return impl_->all_registered();
-}
-
-std::vector<std::string> APModRegistry::get_pending_registrations() const
-{
-    return impl_->get_pending_registrations();
-}
-
-void APModRegistry::reset_registrations()
-{
-    impl_->reset_registrations();
-}
-
-std::vector<Manifest> APModRegistry::get_discovered_manifests() const
-{
-    return impl_->get_discovered_manifests();
-}
-
-std::vector<Manifest> APModRegistry::get_enabled_manifests() const
-{
-    return impl_->get_enabled_manifests();
-}
-
-std::optional<Manifest> APModRegistry::get_manifest(const std::string &mod_id) const
-{
-    return impl_->get_manifest(mod_id);
-}
-
-ModType APModRegistry::get_mod_type(const std::string &mod_id) const
-{
-    return impl_->get_mod_type(mod_id);
-}
-
-bool APModRegistry::is_priority_client(const std::string &mod_id) const
-{
-    return impl_->is_priority_client(mod_id);
-}
-
-std::vector<std::string> APModRegistry::get_priority_clients() const
-{
-    return impl_->get_priority_clients();
-}
-
-std::vector<std::string> APModRegistry::get_regular_mods() const
-{
-    return impl_->get_regular_mods();
-}
-
-std::vector<ModInfo> APModRegistry::get_mod_infos() const
-{
-    return impl_->get_mod_infos();
-}
-
-size_t APModRegistry::count() const
-{
-    return impl_->count();
 }
 
 } // namespace ap

@@ -3,11 +3,17 @@
 #include "ap_client_types.h"
 #include "ap_exports.h"
 
+#include <atomic>
 #include <functional>
-#include <memory>
+#include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
 namespace ap
 {
@@ -17,15 +23,29 @@ namespace ap
  *
  * Connects to APFrameworkCore's IPC server to send/receive messages.
  * Uses length-prefixed JSON messages (4-byte LE length + JSON body).
+ *
+ * Singleton Pattern: Pass-Key + Meyers
+ * - get() implementation in .cpp file
  */
 class AP_API APIPCClient
 {
   public:
-    using MessageHandler = std::function<void(const ClientIPCMessage &)>;
+    using MessageHandler = std::function<void(const IPCMessage &)>;
     using ConnectHandler = std::function<void()>;
     using DisconnectHandler = std::function<void()>;
 
-    APIPCClient();
+    // =========================================================================
+    // Pass-Key + Meyers Singleton Pattern
+    // =========================================================================
+
+    struct ConstructorKey
+    {
+      private:
+        friend class APIPCClient;
+        explicit ConstructorKey() = default;
+    };
+
+    explicit APIPCClient(ConstructorKey);
     ~APIPCClient();
 
     // Delete copy/move operations
@@ -33,6 +53,16 @@ class AP_API APIPCClient
     APIPCClient &operator=(const APIPCClient &) = delete;
     APIPCClient(APIPCClient &&) = delete;
     APIPCClient &operator=(APIPCClient &&) = delete;
+
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to the APIPCClient singleton.
+     */
+    static APIPCClient *get();
+
+    // =========================================================================
+    // Connection
+    // =========================================================================
 
     /**
      * @brief Connect to the framework's IPC server.
@@ -52,12 +82,16 @@ class AP_API APIPCClient
      */
     bool is_connected() const;
 
+    // =========================================================================
+    // Messaging
+    // =========================================================================
+
     /**
      * @brief Send a message to the framework.
      * @param message Message to send.
      * @return true if message was sent successfully.
      */
-    bool send_message(const ClientIPCMessage &message);
+    bool send_message(const IPCMessage &message);
 
     /**
      * @brief Poll for incoming messages (non-blocking).
@@ -71,13 +105,13 @@ class AP_API APIPCClient
      * @brief Get all pending messages without triggering handlers.
      * @return Vector of received messages.
      */
-    std::vector<ClientIPCMessage> get_pending_messages();
+    std::vector<IPCMessage> get_pending_messages();
 
     /**
      * @brief Try to receive a single message (non-blocking).
      * @return The message if available, std::nullopt otherwise.
      */
-    std::optional<ClientIPCMessage> try_receive();
+    std::optional<IPCMessage> try_receive();
 
     // ==========================================================================
     // Callbacks
@@ -124,8 +158,39 @@ class AP_API APIPCClient
     std::string get_pipe_name() const;
 
   private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+    // =========================================================================
+    // Private Methods
+    // =========================================================================
+
+#ifdef _WIN32
+    void start_read();
+    void check_read_completion();
+    void process_received_data(DWORD bytes_received);
+    void handle_disconnect();
+#endif
+
+    // =========================================================================
+    // Private Member Variables
+    // =========================================================================
+
+#ifdef _WIN32
+    HANDLE pipe_ = INVALID_HANDLE_VALUE;
+    OVERLAPPED read_overlapped_ = {};
+    std::vector<char> read_buffer_;
+    std::atomic<bool> reading_{false};
+#endif
+
+    std::string pipe_name_;
+    std::atomic<bool> connected_{false};
+    bool auto_reconnect_ = false;
+    int timeout_ms_ = 5000;
+
+    std::mutex queue_mutex_;
+    std::queue<IPCMessage> message_queue_;
+
+    MessageHandler message_handler_;
+    ConnectHandler connect_handler_;
+    DisconnectHandler disconnect_handler_;
 };
 
 } // namespace ap

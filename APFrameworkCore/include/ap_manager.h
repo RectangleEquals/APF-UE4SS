@@ -13,13 +13,7 @@
 namespace ap
 {
 
-// Forward declarations
-class APClient;
-class APIPCServer;
-class APCapabilities;
-class APModRegistry;
-class APMessageRouter;
-class APStateManager;
+// Forward declaration
 class APPollingThread;
 
 /**
@@ -167,16 +161,6 @@ class AP_API APManager : public IAPManager
      */
     void cmd_reconnect();
 
-    // ==========================================================================
-    // Component Access
-    // ==========================================================================
-
-    APModRegistry *get_mod_registry();
-    APCapabilities *get_capabilities();
-    APStateManager *get_state_manager();
-    APMessageRouter *get_message_router();
-    APIPCServer *get_ipc_server();
-    APClient *get_ap_client();
 
     // ==========================================================================
     // IAPManager Interface
@@ -294,13 +278,10 @@ class AP_API APManager : public IAPManager
     AtomicState current_state_;
     std::chrono::steady_clock::time_point state_entered_at_;
 
-    std::unique_ptr<APIPCServer> ipc_server_;
-    std::unique_ptr<APClient> ap_client_;
     std::unique_ptr<APPollingThread> polling_thread_;
-    std::unique_ptr<APModRegistry> mod_registry_;
-    std::unique_ptr<APCapabilities> capabilities_;
-    std::unique_ptr<APStateManager> state_manager_;
-    std::unique_ptr<APMessageRouter> message_router_;
+
+    // Note: APModRegistry, APCapabilities, APStateManager, APIPCServer,
+    // APArchipelagoClient, and APMessageRouter are singletons accessed via their static get() methods
 
     bool state_loaded_ = false;
     bool reconnect_attempted_ = false;

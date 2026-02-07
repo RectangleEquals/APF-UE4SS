@@ -8,23 +8,14 @@
 #include <memory>
 #include <string>
 
-// Forward declarations
-namespace ap
-{
-class APIPCClient;
-}
-
 namespace ap::client
 {
-
-class APActionExecutor;
 
 /**
  * @brief Global singleton managing APClientLib state and components.
  *
  * The APClientManager is the central orchestrator for client mods that:
  * - Manages the cached Lua state (implements IAPManager)
- * - Owns IPC client and action executor components
  * - Owns an APManifest instance for this mod's manifest
  * - Tracks lifecycle state from framework messages
  *
@@ -33,6 +24,8 @@ class APActionExecutor;
  * - Mod identity: Accessed via owned APManifest instance
  * - Config: Accessed via APConfig singleton (NOT owned)
  * - Logging: Delegated to APLogger singleton (NOT owned)
+ * - IPC: Delegated to APIPCClient singleton (NOT owned)
+ * - Actions: Delegated to APActionExecutor singleton (NOT owned)
  *
  * Singleton Pattern: Pass-Key + Meyers
  * - get() implementation in .cpp file
@@ -122,22 +115,6 @@ class AP_API APClientManager : public IAPManager
     const std::string &get_current_lifecycle_state() const;
     void set_current_lifecycle_state(const std::string &state);
 
-    // =========================================================================
-    // Component Access (owned)
-    // =========================================================================
-
-    ap::APIPCClient *get_ipc_client() const;
-    APActionExecutor *get_action_executor() const;
-
-    // =========================================================================
-    // IPC Helpers
-    // =========================================================================
-
-    bool is_connected() const;
-    bool connect();
-    void disconnect();
-    bool send_message(const ap::ClientIPCMessage &msg);
-
   protected:
     // =========================================================================
     // Protected Methods
@@ -165,10 +142,6 @@ class AP_API APClientManager : public IAPManager
 
     // Lifecycle state (cached from framework messages)
     std::string current_lifecycle_state_ = "UNINITIALIZED";
-
-    // Components (owned)
-    std::unique_ptr<ap::APIPCClient> ipc_client_;
-    std::unique_ptr<APActionExecutor> action_executor_;
 
     // State
     bool initialized_ = false;

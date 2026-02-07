@@ -3,47 +3,75 @@
 #include "ap_exports.h"
 #include "ap_types.h"
 
-#include <string>
-#include <vector>
-#include <optional>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 
-namespace ap {
+namespace ap
+{
 
 /**
- * @brief Manages the capabilities system for all registered mods.
+ * @brief Singleton managing the capabilities system for all registered mods.
  *
  * Handles:
- * - Aggregating capabilities from all manifests
+ * - Aggregating capabilities from manifests (owned by APModRegistry)
  * - Conflict detection between mods
  * - ID assignment (locations first, then items)
  * - Checksum generation
  * - Capabilities config file generation
+ *
+ * Data Ownership:
+ * - Locations/Items with assigned IDs: Owned (computed from manifests)
+ * - Manifests: NOT owned - accessed from APModRegistry::get()
+ * - Base ID: NOT owned - accessed from APConfig::get()
+ *
+ * Singleton Pattern: Pass-Key + Meyers
+ * - get() implementation in .cpp file
  */
-class AP_API APCapabilities {
-public:
-    APCapabilities();
+class AP_API APCapabilities
+{
+  public:
+    // =========================================================================
+    // Pass-Key + Meyers Singleton Pattern
+    // =========================================================================
+
+    struct ConstructorKey
+    {
+      private:
+        friend class APCapabilities;
+        explicit ConstructorKey() = default;
+    };
+
+    explicit APCapabilities(ConstructorKey);
     ~APCapabilities();
 
     // Delete copy/move
-    APCapabilities(const APCapabilities&) = delete;
-    APCapabilities& operator=(const APCapabilities&) = delete;
-    APCapabilities(APCapabilities&&) = delete;
-    APCapabilities& operator=(APCapabilities&&) = delete;
+    APCapabilities(const APCapabilities &) = delete;
+    APCapabilities &operator=(const APCapabilities &) = delete;
+    APCapabilities(APCapabilities &&) = delete;
+    APCapabilities &operator=(APCapabilities &&) = delete;
+
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to the APCapabilities singleton.
+     */
+    static APCapabilities *get();
 
     // ==========================================================================
     // Registration
     // ==========================================================================
 
     /**
-     * @brief Add a manifest's capabilities.
-     * @param manifest Manifest to add.
+     * @brief Add a manifest's capabilities (extracts locations/items).
+     * @param manifest Manifest to extract capabilities from.
      *
      * Should be called during DISCOVERY phase for each discovered manifest.
+     * The manifest itself is NOT stored - only the location/item data.
      */
-    void add_manifest(const Manifest& manifest);
+    void add_manifest(const Manifest &manifest);
 
     /**
      * @brief Clear all registered capabilities.
@@ -57,6 +85,8 @@ public:
     /**
      * @brief Validate all capabilities for conflicts.
      * @return Validation result with any conflicts and warnings.
+     *
+     * Accesses manifests from APModRegistry for incompatibility checking.
      */
     ValidationResult validate() const;
 
@@ -78,12 +108,12 @@ public:
 
     /**
      * @brief Assign IDs to all locations and items.
-     * @param base_id Base ID for assignment (default: 6942067).
      *
+     * Uses base_id from APConfig::get()->get_id_base().
      * IDs are assigned in order: locations first, then items.
      * Multi-instance locations/items get sequential IDs.
      */
-    void assign_ids(int64_t base_id = 6942067);
+    void assign_ids();
 
     /**
      * @brief Get location ID by mod and name.
@@ -92,9 +122,7 @@ public:
      * @param instance Instance number (1-based, for multi-instance locations).
      * @return Location ID, or 0 if not found.
      */
-    int64_t get_location_id(const std::string& mod_id,
-                            const std::string& location_name,
-                            int instance = 1) const;
+    int64_t get_location_id(const std::string &mod_id, const std::string &location_name, int instance = 1) const;
 
     /**
      * @brief Get item ID by mod and name.
@@ -102,8 +130,7 @@ public:
      * @param item_name Item name.
      * @return Item ID, or 0 if not found.
      */
-    int64_t get_item_id(const std::string& mod_id,
-                        const std::string& item_name) const;
+    int64_t get_item_id(const std::string &mod_id, const std::string &item_name) const;
 
     /**
      * @brief Get location ownership info by ID.
@@ -125,14 +152,12 @@ public:
 
     /**
      * @brief Compute checksum for the current capabilities.
-     * @param game_name Game name.
-     * @param slot_name Slot name.
      * @return SHA-1 checksum string.
      *
-     * Algorithm: SHA-1(sorted_mod_ids + versions + capabilities_hash + game + slot)
+     * Uses game_name and slot_name from APConfig.
+     * Accesses manifests from APModRegistry for version info.
      */
-    std::string compute_checksum(const std::string& game_name,
-                                 const std::string& slot_name) const;
+    std::string compute_checksum() const;
 
     // ==========================================================================
     // Config Generation
@@ -140,37 +165,28 @@ public:
 
     /**
      * @brief Generate capabilities config JSON.
-     * @param slot_name Slot name for the config.
-     * @param game_name Game name.
      * @return CapabilitiesConfig structure.
+     *
+     * Uses game_name and slot_name from APConfig.
      */
-    CapabilitiesConfig generate_capabilities_config(const std::string& slot_name,
-                                                    const std::string& game_name) const;
+    CapabilitiesConfig generate_capabilities_config() const;
 
     /**
      * @brief Write capabilities config to file.
      * @param output_path Path to output file.
-     * @param slot_name Slot name.
-     * @param game_name Game name.
      * @return true if written successfully.
      *
      * Creates parent directories if needed.
-     * Filename: AP_Capabilities_<slot_name>.json
      */
-    bool write_capabilities_config(const std::filesystem::path& output_path,
-                                   const std::string& slot_name,
-                                   const std::string& game_name) const;
+    bool write_capabilities_config(const std::filesystem::path &output_path) const;
 
     /**
      * @brief Write capabilities config to default output folder.
-     * @param slot_name Slot name.
-     * @param game_name Game name.
      * @return Path to written file, or empty path on failure.
      *
      * Output: <framework_mod>/output/AP_Capabilities_<slot_name>.json
      */
-    std::filesystem::path write_capabilities_config_default(const std::string& slot_name,
-                                                            const std::string& game_name) const;
+    std::filesystem::path write_capabilities_config_default() const;
 
     // ==========================================================================
     // Queries
@@ -193,14 +209,14 @@ public:
      * @param mod_id Mod identifier.
      * @return Vector of location ownerships for that mod.
      */
-    std::vector<LocationOwnership> get_locations_for_mod(const std::string& mod_id) const;
+    std::vector<LocationOwnership> get_locations_for_mod(const std::string &mod_id) const;
 
     /**
      * @brief Get items for a specific mod.
      * @param mod_id Mod identifier.
      * @return Vector of item ownerships for that mod.
      */
-    std::vector<ItemOwnership> get_items_for_mod(const std::string& mod_id) const;
+    std::vector<ItemOwnership> get_items_for_mod(const std::string &mod_id) const;
 
     /**
      * @brief Get total number of locations.
@@ -214,15 +230,12 @@ public:
      */
     size_t get_item_count() const;
 
-    /**
-     * @brief Get the base ID used for assignment.
-     * @return Base ID.
-     */
-    int64_t get_base_id() const;
-
-private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+  private:
+    // =========================================================================
+    // Private Member Variables (only data this class OWNS)
+    // =========================================================================
+    std::vector<LocationOwnership> locations_;
+    std::vector<ItemOwnership> items_;
 };
 
 } // namespace ap

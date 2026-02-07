@@ -7,7 +7,6 @@
 #include "Types/ap_shared_manifest_types.h"
 
 #include <string>
-#include <cstdint>
 
 namespace ap {
 
@@ -31,19 +30,5 @@ inline int client_log_level_priority(const std::string& level) {
     if (level == "fatal") return 5;
     return 2; // default to info
 }
-
-// =============================================================================
-// Action Result Structure
-// =============================================================================
-
-/**
- * @brief Result of executing an item action.
- */
-struct ClientActionResult {
-    int64_t item_id = 0;
-    std::string item_name;
-    bool success = false;
-    std::string error;
-};
 
 } // namespace ap

@@ -4,6 +4,7 @@
 #include "ap_types.h"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -14,18 +15,32 @@ namespace ap
 {
 
 /**
- * @brief Registry for discovered and registered mods.
+ * @brief Singleton registry for discovered and registered mods.
  *
  * Handles:
  * - Manifest discovery from filesystem
  * - Manifest parsing and validation
  * - Registration tracking
  * - Priority client detection (mod_id starting with "archipelago.<game>.")
+ *
+ * Singleton Pattern: Pass-Key + Meyers
+ * - get() implementation in .cpp file
  */
 class AP_API APModRegistry
 {
   public:
-    APModRegistry();
+    // =========================================================================
+    // Pass-Key + Meyers Singleton Pattern
+    // =========================================================================
+
+    struct ConstructorKey
+    {
+      private:
+        friend class APModRegistry;
+        explicit ConstructorKey() = default;
+    };
+
+    explicit APModRegistry(ConstructorKey);
     ~APModRegistry();
 
     // Delete copy/move
@@ -33,6 +48,12 @@ class AP_API APModRegistry
     APModRegistry &operator=(const APModRegistry &) = delete;
     APModRegistry(APModRegistry &&) = delete;
     APModRegistry &operator=(APModRegistry &&) = delete;
+
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to the APModRegistry singleton.
+     */
+    static APModRegistry *get();
 
     // ==========================================================================
     // Discovery
@@ -164,18 +185,21 @@ class AP_API APModRegistry
      * @param json_content JSON string content.
      * @return Parsed manifest, or std::nullopt on error.
      */
-    static std::optional<Manifest> parse_manifest(const std::string &json_content);
+    std::optional<Manifest> parse_manifest(const std::string &json_content) const;
 
     /**
      * @brief Parse a manifest from a file.
      * @param file_path Path to manifest.json.
      * @return Parsed manifest, or std::nullopt on error.
      */
-    static std::optional<Manifest> parse_manifest_file(const std::filesystem::path &file_path);
+    std::optional<Manifest> parse_manifest_file(const std::filesystem::path &file_path) const;
 
   private:
-    class Impl;
-    std::unique_ptr<Impl> impl_;
+    // =========================================================================
+    // Private Member Variables
+    // =========================================================================
+    std::unordered_map<std::string, Manifest> manifests_;
+    std::unordered_set<std::string> registered_;
 };
 
 } // namespace ap
