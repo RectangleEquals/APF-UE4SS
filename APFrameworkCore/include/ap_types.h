@@ -250,47 +250,69 @@ struct CapabilitiesConfigItem {
   int count = 1;
 };
 
+struct CapabilitiesData {
+  std::vector<CapabilitiesConfigLocation> locations;
+  std::vector<CapabilitiesConfigItem> items;
+};
+
 struct CapabilitiesConfig {
   std::string version;
   std::string game;
   std::string slot_name;
-  std::string checksum;
-  int64_t id_base = 6942067;
   std::string generated_at;
+  int64_t id_base = 6942067;
+  std::string checksum;
   std::vector<ModInfo> mods;
-  std::vector<CapabilitiesConfigLocation> locations;
-  std::vector<CapabilitiesConfigItem> items;
+  CapabilitiesData capabilities;
 
-  nlohmann::json to_json() const {
-    nlohmann::json mods_arr = nlohmann::json::array();
+  nlohmann::ordered_json to_json() const {
+    nlohmann::ordered_json j;
+
+    j["version"] = version;
+    j["game"] = game;
+    j["slot_name"] = slot_name;
+    j["generated_at"] = generated_at;
+    j["id_base"] = id_base;
+    j["checksum"] = checksum;
+
+    nlohmann::ordered_json mods_arr = nlohmann::ordered_json::array();
     for (const auto &mod : mods) {
-      mods_arr.push_back({{"mod_id", mod.mod_id},
-                          {"name", mod.name},
-                          {"version", mod.version}});
+      nlohmann::ordered_json m;
+      m["mod_id"] = mod.mod_id;
+      m["name"] = mod.name;
+      m["version"] = mod.version;
+      mods_arr.push_back(m);
     }
+    j["mods"] = mods_arr;
 
-    nlohmann::json locs_arr = nlohmann::json::array();
-    for (const auto &loc : locations) {
-      locs_arr.push_back({{"id", loc.id},
-                          {"name", loc.name},
-                          {"mod_id", loc.mod_id},
-                          {"instance", loc.instance}});
+    nlohmann::ordered_json caps;
+
+    nlohmann::ordered_json locs_arr = nlohmann::ordered_json::array();
+    for (const auto &loc : capabilities.locations) {
+      nlohmann::ordered_json l;
+      l["id"] = loc.id;
+      l["name"] = loc.name;
+      l["mod_id"] = loc.mod_id;
+      l["instance"] = loc.instance;
+      locs_arr.push_back(l);
     }
+    caps["locations"] = locs_arr;
 
-    nlohmann::json items_arr = nlohmann::json::array();
-    for (const auto &item : items) {
-      items_arr.push_back({{"id", item.id},
-                           {"name", item.name},
-                           {"type", item.type},
-                           {"mod_id", item.mod_id},
-                           {"count", item.count}});
+    nlohmann::ordered_json items_arr = nlohmann::ordered_json::array();
+    for (const auto &item : capabilities.items) {
+      nlohmann::ordered_json it;
+      it["id"] = item.id;
+      it["name"] = item.name;
+      it["type"] = item.type;
+      it["mod_id"] = item.mod_id;
+      it["count"] = item.count;
+      items_arr.push_back(it);
     }
+    caps["items"] = items_arr;
 
-    return {{"version", version},     {"game", game},
-            {"slot_name", slot_name}, {"checksum", checksum},
-            {"id_base", id_base},     {"generated_at", generated_at},
-            {"mods", mods_arr},       {"locations", locs_arr},
-            {"items", items_arr}};
+    j["capabilities"] = caps;
+
+    return j;
   }
 };
 

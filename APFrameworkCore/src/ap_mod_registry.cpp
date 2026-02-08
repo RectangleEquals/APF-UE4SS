@@ -34,7 +34,7 @@ size_t APModRegistry::discover_manifests()
     auto mods_folder = APPathUtil::get()->find_mods_folder();
     if (!mods_folder)
     {
-        APLogger::get()->log(LogLevel::Warn, "Mods folder not found");
+        APLogger::get()->log(LogLevel::Warn, "APModRegistry", "Mods folder not found");
         return 0;
     }
 
@@ -58,25 +58,27 @@ size_t APModRegistry::discover_manifests()
         auto manifest = parse_manifest_file(manifest_path);
         if (!manifest)
         {
-            APLogger::get()->log(LogLevel::Warn, "Failed to parse manifest: " + manifest_path.string());
+            APLogger::get()->log(LogLevel::Warn, "APModRegistry",
+                                 "Failed to parse manifest: " + manifest_path.string());
             continue;
         }
 
         // Skip if mod_id already exists
         if (manifests_.find(manifest->mod_id) != manifests_.end())
         {
-            APLogger::get()->log(LogLevel::Warn, "Duplicate mod_id: " + manifest->mod_id);
+            APLogger::get()->log(LogLevel::Warn, "APModRegistry", "Duplicate mod_id: " + manifest->mod_id);
             continue;
         }
 
-        APLogger::get()->log(LogLevel::Debug, "Discovered mod: " + manifest->mod_id + " v" + manifest->version +
-                                                  (manifest->enabled ? "" : " (disabled)"));
+        APLogger::get()->log(LogLevel::Debug, "APModRegistry",
+                             "Discovered mod: " + manifest->mod_id + " v" + manifest->version +
+                                 (manifest->enabled ? "" : " (disabled)"));
 
         add_manifest(*manifest);
         count++;
     }
 
-    APLogger::get()->log(LogLevel::Info, "Discovered " + std::to_string(count) + " mods");
+    APLogger::get()->log(LogLevel::Info, "APModRegistry", "Discovered " + std::to_string(count) + " mods");
 
     return count;
 }
@@ -111,7 +113,7 @@ bool APModRegistry::mark_registered(const std::string &mod_id)
 
     registered_.insert(mod_id);
 
-    APLogger::get()->log(LogLevel::Debug, "Mod registered: " + mod_id);
+    APLogger::get()->log(LogLevel::Debug, "APModRegistry", "Mod registered: " + mod_id);
 
     return true;
 }
@@ -369,7 +371,7 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
     }
     catch (const nlohmann::json::exception &e)
     {
-        APLogger::get()->log(LogLevel::Error, "JSON parse error: " + std::string(e.what()));
+        APLogger::get()->log(LogLevel::Error, "APModRegistry", "JSON parse error: " + std::string(e.what()));
         return std::nullopt;
     }
 }

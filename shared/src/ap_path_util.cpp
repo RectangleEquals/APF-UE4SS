@@ -1,4 +1,5 @@
 #include "ap_path_util.h"
+#include "ap_logger.h"
 #include "ap_manager_base.h"
 
 #include <fstream>
@@ -38,24 +39,40 @@ void APPathUtil::initialize_cache()
 {
     if (cache_initialized_)
     {
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "Cache already initialized");
         return;
     }
+
+    APLogger::get()->log(LogLevel::Trace, "APPathUtil", "Initializing path cache...");
 
     // Strategy 1: Try debug.getinfo via APManagerAccessor
     if (try_init_from_lua())
     {
         cache_initialized_ = true;
+        APLogger::get()->log(LogLevel::Debug, "APPathUtil",
+                             "Cache initialized via Lua debug.getinfo - mods: " +
+                                 (cached_mods_folder_ ? cached_mods_folder_->string() : "(none)") +
+                                 " framework: " +
+                                 (cached_framework_folder_ ? cached_framework_folder_->string() : "(none)"));
         return;
     }
+
+    APLogger::get()->log(LogLevel::Debug, "APPathUtil", "Lua init failed, trying DLL fallback");
 
     // Strategy 2: Fallback to DLL-relative search
     if (try_init_from_dll())
     {
         cache_initialized_ = true;
+        APLogger::get()->log(LogLevel::Debug, "APPathUtil",
+                             "Cache initialized via DLL fallback - mods: " +
+                                 (cached_mods_folder_ ? cached_mods_folder_->string() : "(none)") +
+                                 " framework: " +
+                                 (cached_framework_folder_ ? cached_framework_folder_->string() : "(none)"));
         return;
     }
 
     // Both failed - cache is still considered initialized (with empty values)
+    APLogger::get()->log(LogLevel::Warn, "APPathUtil", "Both Lua and DLL cache init strategies failed");
     cache_initialized_ = true;
 }
 
@@ -78,12 +95,14 @@ bool APPathUtil::try_init_from_lua()
     auto *manager = APManagerAccessor::get();
     if (!manager)
     {
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_lua: no APManagerAccessor");
         return false;
     }
 
     sol::state_view *lua = manager->get_cached_lua();
     if (!lua)
     {
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_lua: no cached Lua state");
         return false;
     }
 
@@ -94,12 +113,14 @@ bool APPathUtil::try_init_from_lua()
         sol::table debug_table = (*lua)["debug"];
         if (!debug_table.valid())
         {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_lua: debug table not valid");
             return false;
         }
 
         sol::function getinfo = debug_table["getinfo"];
         if (!getinfo.valid())
         {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_lua: debug.getinfo not valid");
             return false;
         }
 
@@ -108,16 +129,20 @@ bool APPathUtil::try_init_from_lua()
         sol::table info = getinfo(2, "S");
         if (!info.valid())
         {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_lua: getinfo(2, 'S') returned invalid");
             return false;
         }
 
         sol::optional<std::string> source = info["source"];
         if (!source || source->empty())
         {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_lua: source is nil or empty");
             return false;
         }
 
         std::string source_path = *source;
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_lua: raw source = " + source_path);
+
         // Remove leading '@' if present (indicates file path)
         if (!source_path.empty() && source_path[0] == '@')
         {
@@ -127,6 +152,8 @@ bool APPathUtil::try_init_from_lua()
         std::filesystem::path script_path(source_path);
         if (!script_path.is_absolute())
         {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                                 "try_init_from_lua: path not absolute: " + source_path);
             return false;
         }
 
@@ -134,13 +161,15 @@ bool APPathUtil::try_init_from_lua()
         // Expected structure: .../Mods/<ModFolder>/Scripts/main.lua
         std::filesystem::path current = script_path.parent_path(); // Scripts
         current = current.parent_path();                           // ModFolder
-        std::filesystem::path mod_folder = current;
-        current = current.parent_path(); // Mods
+        current = current.parent_path();                           // Mods
 
         if (current.filename() == "Mods" && directory_exists(current))
         {
             cached_mods_folder_ = current;
             cached_ue4ss_folder_ = current.parent_path();
+
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                                 "try_init_from_lua: found Mods folder at " + current.string());
 
             // Find framework mod by content
             find_framework_mod_by_content();
@@ -148,10 +177,19 @@ bool APPathUtil::try_init_from_lua()
             return true;
         }
 
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                             "try_init_from_lua: parent not 'Mods' or doesn't exist: " + current.string());
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        APLogger::get()->log(LogLevel::Error, "APPathUtil",
+                             "try_init_from_lua: exception: " + std::string(e.what()));
         return false;
     }
     catch (...)
     {
+        APLogger::get()->log(LogLevel::Error, "APPathUtil", "try_init_from_lua: unknown exception");
         return false;
     }
 }
@@ -194,8 +232,12 @@ bool APPathUtil::find_framework_mod_by_content()
 {
     if (!cached_mods_folder_ || !directory_exists(*cached_mods_folder_))
     {
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "find_framework_mod_by_content: no mods folder");
         return false;
     }
+
+    APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                         "find_framework_mod_by_content: scanning " + cached_mods_folder_->string());
 
     std::error_code ec;
     for (const auto &entry : std::filesystem::directory_iterator(*cached_mods_folder_, ec))
@@ -212,10 +254,14 @@ bool APPathUtil::find_framework_mod_by_content()
         if (file_exists(config_path) && file_exists(manifest_path))
         {
             cached_framework_folder_ = entry.path();
+            APLogger::get()->log(LogLevel::Debug, "APPathUtil",
+                                 "Found framework mod at: " + entry.path().string());
             return true;
         }
     }
 
+    APLogger::get()->log(LogLevel::Warn, "APPathUtil",
+                         "No framework mod found in " + cached_mods_folder_->string());
     return false;
 }
 
@@ -269,17 +315,19 @@ std::optional<std::filesystem::path> APPathUtil::find_output_folder()
     return output;
 }
 
-std::optional<std::filesystem::path> APPathUtil::find_current_mod_folder(int level)
+std::optional<std::filesystem::path> APPathUtil::find_current_mod_folder()
 {
     auto *manager = APManagerAccessor::get();
     if (!manager)
     {
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "find_current_mod_folder: no APManagerAccessor");
         return std::nullopt;
     }
 
     sol::state_view *lua = manager->get_cached_lua();
     if (!lua)
     {
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "find_current_mod_folder: no cached Lua state");
         return std::nullopt;
     }
 
@@ -288,52 +336,79 @@ std::optional<std::filesystem::path> APPathUtil::find_current_mod_folder(int lev
         sol::table debug_table = (*lua)["debug"];
         if (!debug_table.valid())
         {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil", "find_current_mod_folder: debug table not valid");
             return std::nullopt;
         }
 
         sol::function getinfo = debug_table["getinfo"];
         if (!getinfo.valid())
         {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                                 "find_current_mod_folder: debug.getinfo not valid");
             return std::nullopt;
         }
 
-        sol::table info = getinfo(level, "S");
-        if (!info.valid())
+        // Scan up the call stack to find the first Lua source file.
+        // During require(), the stack has multiple C frames before the Lua caller,
+        // so we can't use a fixed level — we scan until we find a non-C source.
+        for (int level = 0; level <= 10; ++level)
         {
-            return std::nullopt;
+            sol::object result = getinfo(level, "S");
+            if (!result.valid() || result.get_type() != sol::type::table)
+            {
+                break; // End of stack
+            }
+
+            sol::table info = result.as<sol::table>();
+            sol::optional<std::string> source = info["source"];
+            if (!source || source->empty() || *source == "=[C]")
+            {
+                continue; // Skip C functions
+            }
+
+            std::string source_path = *source;
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                                 "find_current_mod_folder: found Lua source at level " +
+                                     std::to_string(level) + ": " + source_path);
+
+            // Remove leading '@' if present (indicates file path)
+            if (source_path[0] == '@')
+            {
+                source_path = source_path.substr(1);
+            }
+
+            std::filesystem::path script_path(source_path);
+            if (!script_path.is_absolute())
+            {
+                APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                                     "find_current_mod_folder: path not absolute, skipping: " + source_path);
+                continue; // Skip non-absolute paths, keep searching
+            }
+
+            // Navigate up: .../Mods/<ModFolder>/Scripts/main.lua -> <ModFolder>
+            std::filesystem::path mod_folder = script_path.parent_path().parent_path();
+
+            if (directory_exists(mod_folder))
+            {
+                APLogger::get()->log(LogLevel::Debug, "APPathUtil",
+                                     "find_current_mod_folder: resolved to " + mod_folder.string());
+                return mod_folder;
+            }
         }
 
-        sol::optional<std::string> source = info["source"];
-        if (!source || source->empty())
-        {
-            return std::nullopt;
-        }
-
-        std::string source_path = *source;
-        if (!source_path.empty() && source_path[0] == '@')
-        {
-            source_path = source_path.substr(1);
-        }
-
-        std::filesystem::path script_path(source_path);
-        if (!script_path.is_absolute())
-        {
-            return std::nullopt;
-        }
-
-        // Navigate up: .../Mods/<ModFolder>/Scripts/main.lua -> <ModFolder>
-        std::filesystem::path current = script_path.parent_path(); // Scripts
-        current = current.parent_path();                           // ModFolder
-
-        if (directory_exists(current))
-        {
-            return current;
-        }
-
+        APLogger::get()->log(LogLevel::Warn, "APPathUtil",
+                             "find_current_mod_folder: no Lua source found in stack");
+        return std::nullopt;
+    }
+    catch (const std::exception &e)
+    {
+        APLogger::get()->log(LogLevel::Error, "APPathUtil",
+                             "find_current_mod_folder: exception: " + std::string(e.what()));
         return std::nullopt;
     }
     catch (...)
     {
+        APLogger::get()->log(LogLevel::Error, "APPathUtil", "find_current_mod_folder: unknown exception");
         return std::nullopt;
     }
 }
@@ -368,6 +443,12 @@ std::filesystem::path APPathUtil::get_config_path()
 
 std::filesystem::path APPathUtil::get_session_state_path()
 {
+    auto output_folder = find_output_folder();
+    if (output_folder)
+    {
+        return *output_folder / "session_state.json";
+    }
+
     auto framework_folder = find_framework_mod_folder();
     if (framework_folder)
     {

@@ -1,5 +1,6 @@
 #include "ap_action_executor.h"
 #include "ap_client_manager.h"
+#include "ap_logger.h"
 
 #include <sol/sol.hpp>
 
@@ -132,12 +133,17 @@ ap::ActionResult APActionExecutor::execute(const std::string &action, const std:
     result.item_id = item_id;
     result.item_name = item_name;
 
+    APLogger::get()->log(LogLevel::Trace, "APActionExecutor",
+                         "Executing action: " + action + " for item: " + item_name +
+                             " (id=" + std::to_string(item_id) + ", args=" + std::to_string(args.size()) + ")");
+
     // Get cached Lua state from APClientManager
     sol::state_view *lua = APClientManager::get()->get_cached_lua();
     if (!lua)
     {
         result.success = false;
         result.error = "Lua state not available";
+        APLogger::get()->log(LogLevel::Error, "APActionExecutor", "Lua state not available for action: " + action);
         return result;
     }
 
@@ -149,6 +155,7 @@ ap::ActionResult APActionExecutor::execute(const std::string &action, const std:
         {
             result.success = false;
             result.error = "Function not found: " + action;
+            APLogger::get()->log(LogLevel::Warn, "APActionExecutor", "Function not found: " + action);
             return result;
         }
 
@@ -195,10 +202,14 @@ ap::ActionResult APActionExecutor::execute(const std::string &action, const std:
             sol::error err = call_result;
             result.success = false;
             result.error = "Execution error: " + std::string(err.what());
+            APLogger::get()->log(LogLevel::Error, "APActionExecutor",
+                                 "Action " + action + " failed: " + result.error);
             return result;
         }
 
         result.success = true;
+        APLogger::get()->log(LogLevel::Debug, "APActionExecutor",
+                             "Action " + action + " succeeded for item: " + item_name);
         return result;
     }
     catch (const sol::error &e)

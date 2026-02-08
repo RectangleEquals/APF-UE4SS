@@ -52,7 +52,7 @@ bool APIPCServer::start(const std::string &game_name)
     // Start the I/O thread
     io_thread_ = std::thread(&APIPCServer::io_thread_func, this);
 
-    APLogger::get()->log(LogLevel::Info, "IPC Server started on: " + pipe_name_);
+    APLogger::get()->log(LogLevel::Info, "APIPCServer", "IPC Server started on: " + pipe_name_);
     return true;
 }
 
@@ -90,7 +90,7 @@ void APIPCServer::stop()
         clients_.clear();
     }
 
-    APLogger::get()->log(LogLevel::Info, "IPC Server stopped");
+    APLogger::get()->log(LogLevel::Info, "APIPCServer", "IPC Server stopped");
 }
 
 bool APIPCServer::is_running() const
@@ -218,7 +218,8 @@ void APIPCServer::io_thread_func()
     HANDLE listen_pipe = static_cast<HANDLE>(create_pipe_instance());
     if (listen_pipe == INVALID_HANDLE_VALUE)
     {
-        APLogger::get()->log(LogLevel::Error, "Failed to create named pipe: " + std::to_string(GetLastError()));
+        APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                             "Failed to create named pipe: " + std::to_string(GetLastError()));
         return;
     }
 
@@ -230,7 +231,8 @@ void APIPCServer::io_thread_func()
     DWORD connect_error = GetLastError();
     if (connect_error != ERROR_IO_PENDING && connect_error != ERROR_PIPE_CONNECTED)
     {
-        APLogger::get()->log(LogLevel::Error, "ConnectNamedPipe failed: " + std::to_string(connect_error));
+        APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                             "ConnectNamedPipe failed: " + std::to_string(connect_error));
         CloseHandle(listen_pipe);
         CloseHandle(connect_overlapped.hEvent);
         return;
@@ -272,7 +274,8 @@ void APIPCServer::io_thread_func()
 
         if (result == WAIT_FAILED)
         {
-            APLogger::get()->log(LogLevel::Error, "WaitForMultipleObjects failed: " + std::to_string(GetLastError()));
+            APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                                 "WaitForMultipleObjects failed: " + std::to_string(GetLastError()));
             continue;
         }
 
@@ -301,7 +304,7 @@ void APIPCServer::io_thread_func()
                     clients_[temp_id] = std::move(conn);
                 }
 
-                APLogger::get()->log(LogLevel::Debug, "New client connected: " + temp_id);
+                APLogger::get()->log(LogLevel::Debug, "APIPCServer", "New client connected: " + temp_id);
 
                 if (connect_handler_)
                 {
@@ -369,7 +372,8 @@ bool APIPCServer::queue_write(ClientConnection *conn, const IPCMessage &message)
     }
     catch (const std::exception &e)
     {
-        APLogger::get()->log(LogLevel::Error, "Failed to send message to " + conn->client_id + ": " + e.what());
+        APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                             "Failed to send message to " + conn->client_id + ": " + e.what());
         return false;
     }
 }
@@ -435,7 +439,7 @@ void APIPCServer::handle_read_complete(ClientConnection *conn, unsigned long byt
                     }
                     catch (const nlohmann::json::exception &e)
                     {
-                        APLogger::get()->log(LogLevel::Error,
+                        APLogger::get()->log(LogLevel::Error, "APIPCServer",
                                              "JSON parse error from " + conn->client_id + ": " + e.what());
                     }
                 }
@@ -498,7 +502,7 @@ void APIPCServer::disconnect_client(const std::string &client_id)
 
     if (conn)
     {
-        APLogger::get()->log(LogLevel::Debug, "Client disconnected: " + client_id);
+        APLogger::get()->log(LogLevel::Debug, "APIPCServer", "Client disconnected: " + client_id);
 
         if (disconnect_handler_)
         {

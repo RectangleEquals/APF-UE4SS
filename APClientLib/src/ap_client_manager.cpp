@@ -52,12 +52,17 @@ int APClientManager::init(lua_State *L)
         APLogger::get()->init();
 
         // 5. Load this mod's manifest using APPathUtil::find_current_mod_folder()
+        APLogger::get()->log(LogLevel::Trace, "APClientManager", "Loading manifest via find_current_mod_folder()...");
         if (!manifest_.load_current())
         {
             APLogger::get()->log(LogLevel::Warn, "APClientManager", "Failed to load manifest - mod identity unknown");
         }
-
-        APLogger::get()->log(LogLevel::Trace, "APClientManager", "Initializing for mod: " + manifest_.get_mod_id());
+        else
+        {
+            APLogger::get()->log(LogLevel::Debug, "APClientManager",
+                                 "Manifest loaded: mod_id=" + manifest_.get_mod_id() +
+                                     " from " + manifest_.get_manifest_path().string());
+        }
 
         // 6. Set up IPC handlers (delegates to handle_ipc_message)
         APIPCClient::get()->set_message_handler([this](const ap::ClientIPCMessage &msg) { handle_ipc_message(msg); });

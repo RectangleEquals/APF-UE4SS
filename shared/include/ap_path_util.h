@@ -85,12 +85,12 @@ public:
 
     /**
      * @brief Find the current mod folder using debug.getinfo.
-     * @param level Stack level to inspect (default 3 for typical call depth).
      * @return Path to the mod folder containing the calling script.
      *
-     * Uses debug.getinfo to find the source file path of the caller.
+     * Scans up the Lua call stack to find the first non-C source file,
+     * then navigates up from its path to find the mod folder.
      */
-    std::optional<std::filesystem::path> find_current_mod_folder(int level = 3);
+    std::optional<std::filesystem::path> find_current_mod_folder();
 
     // =========================================================================
     // Well-Known Paths

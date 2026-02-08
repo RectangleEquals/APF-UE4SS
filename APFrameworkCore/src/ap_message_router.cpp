@@ -33,13 +33,13 @@ APMessageRouter::~APMessageRouter() = default;
 // =============================================================================
 
 std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id, const std::string &item_name,
-                                                                  const std::string &sender_name)
+                                                                 const std::string &sender_name)
 {
     // Look up item ownership
     auto item_opt = APCapabilities::get()->get_item_by_id(item_id);
     if (!item_opt)
     {
-        APLogger::get()->log(LogLevel::Warn, "Unknown item ID: " + std::to_string(item_id));
+        APLogger::get()->log(LogLevel::Warn, "APMessageRouter", "Unknown item ID: " + std::to_string(item_id));
         return std::nullopt;
     }
 
@@ -48,7 +48,7 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
     // Check if item has an action to execute
     if (item.action.empty())
     {
-        APLogger::get()->log(LogLevel::Debug, "Item has no action: " + item_name);
+        APLogger::get()->log(LogLevel::Debug, "APMessageRouter", "Item has no action: " + item_name);
         return std::nullopt;
     }
 
@@ -84,7 +84,7 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
 
     APIPCServer::get()->send_message(item.mod_id, msg);
 
-    APLogger::get()->log(LogLevel::Debug,
+    APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
                          "Routed item to " + item.mod_id + ": " + item_name + " (action: " + item.action + ")");
 
     return pending;
@@ -145,7 +145,7 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
     int64_t location_id = APCapabilities::get()->get_location_id(mod_id, location_name, instance);
     if (location_id == 0)
     {
-        APLogger::get()->log(LogLevel::Warn,
+        APLogger::get()->log(LogLevel::Warn, "APMessageRouter",
                              "Unknown location: " + mod_id + "/" + location_name + " #" + std::to_string(instance));
         return 0;
     }
@@ -153,7 +153,7 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
     // Check if already checked
     if (APStateManager::get()->is_location_checked(location_id))
     {
-        APLogger::get()->log(LogLevel::Debug, "Location already checked: " + location_name);
+        APLogger::get()->log(LogLevel::Debug, "APMessageRouter", "Location already checked: " + location_name);
         return 0;
     }
 
@@ -163,7 +163,7 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
     // Send to AP server
     APArchipelagoClient::get()->send_location_checks({location_id});
 
-    APLogger::get()->log(LogLevel::Info,
+    APLogger::get()->log(LogLevel::Info, "APMessageRouter",
                          "Location checked: " + location_name + " (ID: " + std::to_string(location_id) + ")");
 
     return location_id;
@@ -193,8 +193,8 @@ void APMessageRouter::route_location_checks(const std::vector<int64_t> &location
 // =============================================================================
 
 std::vector<int64_t> APMessageRouter::route_location_scouts(const std::string &mod_id,
-                                                             const std::vector<std::string> &location_names,
-                                                             bool create_hints)
+                                                            const std::vector<std::string> &location_names,
+                                                            bool create_hints)
 {
     std::vector<int64_t> location_ids;
 
@@ -258,7 +258,8 @@ void APMessageRouter::handle_action_result(const std::string &mod_id, const Acti
 {
     if (result.success)
     {
-        APLogger::get()->log(LogLevel::Debug, "Action succeeded for " + mod_id + ": " + result.item_name);
+        APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
+                             "Action succeeded for " + mod_id + ": " + result.item_name);
 
         // Update progression count
         if (result.item_id != 0)
@@ -268,7 +269,7 @@ void APMessageRouter::handle_action_result(const std::string &mod_id, const Acti
     }
     else
     {
-        APLogger::get()->log(LogLevel::Warn,
+        APLogger::get()->log(LogLevel::Warn, "APMessageRouter",
                              "Action failed for " + mod_id + ": " + result.item_name + " - " + result.error);
     }
 }
@@ -287,7 +288,7 @@ void APMessageRouter::broadcast_lifecycle(LifecycleState state, const std::strin
 
     APIPCServer::get()->broadcast(msg);
 
-    APLogger::get()->log(LogLevel::Info,
+    APLogger::get()->log(LogLevel::Info, "APMessageRouter",
                          "Lifecycle -> " + lifecycle_state_to_string(state) + (message.empty() ? "" : ": " + message));
 }
 
@@ -301,7 +302,7 @@ void APMessageRouter::broadcast_error(const std::string &code, const std::string
 
     APIPCServer::get()->broadcast(msg);
 
-    APLogger::get()->log(LogLevel::Error,
+    APLogger::get()->log(LogLevel::Error, "APMessageRouter",
                          "Error [" + code + "]: " + message + (details.empty() ? "" : " (" + details + ")"));
 }
 

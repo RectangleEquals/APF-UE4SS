@@ -1,4 +1,5 @@
 #include "ap_ipc_client.h"
+#include "ap_logger.h"
 
 #include <chrono>
 #include <memory>
@@ -44,6 +45,7 @@ bool APIPCClient::connect(const std::string &game_name)
     }
 
     pipe_name_ = "\\\\.\\pipe\\APFramework_" + game_name;
+    APLogger::get()->log(LogLevel::Trace, "APIPCClient", "Connecting to pipe: " + pipe_name_);
 
     // Try to connect to the named pipe
     for (int attempt = 0; attempt < 3; ++attempt)
@@ -74,6 +76,7 @@ bool APIPCClient::connect(const std::string &game_name)
 
     if (pipe_ == INVALID_HANDLE_VALUE)
     {
+        APLogger::get()->log(LogLevel::Error, "APIPCClient", "Failed to connect to pipe: " + pipe_name_);
         return false;
     }
 
@@ -96,6 +99,7 @@ bool APIPCClient::connect(const std::string &game_name)
     }
 
     connected_ = true;
+    APLogger::get()->log(LogLevel::Debug, "APIPCClient", "Connected to pipe: " + pipe_name_);
 
     // Start async read
     start_read();
@@ -115,6 +119,7 @@ void APIPCClient::disconnect()
         return;
     }
 
+    APLogger::get()->log(LogLevel::Debug, "APIPCClient", "Disconnecting from pipe: " + pipe_name_);
     connected_ = false;
 
     if (read_overlapped_.hEvent != nullptr)
@@ -346,6 +351,7 @@ void APIPCClient::handle_disconnect()
         return;
     }
 
+    APLogger::get()->log(LogLevel::Debug, "APIPCClient", "Pipe disconnected (broken pipe): " + pipe_name_);
     connected_ = false;
     reading_ = false;
 

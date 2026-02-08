@@ -36,13 +36,14 @@ bool APStateManager::save_state(const std::filesystem::path &path)
         std::string json_content = state_.to_json().dump(2);
         if (APPathUtil::get()->write_file(path, json_content))
         {
-            APLogger::get()->log(LogLevel::Debug, "Saved session state to: " + path.string());
+            APLogger::get()->log(LogLevel::Debug, "APStateManager", "Saved session state to: " + path.string());
             return true;
         }
     }
     catch (const std::exception &e)
     {
-        APLogger::get()->log(LogLevel::Error, "Failed to save session state: " + std::string(e.what()));
+        APLogger::get()->log(LogLevel::Error, "APStateManager",
+                             "Failed to save session state: " + std::string(e.what()));
     }
 
     return false;
@@ -58,7 +59,7 @@ bool APStateManager::load_state(const std::filesystem::path &path)
     std::string content = APPathUtil::get()->read_file(path);
     if (content.empty())
     {
-        APLogger::get()->log(LogLevel::Debug, "No session state file found: " + path.string());
+        APLogger::get()->log(LogLevel::Debug, "APStateManager", "No session state file found: " + path.string());
         return false;
     }
 
@@ -68,15 +69,17 @@ bool APStateManager::load_state(const std::filesystem::path &path)
         state_ = SessionState::from_json(j);
         loaded_ = true;
 
-        APLogger::get()->log(LogLevel::Info, "Loaded session state from: " + path.string() +
-                                                 " (item_index=" + std::to_string(state_.received_item_index) +
-                                                 ", locations=" + std::to_string(state_.checked_locations.size()) + ")");
+        APLogger::get()->log(LogLevel::Info, "APStateManager",
+                             "Loaded session state from: " + path.string() +
+                                 " (item_index=" + std::to_string(state_.received_item_index) +
+                                 ", locations=" + std::to_string(state_.checked_locations.size()) + ")");
 
         return true;
     }
     catch (const nlohmann::json::exception &e)
     {
-        APLogger::get()->log(LogLevel::Error, "Failed to parse session state: " + std::string(e.what()));
+        APLogger::get()->log(LogLevel::Error, "APStateManager",
+                             "Failed to parse session state: " + std::string(e.what()));
         return false;
     }
 }
@@ -195,7 +198,7 @@ bool APStateManager::validate_checksum(const std::string &current_checksum) cons
     bool match = (state_.checksum == current_checksum);
     if (!match)
     {
-        APLogger::get()->log(LogLevel::Error,
+        APLogger::get()->log(LogLevel::Error, "APStateManager",
                              "Checksum mismatch! Stored: " + state_.checksum + ", Current: " + current_checksum);
     }
     return match;

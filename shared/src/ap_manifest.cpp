@@ -1,4 +1,5 @@
 #include "ap_manifest.h"
+#include "ap_logger.h"
 #include "ap_path_util.h"
 
 #include <nlohmann/json.hpp>
@@ -17,9 +18,11 @@ bool APManifest::load(const std::filesystem::path& mod_folder) {
     loaded_ = false;
 
     std::filesystem::path manifest_path = mod_folder / "manifest.json";
+    APLogger::get()->log(LogLevel::Trace, "APManifest", "Loading manifest from: " + manifest_path.string());
 
     std::string content = APPathUtil::get()->read_file(manifest_path);
     if (content.empty()) {
+        APLogger::get()->log(LogLevel::Warn, "APManifest", "Manifest file empty or not found: " + manifest_path.string());
         return false;
     }
 
@@ -98,18 +101,39 @@ bool APManifest::load(const std::filesystem::path& mod_folder) {
         }
 
         loaded_ = true;
+        APLogger::get()->log(LogLevel::Debug, "APManifest",
+                             "Loaded manifest: mod_id=" + manifest_.mod_id + " name=" + manifest_.name +
+                                 " version=" + manifest_.version);
         return true;
-    } catch (const nlohmann::json::exception&) {
+    } catch (const nlohmann::json::exception& e) {
+        APLogger::get()->log(LogLevel::Error, "APManifest",
+                             "JSON parse error in manifest: " + std::string(e.what()));
         return false;
     }
 }
 
 bool APManifest::load_current() {
+    APLogger::get()->log(LogLevel::Trace, "APManifest", "load_current() called");
+
     auto mod_folder = APPathUtil::get()->find_current_mod_folder();
     if (!mod_folder) {
+        APLogger::get()->log(LogLevel::Trace, "APManifest",
+                             "find_current_mod_folder() returned nullopt - cannot load manifest");
         return false;
     }
-    return load(*mod_folder);
+
+    APLogger::get()->log(LogLevel::Trace, "APManifest",
+                         "find_current_mod_folder() returned: " + mod_folder->string());
+
+    bool result = load(*mod_folder);
+    if (result) {
+        APLogger::get()->log(LogLevel::Debug, "APManifest",
+                             "load_current() succeeded: mod_id=" + manifest_.mod_id);
+    } else {
+        APLogger::get()->log(LogLevel::Warn, "APManifest",
+                             "load_current() failed for folder: " + mod_folder->string());
+    }
+    return result;
 }
 
 // =============================================================================

@@ -38,7 +38,8 @@ bool APPollingThread::start(int interval_ms)
     // Start polling thread
     thread_ = std::thread(&APPollingThread::thread_func, this);
 
-    APLogger::get()->log(LogLevel::Info, "Polling thread started with " + std::to_string(interval_ms) + "ms interval");
+    APLogger::get()->log(LogLevel::Info, "APPollingThread",
+                         "Polling thread started with " + std::to_string(interval_ms) + "ms interval");
 
     return true;
 }
@@ -64,7 +65,7 @@ bool APPollingThread::stop(int timeout_ms)
 
             if (elapsed >= timeout_ms)
             {
-                APLogger::get()->log(LogLevel::Warn, "Polling thread stop timeout exceeded");
+                APLogger::get()->log(LogLevel::Warn, "APPollingThread", "Polling thread stop timeout exceeded");
                 return false;
             }
 
@@ -80,7 +81,7 @@ bool APPollingThread::stop(int timeout_ms)
         }
     }
 
-    APLogger::get()->log(LogLevel::Info, "Polling thread stopped");
+    APLogger::get()->log(LogLevel::Info, "APPollingThread", "Polling thread stopped");
     return true;
 }
 
@@ -137,7 +138,7 @@ void APPollingThread::thread_func()
         }
         catch (const std::exception &e)
         {
-            APLogger::get()->log(LogLevel::Error, "Exception in AP poll: " + std::string(e.what()));
+            APLogger::get()->log(LogLevel::Error, "APPollingThread", "Exception in AP poll: " + std::string(e.what()));
         }
 
         // Sleep for remaining interval

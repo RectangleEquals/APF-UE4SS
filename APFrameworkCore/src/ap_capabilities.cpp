@@ -344,8 +344,9 @@ void APCapabilities::assign_ids()
         item.item_id = current_id++;
     }
 
-    APLogger::get()->log(LogLevel::Info, "Assigned IDs: " + std::to_string(locations_.size()) + " locations, " +
-                                             std::to_string(items_.size()) + " items, base=" + std::to_string(base_id));
+    APLogger::get()->log(LogLevel::Info, "APCapabilities",
+                         "Assigned IDs: " + std::to_string(locations_.size()) + " locations, " +
+                             std::to_string(items_.size()) + " items, base=" + std::to_string(base_id));
 }
 
 int64_t APCapabilities::get_location_id(const std::string &mod_id, const std::string &location_name, int instance) const
@@ -492,7 +493,7 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_loc.name = loc.location_name;
         cfg_loc.mod_id = loc.mod_id;
         cfg_loc.instance = loc.instance;
-        config.locations.push_back(cfg_loc);
+        config.capabilities.locations.push_back(cfg_loc);
     }
 
     // Add items
@@ -504,7 +505,7 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_item.type = item_type_to_string(item.type);
         cfg_item.mod_id = item.mod_id;
         cfg_item.count = item.max_count;
-        config.items.push_back(cfg_item);
+        config.capabilities.items.push_back(cfg_item);
     }
 
     return config;
@@ -514,18 +515,18 @@ bool APCapabilities::write_capabilities_config(const std::filesystem::path &outp
 {
     auto config = generate_capabilities_config();
     std::string json_content = config.to_json().dump(2);
-    APLogger::get()->log(LogLevel::Info, "Writing capabilities config: " + output_path.string());
+    APLogger::get()->log(LogLevel::Info, "APCapabilities", "Writing capabilities config: " + output_path.string());
     return APPathUtil::get()->write_file(output_path, json_content);
 }
 
 std::filesystem::path APCapabilities::write_capabilities_config_default() const
 {
-    APLogger::get()->log(LogLevel::Trace, "> APCapabilities::write_capabilities_config_default()");
+    APLogger::get()->log(LogLevel::Trace, "APCapabilities", "> APCapabilities::write_capabilities_config_default()");
 
     auto output_folder = APPathUtil::get()->find_output_folder();
     if (!output_folder)
     {
-        APLogger::get()->log(LogLevel::Error, "Could not find output folder for capabilities config");
+        APLogger::get()->log(LogLevel::Error, "APCapabilities", "Could not find output folder for capabilities config");
         return {};
     }
 
@@ -535,7 +536,7 @@ std::filesystem::path APCapabilities::write_capabilities_config_default() const
 
     if (write_capabilities_config(output_path))
     {
-        APLogger::get()->log(LogLevel::Info, "Wrote capabilities config: " + output_path.string());
+        APLogger::get()->log(LogLevel::Info, "APCapabilities", "Wrote capabilities config: " + output_path.string());
         return output_path;
     }
 

@@ -13,8 +13,7 @@ namespace ap
 
 APArchipelagoClient *APArchipelagoClient::get()
 {
-    static std::unique_ptr<APArchipelagoClient> instance =
-        std::make_unique<APArchipelagoClient>(ConstructorKey{});
+    static std::unique_ptr<APArchipelagoClient> instance = std::make_unique<APArchipelagoClient>(ConstructorKey{});
     return instance.get();
 }
 
@@ -52,13 +51,14 @@ bool APArchipelagoClient::connect(const std::string &server, int port, const std
         // Set up callbacks
         setup_callbacks();
 
-        APLogger::get()->log(LogLevel::Info, "AP Client connecting to: " + uri);
+        APLogger::get()->log(LogLevel::Info, "APArchipelagoClient", "AP Client connecting to: " + uri);
 
         return true;
     }
     catch (const std::exception &e)
     {
-        APLogger::get()->log(LogLevel::Error, "Failed to create AP client: " + std::string(e.what()));
+        APLogger::get()->log(LogLevel::Error, "APArchipelagoClient",
+                             "Failed to create AP client: " + std::string(e.what()));
         return false;
     }
 }
@@ -78,13 +78,14 @@ bool APArchipelagoClient::connect_slot(const std::string &slot_name, const std::
         // Items handling: 0x1 = remote_items, 0x2 = remote_items_all, 0x4 = receive_own_world
         client_->ConnectSlot(slot_name, password, items_handling, {"Lua"}, {0, 5, 0});
 
-        APLogger::get()->log(LogLevel::Info, "Connecting to slot: " + slot_name);
+        APLogger::get()->log(LogLevel::Info, "APArchipelagoClient", "Connecting to slot: " + slot_name);
 
         return true;
     }
     catch (const std::exception &e)
     {
-        APLogger::get()->log(LogLevel::Error, "Failed to connect slot: " + std::string(e.what()));
+        APLogger::get()->log(LogLevel::Error, "APArchipelagoClient",
+                             "Failed to connect slot: " + std::string(e.what()));
         return false;
     }
 }
@@ -281,7 +282,7 @@ void APArchipelagoClient::setup_callbacks()
 
     // Room info - fires when WebSocket connects
     client_->set_room_info_handler([this]() {
-        APLogger::get()->log(LogLevel::Debug, "Received room_info");
+        APLogger::get()->log(LogLevel::Debug, "APArchipelagoClient", "Received room_info");
 
         RoomInfo info;
         // Note: apclientpp doesn't expose all room info fields directly
@@ -301,7 +302,7 @@ void APArchipelagoClient::setup_callbacks()
 
     // Slot connected
     client_->set_slot_connected_handler([this](const nlohmann::json &slot_data) {
-        APLogger::get()->log(LogLevel::Info, "Slot connected");
+        APLogger::get()->log(LogLevel::Info, "APArchipelagoClient", "Slot connected");
 
         slot_connected_ = true;
 
@@ -338,7 +339,7 @@ void APArchipelagoClient::setup_callbacks()
 
     // Slot refused
     client_->set_slot_refused_handler([this](const std::list<std::string> &errors) {
-        APLogger::get()->log(LogLevel::Error, "Slot connection refused");
+        APLogger::get()->log(LogLevel::Error, "APArchipelagoClient", "Slot connection refused");
 
         slot_connected_ = false;
         std::vector<std::string> error_vec(errors.begin(), errors.end());
@@ -361,7 +362,7 @@ void APArchipelagoClient::setup_callbacks()
             received.player_name = get_player_name(item.player);
             received.index = received_item_index_++;
 
-            APLogger::get()->log(LogLevel::Debug,
+            APLogger::get()->log(LogLevel::Debug, "APArchipelagoClient",
                                  "Received item: " + received.item_name + " from " + received.player_name);
 
             if (item_received_callback_)
@@ -393,7 +394,7 @@ void APArchipelagoClient::setup_callbacks()
 
     // Socket disconnected
     client_->set_socket_disconnected_handler([this]() {
-        APLogger::get()->log(LogLevel::Warn, "Socket disconnected");
+        APLogger::get()->log(LogLevel::Warn, "APArchipelagoClient", "Socket disconnected");
         slot_connected_ = false;
 
         if (disconnected_callback_)
