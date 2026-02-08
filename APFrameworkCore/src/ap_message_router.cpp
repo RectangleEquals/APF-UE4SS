@@ -163,6 +163,9 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
     // Send to AP server
     APArchipelagoClient::get()->send_location_checks({location_id});
 
+    // Persist state immediately
+    APStateManager::get()->save_state();
+
     APLogger::get()->log(LogLevel::Info, "APMessageRouter",
                          "Location checked: " + location_name + " (ID: " + std::to_string(location_id) + ")");
 
@@ -185,6 +188,7 @@ void APMessageRouter::route_location_checks(const std::vector<int64_t> &location
     if (!new_checks.empty())
     {
         APArchipelagoClient::get()->send_location_checks(new_checks);
+        APStateManager::get()->save_state();
     }
 }
 
@@ -265,6 +269,7 @@ void APMessageRouter::handle_action_result(const std::string &mod_id, const Acti
         if (result.item_id != 0)
         {
             APStateManager::get()->increment_item_progression_count(result.item_id);
+            APStateManager::get()->save_state();
         }
     }
     else

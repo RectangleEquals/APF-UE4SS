@@ -117,6 +117,18 @@ public:
     void log(LogLevel level, const std::string& component, const std::string& message);
 
     // =========================================================================
+    // Prefix Tag (identifies the DLL/library in log output)
+    // =========================================================================
+
+    /**
+     * @brief Set a prefix tag for all log entries from this logger instance.
+     * @param tag Tag string (e.g., "APFrameworkCore", "APClientLib").
+     *
+     * Appears as [tag] in formatted output. Call before init().
+     */
+    void set_prefix_tag(const std::string& tag);
+
+    // =========================================================================
     // Thread Name (for log formatting)
     // =========================================================================
 
@@ -161,9 +173,14 @@ private:
     std::string get_timestamp() const;
 
     /**
-     * @brief Format a complete log entry.
+     * @brief Format a log entry for file output (includes timestamp).
      */
-    std::string format_log_entry(LogLevel level, const std::string& message) const;
+    std::string format_file_entry(LogLevel level, const std::string& message) const;
+
+    /**
+     * @brief Format a log entry for console output (no timestamp — UE4SS adds its own).
+     */
+    std::string format_console_entry(LogLevel level, const std::string& message) const;
 
     /**
      * @brief Print to console via Lua if available, or std::cout/cerr.
@@ -176,6 +193,7 @@ private:
     std::ofstream log_file_;
     std::mutex file_mutex_;  // Only for file writes
     LogCallback log_callback_;
+    std::string prefix_tag_;
     bool initialized_ = false;
 };
 

@@ -11,6 +11,8 @@
 #include "ap_state_manager.h"
 
 #include <chrono>
+#include <sstream>
+#include <thread>
 
 namespace ap
 {
@@ -39,6 +41,7 @@ int APManager::init(lua_State *L)
     APManagerAccessor::set(this);
 
     // Initialize logging
+    APLogger::get()->set_prefix_tag("APFrameworkCore");
     APLogger::set_thread_name("Main");
 
     // Transition to INITIALIZATION
@@ -52,6 +55,11 @@ int APManager::init(lua_State *L)
 
     // Initialize logger (reads settings from APConfig)
     APLogger::get()->init();
+
+    std::ostringstream oss;
+    oss << "init() running on thread: " << std::this_thread::get_id() << " (name: " << APLogger::get_thread_name()
+        << ")";
+    APLogger::get()->log(LogLevel::Trace, "APManager", oss.str());
 
     APLogger::get()->log(LogLevel::Info, "APManager", "AP Framework initializing...");
 
@@ -154,6 +162,19 @@ int APManager::update(lua_State *L)
     // Update cached Lua state for APPathUtil and other components
     update_cached_lua(L);
 
+    // Name the update thread (differs from init thread — runs from RegisterHook callback)
+    static bool thread_logged = false;
+    if (!thread_logged)
+    {
+        APLogger::set_thread_name("Game");
+
+        std::ostringstream oss;
+        oss << "update() running on thread: " << std::this_thread::get_id()
+            << " (name: " << APLogger::get_thread_name() << ")";
+        APLogger::get()->log(LogLevel::Trace, "APManager", oss.str());
+        thread_logged = true;
+    }
+
     // On first update, reinitialize APPathUtil to use debug.getinfo
     if (!first_update_done_)
     {
@@ -215,9 +236,8 @@ void APManager::shutdown()
 {
     APLogger::get()->log(LogLevel::Info, "APManager", "AP Framework shutting down...");
 
-    // Save state
-    APStateManager::get()->touch();
-    APStateManager::get()->save_state();
+    // No save_state() — state is saved eagerly on every meaningful change.
+    // Saving during shutdown risks static destruction order issues with APPathUtil.
 
     // Stop polling thread
     if (polling_thread_)
@@ -334,6 +354,16 @@ bool APManager::transition_to_unlocked(LifecycleState new_state, const std::stri
     APLogger::get()->log(LogLevel::Info, "APManager",
                          "State: " + lifecycle_state_to_string(old_state) + " -> " +
                              lifecycle_state_to_string(new_state) + (message.empty() ? "" : " (" + message + ")"));
+
+    // Clean up on ERROR_STATE: stop polling and disconnect AP server
+    if (new_state == LifecycleState::ERROR_STATE)
+    {
+        if (polling_thread_ && polling_thread_->is_running())
+        {
+            polling_thread_->stop(APConfig::get()->get_threading().shutdown_timeout_ms);
+        }
+        APArchipelagoClient::get()->disconnect();
+    }
 
     // Broadcast lifecycle change
     APMessageRouter::get()->broadcast_lifecycle(new_state, message);
@@ -665,6 +695,10 @@ void APManager::handle_syncing(int64_t elapsed_ms)
     {
         APStateManager::get()->set_checksum(current_checksum);
     }
+
+    // Persist synced state (checksum, server info, locations) before going active
+    APStateManager::get()->touch();
+    APStateManager::get()->save_state();
 
     // Sync complete
     transition_to_unlocked(LifecycleState::ACTIVE, "Sync complete");

@@ -6,6 +6,8 @@
 #include "ap_logger.h"
 
 #include <sol/sol.hpp>
+#include <sstream>
+#include <thread>
 
 namespace ap::client
 {
@@ -39,17 +41,26 @@ int APClientManager::init(lua_State *L)
     // 1. Cache the Lua state first (we own this)
     update_cached_lua(L);
 
+    // Set thread name for this DLL's Lua thread
+    APLogger::set_thread_name("Main");
+
     // 2. Register with APManagerAccessor so shared singletons can access Lua
     APManagerAccessor::set(this);
 
     // Only do full initialization once
     if (!initialized_)
     {
-        // 3. Load framework config (uses APPathUtil which now has Lua access)
+        // 3. Set prefix tag and load framework config
+        APLogger::get()->set_prefix_tag("APClientLib");
         APConfig::get()->load_default();
 
         // 4. Initialize logger (reads settings from APConfig)
         APLogger::get()->init();
+
+        std::ostringstream oss;
+        oss << "init() running on thread: " << std::this_thread::get_id() << " (name: " << APLogger::get_thread_name()
+            << ")";
+        APLogger::get()->log(LogLevel::Trace, "APClientManager", oss.str());
 
         // 5. Load this mod's manifest using APPathUtil::find_current_mod_folder()
         APLogger::get()->log(LogLevel::Trace, "APClientManager", "Loading manifest via find_current_mod_folder()...");
@@ -60,8 +71,8 @@ int APClientManager::init(lua_State *L)
         else
         {
             APLogger::get()->log(LogLevel::Debug, "APClientManager",
-                                 "Manifest loaded: mod_id=" + manifest_.get_mod_id() +
-                                     " from " + manifest_.get_manifest_path().string());
+                                 "Manifest loaded: mod_id=" + manifest_.get_mod_id() + " from " +
+                                     manifest_.get_manifest_path().string());
         }
 
         // 6. Set up IPC handlers (delegates to handle_ipc_message)
@@ -85,6 +96,18 @@ void APClientManager::update(lua_State *L)
 {
     // Update cached Lua state
     update_cached_lua(L);
+
+    // Name the update thread (differs from init thread — runs from RegisterHook callback)
+    static bool thread_logged = false;
+    if (!thread_logged)
+    {
+        APLogger::set_thread_name("Game");
+        std::ostringstream oss;
+        oss << "update() running on thread: " << std::this_thread::get_id() << " (name: " << APLogger::get_thread_name()
+            << ")";
+        APLogger::get()->log(LogLevel::Trace, "APClientManager", oss.str());
+        thread_logged = true;
+    }
 
     // Poll for IPC messages
     APIPCClient::get()->poll();

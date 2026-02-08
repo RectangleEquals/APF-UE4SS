@@ -217,7 +217,13 @@ void APLogger::clear_log_callback()
 
 void APLogger::write_log_entry(LogLevel level, const std::string &message)
 {
-    std::string formatted = format_log_entry(level, message);
+    // Strip trailing newlines/carriage returns
+    std::string clean_msg = message;
+    while (!clean_msg.empty() && (clean_msg.back() == '\n' || clean_msg.back() == '\r'))
+        clean_msg.pop_back();
+
+    std::string file_formatted = format_file_entry(level, clean_msg);
+    std::string console_formatted = format_console_entry(level, clean_msg);
 
     // Copy callback while holding mutex
     LogCallback callback_copy;
@@ -228,7 +234,7 @@ void APLogger::write_log_entry(LogLevel level, const std::string &message)
 
         if (log_file_.is_open())
         {
-            log_file_ << formatted << std::endl;
+            log_file_ << file_formatted << '\n';
             log_file_.flush();
         }
 
@@ -239,7 +245,7 @@ void APLogger::write_log_entry(LogLevel level, const std::string &message)
     // Write to console (check APConfig for console setting)
     if (APConfig::get()->get_log_to_console())
     {
-        print_to_console(level, formatted);
+        print_to_console(level, console_formatted);
     }
 
     // Call callback (outside mutex to prevent deadlock)
@@ -247,7 +253,7 @@ void APLogger::write_log_entry(LogLevel level, const std::string &message)
     {
         try
         {
-            callback_copy(level, formatted);
+            callback_copy(level, file_formatted);
         }
         catch (...)
         {
@@ -276,10 +282,29 @@ std::string APLogger::get_timestamp() const
     return oss.str();
 }
 
-std::string APLogger::format_log_entry(LogLevel level, const std::string &message) const
+void APLogger::set_prefix_tag(const std::string &tag)
+{
+    prefix_tag_ = tag;
+}
+
+std::string APLogger::format_file_entry(LogLevel level, const std::string &message) const
 {
     std::ostringstream oss;
     oss << "[" << get_timestamp() << "]";
+    if (!prefix_tag_.empty())
+        oss << "[" << prefix_tag_ << "]";
+    oss << "[" << get_thread_name() << "]";
+    oss << "[" << log_level_to_string(level) << "] ";
+    oss << message;
+    return oss.str();
+}
+
+std::string APLogger::format_console_entry(LogLevel level, const std::string &message) const
+{
+    std::ostringstream oss;
+    // No timestamp — UE4SS adds its own via print()
+    if (!prefix_tag_.empty())
+        oss << "[" << prefix_tag_ << "]";
     oss << "[" << get_thread_name() << "]";
     oss << "[" << log_level_to_string(level) << "] ";
     oss << message;
@@ -288,12 +313,8 @@ std::string APLogger::format_log_entry(LogLevel level, const std::string &messag
 
 void APLogger::print_to_console(LogLevel level, const std::string &formatted)
 {
-    // Ensure we have a newline-terminated version for Lua/Raw output
-    std::string message = formatted;
-    if (message.empty() || !message.ends_with('\n'))
-    {
-        message += '\n';
-    }
+    // Message is already clean (no trailing newlines) — add one for Lua/Raw output
+    std::string message = formatted + '\n';
 
     // Try to use Lua print if available (for UE4SS console integration)
     auto *manager = APManagerAccessor::get();

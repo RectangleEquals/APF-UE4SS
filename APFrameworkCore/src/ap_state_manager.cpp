@@ -31,6 +31,8 @@ APStateManager::~APStateManager() = default;
 
 bool APStateManager::save_state(const std::filesystem::path &path)
 {
+    APLogger::get()->log(LogLevel::Trace, "APStateManager", "Saving state to: " + path.string());
+
     try
     {
         std::string json_content = state_.to_json().dump(2);
