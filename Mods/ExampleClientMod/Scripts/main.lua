@@ -17,6 +17,13 @@ local check_all_locations = function() end
 -- Module Loading
 -- ============================================================================
 
+-- Load JSON library for parsing forwarded IPC messages
+local success_json, json = pcall(require, "lunajson")
+if not success_json then
+    print("[ExampleClientMod] WARNING: lunajson not found, IPC message handling disabled\n")
+    json = nil
+end
+
 -- Load the client library
 local success, APClient = pcall(require, "APClientLib")
 if not success then
@@ -140,30 +147,82 @@ end
 -- ============================================================================
 
 -- List of locations this mod handles (from manifest.json capabilities)
--- In a real implementation, you might want APClientLib to expose these
 local LOCATIONS = {
-    "town_chest_1",
-    "town_chest_2",
-    "forest_hidden_item",
-    "boss_room_treasure",
-    "secret_area_prize"
+    { name = "Starting Chest",  instance = 1 },
+    { name = "Boss Reward",     instance = 1 },
+    { name = "Hidden Alcove",   instance = 1 },
+    { name = "Shop Purchase",   instance = 1 },
+    { name = "Shop Purchase",   instance = 2 },
+    { name = "Shop Purchase",   instance = 3 },
 }
+
+-- Build a lookup key for deduplication
+local function location_key(name, instance)
+    return name .. "#" .. tostring(instance)
+end
 
 check_all_locations = function()
     if not is_active then
         return  -- Don't check locations until framework is active
     end
 
-    for _, location_id in ipairs(LOCATIONS) do
-        if not checked_locations[location_id] then
-            if check_location_condition(location_id) then
-                -- Report the location check to the framework
-                if APClient.check_location(location_id) then
-                    checked_locations[location_id] = true
-                    APClient.log("info", "Location checked: " .. location_id .. "\n")
+    for _, loc in ipairs(LOCATIONS) do
+        local key = location_key(loc.name, loc.instance)
+        if not checked_locations[key] then
+            if check_location_condition(key) then
+                if APClient.check_location(loc.name, loc.instance) then
+                    checked_locations[key] = true
+                    APClient.log("info", "Location checked: " .. loc.name .. " #" .. loc.instance .. "\n")
                 end
             end
         end
+    end
+end
+
+-- ============================================================================
+-- Forwarded Message Handling (from priority clients via send_to/broadcast)
+-- ============================================================================
+
+local function handle_forwarded_message(payload)
+    local action = payload.action
+    if not action then return end
+
+    if action == "check_location" then
+        local name = payload.location
+        local instance = tonumber(payload.instance) or 1
+        if not name then
+            APClient.log("warn", "check_location: missing 'location' field\n")
+            return
+        end
+
+        local key = location_key(name, instance)
+        if checked_locations[key] then
+            APClient.log("info", "Location already checked: " .. name .. " #" .. instance .. "\n")
+            return
+        end
+
+        APClient.log("info", "Simulating location check: " .. name .. " #" .. instance .. "\n")
+        if APClient.check_location(name, instance) then
+            checked_locations[key] = true
+            APClient.log("info", "Location checked: " .. name .. " #" .. instance .. "\n")
+        else
+            APClient.log("warn", "Failed to check location: " .. name .. " #" .. instance .. "\n")
+        end
+
+    elseif action == "check_all_locations" then
+        APClient.log("info", "Simulating check for all unchecked locations\n")
+        for _, loc in ipairs(LOCATIONS) do
+            local key = location_key(loc.name, loc.instance)
+            if not checked_locations[key] then
+                APClient.log("info", "Checking: " .. loc.name .. " #" .. loc.instance .. "\n")
+                if APClient.check_location(loc.name, loc.instance) then
+                    checked_locations[key] = true
+                end
+            end
+        end
+
+    else
+        APClient.log("debug", "Unknown forwarded action: " .. tostring(action) .. "\n")
     end
 end
 
@@ -239,6 +298,21 @@ end)
 -- Called on errors
 APClient.on_error(function(code, message)
     APClient.log("error", "Error [" .. (code or "?") .. "]: " .. (message or "unknown") .. "\n")
+end)
+
+-- Called for ALL incoming IPC messages (including forwarded messages from priority clients)
+APClient.on_message(function(msg_type, payload_json)
+    -- Only handle forwarded ap_message types
+    if msg_type ~= "ap_message" then return end
+    if not json then return end
+
+    local ok, payload = pcall(json.decode, payload_json)
+    if not ok or type(payload) ~= "table" then return end
+
+    -- Dispatch forwarded actions
+    if payload.action then
+        handle_forwarded_message(payload)
+    end
 end)
 
 -- ============================================================================

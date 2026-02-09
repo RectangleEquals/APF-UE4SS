@@ -548,6 +548,62 @@ void APManager::handle_command(const std::string &client_id, const IPCMessage &m
         }
         result = {{"success", true}, {"data", {{"mods", mods_arr}}}};
     }
+    else if (command == "regenerate")
+    {
+        // Re-read current capabilities and update APGeneratedConfig (preserves option modifications)
+        std::string caps_json = APCapabilities::get()->generate_capabilities_config().to_json().dump(2);
+        APGeneratedConfig::get()->set_capabilities_from_json(caps_json);
+
+        if (APGeneratedConfig::get()->save_yaml())
+        {
+            result = {{"success", true}};
+        }
+        else
+        {
+            result = {{"success", false}, {"error", "Failed to save YAML (no path set or write failed)"}};
+        }
+    }
+    else if (command == "send_to")
+    {
+        // User payload is nested under msg.payload["payload"] by the Lua command() function
+        nlohmann::json params = msg.payload.value("payload", nlohmann::json::object());
+        std::string target_mod = params.value("target_mod", "");
+
+        if (target_mod.empty())
+        {
+            result = {{"success", false}, {"error", "Missing 'target_mod' in payload"}};
+        }
+        else
+        {
+            // Forward all params except routing fields as the message payload
+            nlohmann::json fwd_payload = params;
+            fwd_payload.erase("target_mod");
+
+            IPCMessage forwarded;
+            forwarded.type = IPCMessageType::AP_MESSAGE;
+            forwarded.source = client_id;
+            forwarded.target = target_mod;
+            forwarded.payload = fwd_payload;
+
+            bool sent = APIPCServer::get()->send_message(target_mod, forwarded);
+            result = {{"success", sent}};
+            if (!sent)
+                result["error"] = "Failed to send to mod: " + target_mod;
+        }
+    }
+    else if (command == "broadcast")
+    {
+        nlohmann::json params = msg.payload.value("payload", nlohmann::json::object());
+
+        IPCMessage forwarded;
+        forwarded.type = IPCMessageType::AP_MESSAGE;
+        forwarded.source = client_id;
+        forwarded.target = IPCTarget::BROADCAST;
+        forwarded.payload = params;
+
+        APIPCServer::get()->broadcast_except(forwarded, client_id);
+        result = {{"success", true}};
+    }
     else
     {
         result = {{"success", false}, {"error", "Unknown command: " + command}};

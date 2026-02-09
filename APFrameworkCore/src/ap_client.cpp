@@ -289,15 +289,7 @@ void APArchipelagoClient::setup_callbacks()
         // We'll populate what we can
 
         if (room_info_callback_)
-        {
             room_info_callback_(info);
-        }
-
-        // Auto-connect to slot if credentials are stored
-        if (!slot_name_.empty())
-        {
-            connect_slot(slot_name_, password_, 0x7);
-        }
     });
 
     // Slot connected
