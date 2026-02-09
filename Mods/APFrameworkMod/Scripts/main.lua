@@ -33,11 +33,64 @@ end
 -- Load registry helper for game-specific hooks
 local success_rh, RH = pcall(require, "registry_helper")
 if not success_rh then
-    print("[APFrameworkMod] Warning: registry_helper.lua not found, using fallback tick\n")
-    RH = nil
+    print("[APFrameworkMod] CRITICAL: registry_helper.lua not found\n")
+    return
 end
 
 print("[APFrameworkMod] Libraries loaded successfully\n")
+local obj_WebBrowser = RH.add_object("/Script/WebBrowserWidget.WebBrowser")
+local obj_PalTimeManager = RH.add_object("/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C")
+
+-- ============================================================================
+-- Update Loop
+-- ============================================================================
+local tick_time_now = os.clock()
+local tick_time_last = tick_time_now
+local tick_time_elapsed = 0
+local TICK_UPDATE_INTERVAL = 1.0
+
+local update = function()
+    if not APFramework then return end
+    if not APClient then return end
+    
+    tick_time_now = os.clock()
+    tick_time_elapsed = tick_time_now - tick_time_last
+    if tick_time_elapsed < TICK_UPDATE_INTERVAL then
+        -- print("[TICK]: " .. tick_time_elapsed .. "\n")
+        return
+    end
+    
+    tick_time_last = tick_time_now
+    tick_time_elapsed = 0
+
+    -- Uncomment for testing
+    -- print("[APFrameworkMod]: Updating...\n")
+
+    -- Update framework core (processes AP server messages)
+    APFramework.update()
+    
+    -- Update client lib (processes IPC messages, triggers callbacks)
+    APClient.update()
+end
+
+-- ============================================================================
+-- Hook Registration
+-- ============================================================================
+local on_news_tick = function(self, obj, geom, deltaTime)
+	update()
+end
+
+local on_title_tick = function(self, obj, geom, deltaTime)
+	update()
+end
+
+local on_ptm_tick = function(self, PalTimeManagerObj, deltaTime)
+    update()
+end
+
+RH.add_function(obj_WebBrowser, "/Game/Pal/Blueprint/UI/Title/WBP_WebBrowser_News.WBP_WebBrowser_News_C:Tick", on_news_tick)
+RH.add_function(obj_WebBrowser, "/Game/Pal/Blueprint/UI/Title/WBP_TItle.WBP_TItle_C:Tick", on_title_tick)
+RH.add_function(obj_PalTimeManager, "/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C:Tick_BP", on_ptm_tick)
 
 -- ============================================================================
 -- State
@@ -47,7 +100,7 @@ local is_registered = false
 local framework_state = "UNINITIALIZED"
 
 -- ============================================================================
--- Callbacks
+-- Client Callbacks
 -- ============================================================================
 
 -- Called when IPC connection to framework is established
@@ -103,98 +156,6 @@ APClient.on_state_error(function(error_info)
 end)
 
 -- ============================================================================
--- Update Loop
--- ============================================================================
-local tick_registered = false
-local tick_time_now = os.clock()
-local tick_time_last = tick_time_now
-local tick_time_elapsed = 0
-local TICK_UPDATE_INTERVAL = 1.0
-
-local function on_update()
-    tick_time_now = os.clock()
-    tick_time_elapsed = tick_time_now - tick_time_last
-    if tick_time_elapsed < TICK_UPDATE_INTERVAL then
-        -- print("[TICK]: " .. tick_time_elapsed .. "\n")
-        return
-    end
-    
-    tick_time_last = tick_time_now
-    tick_time_elapsed = 0
-
-    print("[APFrameworkMod]: Updating...\n")
-
-    -- print("[APFrameworkMod]: Updating framework core...\n")
-    -- Update framework core (processes AP server messages)
-    APFramework.update()
-
-    -- print("[APFrameworkMod]: Updating client lib...\n")
-    -- Update client lib (processes IPC messages, triggers callbacks)
-    APClient.update()
-end
-
--- ============================================================================
--- Hook Registration
--- ============================================================================
-
--- Try to use a standard tick hook
--- Games may need different hooks - modify as needed for your game
-if RegisterHook then
-    -- Try Actor Tick hook
-    local success = pcall(function()
-        RegisterHook("/Script/Engine.Actor:Tick", function(self, deltaTime)
-            on_update()
-        end)
-    end)
-
-    if success then
-        tick_registered = true
-        print("[APFrameworkMod] Registered Actor:Tick hook\n")
-    end
-end
-
-if not tick_registered and RegisterCustomEvent then
-    -- Fallback to custom Tick event
-    RegisterCustomEvent("Tick", function()
-        on_update()
-    end)
-    tick_registered = true
-    print("[APFrameworkMod] Registered custom Tick event\n")
-end
-
-if not tick_registered then
-    print("[APFrameworkMod] WARNING: Could not register tick hook - updates may not work\n")
-end
-
--- ============================================================================
--- Console Commands (Priority Client Privileges)
--- ============================================================================
-
-if RegisterConsoleCommandHandler then
-    -- ap_status - Show current framework status
-    RegisterConsoleCommandHandler("ap_status", function(FullCommand, Parameters)
-        print("[AP] Framework State: " .. framework_state)
-        print("[AP] Registered: " .. tostring(is_registered))
-        print("[AP] IPC Connected: " .. tostring(APClient.is_connected()))
-        return true
-    end)
-
-    -- ap_restart - Restart the framework (priority client command)
-    RegisterConsoleCommandHandler("ap_restart", function(FullCommand, Parameters)
-        print("[AP] Restart command not yet implemented\n")
-        return true
-    end)
-
-    -- ap_resync - Force resync (priority client command)
-    RegisterConsoleCommandHandler("ap_resync", function(FullCommand, Parameters)
-        print("[AP] Resync command not yet implemented\n")
-        return true
-    end)
-
-    print("[APFrameworkMod] Console commands registered\n")
-end
-
--- ============================================================================
 -- Initialization
 -- ============================================================================
 
@@ -214,5 +175,3 @@ if APClient.connect() then
 else
     APClient.log("warn", "IPC connection failed - framework may not be ready yet\n")
 end
-
-print("[APFrameworkMod] Initialization complete\n")
