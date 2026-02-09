@@ -122,7 +122,18 @@ FetchContent_Declare(
     GIT_TAG        main
 )
 
-FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp)
+# 7. rapidyaml
+set(RYML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(RYML_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(RYML_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    ryml
+    GIT_REPOSITORY https://github.com/biojppm/rapidyaml.git
+    GIT_TAG        v0.7.2
+    GIT_SUBMODULES_RECURSE ON
+)
+
+FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp ryml)
 
 add_subdirectory(third_party/lua-5.4.7)
 

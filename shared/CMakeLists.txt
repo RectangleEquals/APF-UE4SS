@@ -6,6 +6,8 @@ set(SOURCES
     src/ap_config.cpp
     src/ap_logger.cpp
     src/ap_manifest.cpp
+    src/ap_base64.cpp
+    src/ap_generated_config.cpp
 )
 
 set(HEADERS
@@ -24,6 +26,10 @@ set(HEADERS
     include/ap_config.h
     include/ap_logger.h
     include/ap_manifest.h
+
+    # Utilities
+    include/ap_base64.h
+    include/ap_generated_config.h
 )
 
 add_library(APShared STATIC ${SOURCES} ${HEADERS})
@@ -40,6 +46,8 @@ target_include_directories(APShared
 )
 
 target_link_libraries(APShared
+    PUBLIC
+        ryml
     PRIVATE
         lua_static
 )

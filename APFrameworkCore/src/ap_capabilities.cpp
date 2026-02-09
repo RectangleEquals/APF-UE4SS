@@ -1,5 +1,6 @@
 #include "ap_capabilities.h"
 #include "ap_config.h"
+#include "ap_generated_config.h"
 #include "ap_logger.h"
 #include "ap_mod_registry.h"
 #include "ap_path_util.h"
@@ -534,13 +535,42 @@ std::filesystem::path APCapabilities::write_capabilities_config_default() const
     std::string filename = "AP_Capabilities_" + slot_name + ".json";
     auto output_path = *output_folder / filename;
 
-    if (write_capabilities_config(output_path))
+    if (!write_capabilities_config(output_path))
     {
-        APLogger::get()->log(LogLevel::Info, "APCapabilities", "Wrote capabilities config: " + output_path.string());
-        return output_path;
+        return {};
     }
 
-    return {};
+    APLogger::get()->log(LogLevel::Info, "APCapabilities", "Wrote capabilities config: " + output_path.string());
+
+    // Load option templates and generate YAML
+    auto framework_folder = APPathUtil::get()->find_framework_mod_folder();
+    if (framework_folder)
+    {
+        auto templates_dir = *framework_folder / "Templates";
+        std::string game_name = APConfig::get()->get_game_name();
+        APGeneratedConfig::get()->load_templates(templates_dir, game_name);
+    }
+
+    std::string yaml_filename = "AP_" + slot_name + ".yaml";
+    auto yaml_path = *output_folder / yaml_filename;
+
+    // Read the JSON we just wrote and generate YAML with base64-encoded capabilities
+    std::string json_content = APPathUtil::get()->read_file(output_path);
+    if (!json_content.empty())
+    {
+        if (APGeneratedConfig::get()->generate_yaml(json_content, yaml_path))
+        {
+            APLogger::get()->log(LogLevel::Info, "APCapabilities",
+                                 "Generated YAML for Archipelago: " + yaml_path.string());
+        }
+        else
+        {
+            APLogger::get()->log(LogLevel::Warn, "APCapabilities",
+                                 "Failed to generate YAML: " + yaml_path.string());
+        }
+    }
+
+    return output_path;
 }
 
 // =============================================================================

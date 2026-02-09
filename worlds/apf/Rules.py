@@ -45,23 +45,17 @@ def set_completion_rules(world: "APFrameworkWorld") -> None:
     """
     Set the completion condition for the world.
 
-    By default, completion requires checking all locations.
-
-    Game-specific implementations can override this to set different
-    victory conditions (e.g., defeat final boss, collect all items, etc.)
+    Looks for a well-known completion location (Victory, Goal, etc.).
+    Falls back to requiring the Main region to be reachable.
     """
-    from worlds.generic.Rules import set_rule
-
-    # Default completion: access the victory location (if it exists)
-    # The victory location should be named "Victory" or similar
     completion_location_names = ["Victory", "Goal", "Completion", "Win"]
 
     for name in completion_location_names:
         if name in world.location_table:
-            # Found a completion location - no additional rules needed
-            # The location itself being checked counts as completion
-            break
-    else:
-        # No specific completion location found
-        # Completion will be based on total location count
-        pass
+            world.multiworld.completion_condition[world.player] = \
+                lambda state, loc_name=name: state.can_reach(loc_name, "Location", world.player)
+            return
+
+    # Fallback: completion when Main region is reachable
+    world.multiworld.completion_condition[world.player] = \
+        lambda state: state.can_reach_region("Main", world.player)

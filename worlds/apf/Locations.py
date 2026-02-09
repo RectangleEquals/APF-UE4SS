@@ -31,24 +31,29 @@ def build_location_table(capabilities: dict) -> Dict[str, LocationData]:
     """
     Build the location table from capabilities config.
 
+    Uses a two-pass approach to handle multi-instance locations:
+    locations with the same name get suffixed with #1, #2, etc.
+
     Args:
         capabilities: The loaded capabilities config dict
 
     Returns:
-        Dict mapping location name to LocationData
+        Dict mapping location display name to LocationData
     """
     location_table: Dict[str, LocationData] = {}
+    locations = capabilities.get("locations", [])
 
-    for loc_data in capabilities.get("locations", []):
+    # First pass: count instances per name
+    name_counts: Dict[str, int] = {}
+    for loc_data in locations:
         name = loc_data["name"]
+        name_counts[name] = name_counts.get(name, 0) + 1
 
-        # Handle instance numbering in name
+    # Second pass: build table with unique display names
+    for loc_data in locations:
+        name = loc_data["name"]
         instance = loc_data.get("instance", 1)
-        if instance > 1:
-            # Name already includes instance number from framework
-            display_name = name
-        else:
-            display_name = name
+        display_name = f"{name} #{instance}" if name_counts[name] > 1 else name
 
         location_table[display_name] = LocationData(
             code=loc_data["id"],

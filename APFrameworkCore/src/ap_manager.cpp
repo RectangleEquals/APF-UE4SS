@@ -2,6 +2,7 @@
 #include "ap_capabilities.h"
 #include "ap_client.h"
 #include "ap_config.h"
+#include "ap_generated_config.h"
 #include "ap_ipc_server.h"
 #include "ap_logger.h"
 #include "ap_message_router.h"
@@ -771,8 +772,10 @@ void APManager::start_ap_connection()
         APLogger::get()->log(LogLevel::Error, "APManager", "Slot refused: " + error_msg);
     });
 
-    // Connect
-    APArchipelagoClient::get()->connect(ap_config.host, ap_config.port, APConfig::get()->get_game_name(), uuid);
+    // Connect using the AP World name (e.g., "APFramework"), not the actual game name (e.g., "Palworld")
+    // The AP server expects the game field to match the AP World's game class variable
+    APArchipelagoClient::get()->connect(ap_config.host, ap_config.port,
+                                        APGeneratedConfig::get()->get_ap_world_name(), uuid);
 
     // Start polling thread
     polling_thread_->start(APConfig::get()->get_threading().polling_interval_ms);
