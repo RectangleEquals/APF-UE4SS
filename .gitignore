@@ -134,6 +134,7 @@ compile_commands.json
 *.7z
 *.tar
 *.tar.gz
+*.apworld
 
 # Git patches
 *.patch

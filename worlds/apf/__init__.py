@@ -124,6 +124,18 @@ class APFrameworkWorld(World):
         # Check for ID conflicts with other worlds
         self.check_id_conflicts()
 
+        # Update reverse mappings and network data package.
+        # Archipelago snapshots the data package at module import time (when our
+        # ClassVars are still {}). We must refresh it after populating the tables.
+        self._update_data_package()
+
+        # Diagnostic logging for data package debugging
+        print(f"[APFramework DEBUG] generate_early complete:")
+        print(f"  item_name_to_id ({len(self.__class__.item_name_to_id)} entries): "
+              f"{dict(list(self.__class__.item_name_to_id.items())[:5])}")
+        print(f"  location_name_to_id ({len(self.__class__.location_name_to_id)} entries): "
+              f"{dict(list(self.__class__.location_name_to_id.items())[:5])}")
+
     def _process_capabilities(self, data: dict) -> dict:
         """Unwrap nested structure and validate."""
         # The C++ framework nests locations/items under a "capabilities" key
@@ -139,6 +151,32 @@ class APFrameworkWorld(World):
             if field not in data:
                 raise ValueError(f"Missing required field: {field}")
         return data
+
+    def _update_data_package(self) -> None:
+        """Update reverse mappings and network data package.
+
+        Archipelago builds the network data package at module import time from
+        class-level item_name_to_id and location_name_to_id. Since this world
+        populates those dynamically in generate_early(), we must update the
+        pre-built data package to reflect the actual mappings.
+        """
+        # Update reverse mappings (used by Archipelago internals)
+        self.__class__.item_id_to_name = {
+            code: name for name, code in self.__class__.item_name_to_id.items()
+        }
+        self.__class__.location_id_to_name = {
+            code: name for name, code in self.__class__.location_name_to_id.items()
+        }
+
+        # Rebuild and replace the pre-built network data package entry
+        import worlds
+        worlds.network_data_package["games"][self.game] = self.__class__.get_data_package_data()
+
+        print(f"[APFramework DEBUG] Data package updated:")
+        dp = worlds.network_data_package["games"][self.game]
+        print(f"  items: {len(dp.get('item_name_to_id', {}))}, "
+              f"locations: {len(dp.get('location_name_to_id', {}))}, "
+              f"checksum: {dp.get('checksum', 'N/A')}")
 
     def check_id_conflicts(self) -> None:
         """Check for ID conflicts with other worlds and remap if necessary."""
@@ -219,6 +257,9 @@ class APFrameworkWorld(World):
         self.__class__.location_name_to_id = {
             name: data.code for name, data in self.location_table.items()
         }
+
+        # Refresh data package with remapped IDs
+        self._update_data_package()
 
     def create_regions(self) -> None:
         """Create regions and locations."""
@@ -310,9 +351,12 @@ class APFrameworkWorld(World):
 
     def fill_slot_data(self) -> Dict[str, Any]:
         """Return data to be sent to the client."""
-        return {
-            "id_remapping": self.id_remapping,
-        }
+        slot_data = {"id_remapping": self.id_remapping}
+        print(f"[APFramework DEBUG] fill_slot_data called:")
+        print(f"  id_remapping: {self.id_remapping}")
+        print(f"  item_name_to_id: {len(self.__class__.item_name_to_id)} entries")
+        print(f"  location_name_to_id: {len(self.__class__.location_name_to_id)} entries")
+        return slot_data
 
     def get_filler_item_name(self) -> str:
         """Get a random filler item name."""

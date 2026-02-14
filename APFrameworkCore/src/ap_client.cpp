@@ -185,7 +185,15 @@ std::string APArchipelagoClient::get_location_name(int64_t location_id) const
 {
     if (client_)
     {
-        return client_->get_location_name(location_id, game_);
+        std::string name = client_->get_location_name(location_id, game_);
+        if (name == "Unknown")
+        {
+            APLogger::get()->log(LogLevel::Warn, "APArchipelagoClient",
+                                 "Location name lookup FAILED for ID " + std::to_string(location_id) +
+                                     " (game='" + game_ + "', dp_valid=" +
+                                     std::string(client_->is_data_package_valid() ? "true" : "false") + ")");
+        }
+        return name;
     }
     return "";
 }
@@ -194,7 +202,15 @@ std::string APArchipelagoClient::get_item_name(int64_t item_id) const
 {
     if (client_)
     {
-        return client_->get_item_name(item_id, game_);
+        std::string name = client_->get_item_name(item_id, game_);
+        if (name == "Unknown")
+        {
+            APLogger::get()->log(LogLevel::Warn, "APArchipelagoClient",
+                                 "Item name lookup FAILED for ID " + std::to_string(item_id) +
+                                     " (game='" + game_ + "', dp_valid=" +
+                                     std::string(client_->is_data_package_valid() ? "true" : "false") + ")");
+        }
+        return name;
     }
     return "";
 }
@@ -323,6 +339,11 @@ void APArchipelagoClient::setup_callbacks()
 
         slot_info_ = info;
 
+        APLogger::get()->log(LogLevel::Info, "APArchipelagoClient",
+                             "Data package valid at slot connect: " +
+                                 std::string(client_->is_data_package_valid() ? "true" : "false") +
+                                 ", game: " + game_);
+
         if (slot_connected_callback_)
         {
             slot_connected_callback_(info);
@@ -428,6 +449,32 @@ void APArchipelagoClient::setup_callbacks()
         {
             bounced_callback_(data);
         }
+    });
+
+    // Data package changed - signals that item/location name resolution is ready
+    // (Designed in Phase06 but was missing from implementation)
+    client_->set_data_package_changed_handler([this](const nlohmann::json &data) {
+        if (data.contains("games"))
+        {
+            for (auto &[game_name, game_data] : data["games"].items())
+            {
+                int item_count = game_data.contains("item_name_to_id")
+                                     ? static_cast<int>(game_data["item_name_to_id"].size())
+                                     : 0;
+                int location_count = game_data.contains("location_name_to_id")
+                                         ? static_cast<int>(game_data["location_name_to_id"].size())
+                                         : 0;
+                APLogger::get()->log(LogLevel::Debug, "APArchipelagoClient",
+                                     "Data package for '" + game_name + "': " +
+                                         std::to_string(item_count) + " items, " +
+                                         std::to_string(location_count) + " locations");
+            }
+        }
+        APLogger::get()->log(LogLevel::Info, "APArchipelagoClient",
+                             "Data package updated (" +
+                                 std::to_string(data.contains("games") ? data["games"].size() : 0) +
+                                 " game(s)), valid=" +
+                                 std::string(client_->is_data_package_valid() ? "true" : "false"));
     });
 }
 

@@ -44,6 +44,30 @@ local obj_WebBrowser = RH.add_object("/Script/WebBrowserWidget.WebBrowser")
 local obj_PalTimeManager = RH.add_object("/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C")
 
 -- ============================================================================
+-- Action Handlers (called by APClientLib's action executor when items arrive)
+-- The action executor resolves "ExampleMod.GrantSpeedBoost" by navigating
+-- lua["ExampleMod"]["GrantSpeedBoost"] in the global table.
+-- ============================================================================
+
+ExampleMod = ExampleMod or {}
+
+ExampleMod.GrantSpeedBoost = function(duration)
+    APClient.log("info", "Speed Boost applied! Duration: " .. tostring(duration) .. "s\n")
+end
+
+ExampleMod.HealPlayer = function(amount)
+    APClient.log("info", "Healed player for " .. tostring(amount) .. " HP\n")
+end
+
+ExampleMod.UnlockDoor = function(door_id)
+    APClient.log("info", "Unlocked door: " .. tostring(door_id) .. "\n")
+end
+
+ExampleMod.ApplyPoison = function(damage)
+    APClient.log("info", "Poison trap! Taking " .. tostring(damage) .. " damage\n")
+end
+
+-- ============================================================================
 -- Update Loop
 -- ============================================================================
 local tick_time_now = os.clock()
@@ -158,7 +182,7 @@ local LOCATIONS = {
 
 -- Build a lookup key for deduplication
 local function location_key(name, instance)
-    return name .. "#" .. tostring(instance)
+    return name .. "#" .. string.format("%d", instance)
 end
 
 check_all_locations = function()
@@ -172,7 +196,7 @@ check_all_locations = function()
             if check_location_condition(key) then
                 if APClient.check_location(loc.name, loc.instance) then
                     checked_locations[key] = true
-                    APClient.log("info", "Location checked: " .. loc.name .. " #" .. loc.instance .. "\n")
+                    APClient.log("info", "Location checked: " .. loc.name .. " #" .. string.format("%d", loc.instance) .. "\n")
                 end
             end
         end
@@ -189,7 +213,7 @@ local function handle_forwarded_message(payload)
 
     if action == "check_location" then
         local name = payload.location
-        local instance = tonumber(payload.instance) or 1
+        local instance = math.floor(tonumber(payload.instance) or 1)
         if not name then
             APClient.log("warn", "check_location: missing 'location' field\n")
             return
@@ -197,16 +221,16 @@ local function handle_forwarded_message(payload)
 
         local key = location_key(name, instance)
         if checked_locations[key] then
-            APClient.log("info", "Location already checked: " .. name .. " #" .. instance .. "\n")
+            APClient.log("info", "Location already checked: " .. name .. " #" .. string.format("%d", instance) .. "\n")
             return
         end
 
-        APClient.log("info", "Simulating location check: " .. name .. " #" .. instance .. "\n")
+        APClient.log("info", "Simulating location check: " .. name .. " #" .. string.format("%d", instance) .. "\n")
         if APClient.check_location(name, instance) then
             checked_locations[key] = true
-            APClient.log("info", "Location checked: " .. name .. " #" .. instance .. "\n")
+            APClient.log("info", "Location checked: " .. name .. " #" .. string.format("%d", instance) .. "\n")
         else
-            APClient.log("warn", "Failed to check location: " .. name .. " #" .. instance .. "\n")
+            APClient.log("warn", "Failed to check location: " .. name .. " #" .. string.format("%d", instance) .. "\n")
         end
 
     elseif action == "check_all_locations" then
@@ -214,7 +238,7 @@ local function handle_forwarded_message(payload)
         for _, loc in ipairs(LOCATIONS) do
             local key = location_key(loc.name, loc.instance)
             if not checked_locations[key] then
-                APClient.log("info", "Checking: " .. loc.name .. " #" .. loc.instance .. "\n")
+                APClient.log("info", "Checking: " .. loc.name .. " #" .. string.format("%d", loc.instance) .. "\n")
                 if APClient.check_location(loc.name, loc.instance) then
                     checked_locations[key] = true
                 end
