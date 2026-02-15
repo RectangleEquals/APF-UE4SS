@@ -310,10 +310,71 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
             }
         }
 
+        // Parse manifest-level options
+        if (j.contains("options") && j["options"].is_object())
+        {
+            for (const auto &[key, opt] : j["options"].items())
+            {
+                ManifestOptionDef mopt;
+                mopt.key = key;
+                mopt.type = opt.value("type", "toggle");
+
+                // Parse default based on type
+                if (opt.contains("default"))
+                {
+                    if (opt["default"].is_boolean())
+                        mopt.default_value = opt["default"].get<bool>() ? "true" : "false";
+                    else if (opt["default"].is_number_integer())
+                        mopt.default_value = std::to_string(opt["default"].get<int>());
+                    else
+                        mopt.default_value = opt["default"].get<std::string>();
+                }
+
+                mopt.range_start = opt.value("range_start", 0);
+                mopt.range_end = opt.value("range_end", 100);
+                mopt.description = opt.value("description", "");
+
+                // Parse choices for text_choice type
+                if (opt.contains("choices") && opt["choices"].is_array())
+                {
+                    for (const auto &c : opt["choices"])
+                    {
+                        mopt.choices.push_back(c.get<std::string>());
+                    }
+                }
+
+                manifest.options.push_back(mopt);
+            }
+        }
+
         // Parse capabilities section
         if (j.contains("capabilities") && j["capabilities"].is_object())
         {
             const auto &caps = j["capabilities"];
+
+            // Parse regions
+            if (caps.contains("regions") && caps["regions"].is_array())
+            {
+                for (const auto &reg : caps["regions"])
+                {
+                    RegionDef def;
+                    def.name = reg.value("name", "");
+                    parse_requirements(reg, def.requires_all, def.requires_any, def.requires_count);
+                    def.requires_option = reg.value("requires_option", "");
+
+                    // Handle ^ prefix
+                    if (!def.name.empty() && def.name[0] == '^')
+                    {
+                        def.name = def.name.substr(1);
+                        def.suppress_vocab_warning = true;
+                    }
+
+                    if (!def.name.empty())
+                    {
+                        manifest.regions.push_back(def);
+                    }
+                }
+            }
 
             // Parse locations
             if (caps.contains("locations") && caps["locations"].is_array())
@@ -324,6 +385,16 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.name = loc.value("name", "");
                     def.amount = loc.value("amount", 1);
                     def.unique = loc.value("unique", false);
+                    def.region = loc.value("region", "");
+                    parse_requirements(loc, def.requires_all, def.requires_any, def.requires_count);
+                    def.requires_option = loc.value("requires_option", "");
+
+                    // Handle ^ prefix
+                    if (!def.name.empty() && def.name[0] == '^')
+                    {
+                        def.name = def.name.substr(1);
+                        def.suppress_vocab_warning = true;
+                    }
 
                     if (!def.name.empty())
                     {
@@ -342,6 +413,14 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.type = item_type_from_string(item.value("type", "filler"));
                     def.amount = item.value("amount", 1);
                     def.action = item.value("action", "");
+                    def.requires_option = item.value("requires_option", "");
+
+                    // Handle ^ prefix
+                    if (!def.name.empty() && def.name[0] == '^')
+                    {
+                        def.name = def.name.substr(1);
+                        def.suppress_vocab_warning = true;
+                    }
 
                     // Parse action args
                     if (item.contains("args") && item["args"].is_array())
@@ -384,6 +463,57 @@ std::optional<Manifest> APModRegistry::parse_manifest_file(const std::filesystem
         return std::nullopt;
     }
     return parse_manifest(content);
+}
+
+// =============================================================================
+// Requirement Parsing Helper
+// =============================================================================
+
+void APModRegistry::parse_requirements(const nlohmann::json &j,
+                                       std::vector<std::string> &out_requires,
+                                       std::vector<std::string> &out_requires_any,
+                                       std::vector<CountRequirement> &out_requires_count)
+{
+    // Parse "requires": ["A", "B"] — need ALL (AND)
+    if (j.contains("requires") && j["requires"].is_array())
+    {
+        for (const auto &req : j["requires"])
+        {
+            std::string name = req.get<std::string>();
+            // Strip ^ prefix from item references too
+            if (!name.empty() && name[0] == '^')
+                name = name.substr(1);
+            out_requires.push_back(name);
+        }
+    }
+
+    // Parse "requires_any": ["A", "B"] — need ANY (OR)
+    if (j.contains("requires_any") && j["requires_any"].is_array())
+    {
+        for (const auto &req : j["requires_any"])
+        {
+            std::string name = req.get<std::string>();
+            if (!name.empty() && name[0] == '^')
+                name = name.substr(1);
+            out_requires_any.push_back(name);
+        }
+    }
+
+    // Parse "requires_count": [{"item": "XP", "count": 5}] — need N of item
+    if (j.contains("requires_count") && j["requires_count"].is_array())
+    {
+        for (const auto &rc : j["requires_count"])
+        {
+            CountRequirement cr;
+            cr.item = rc.value("item", "");
+            cr.count = rc.value("count", 1);
+            // Strip ^ prefix from item references
+            if (!cr.item.empty() && cr.item[0] == '^')
+                cr.item = cr.item.substr(1);
+            if (!cr.item.empty())
+                out_requires_count.push_back(cr);
+        }
+    }
 }
 
 } // namespace ap

@@ -8,6 +8,7 @@ set(SOURCES
     src/ap_polling_thread.cpp
     src/ap_mod_registry.cpp
     src/ap_capabilities.cpp
+    src/ap_vocabulary.cpp
     src/ap_state_manager.cpp
     src/ap_message_router.cpp
     src/main.cpp
@@ -22,6 +23,7 @@ set(HEADERS
     include/ap_polling_thread.h
     include/ap_mod_registry.h
     include/ap_capabilities.h
+    include/ap_vocabulary.h
     include/ap_state_manager.h
     include/ap_message_router.h
     include/thread_safe_queue.h

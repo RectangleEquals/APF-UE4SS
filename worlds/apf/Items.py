@@ -25,6 +25,7 @@ class ItemData(NamedTuple):
     classification: ItemClassification
     mod_id: str
     count: int  # -1 means filler (fill remaining slots)
+    requires_option: str = ""  # Option conditional
 
 
 def get_classification(type_str: str) -> ItemClassification:
@@ -57,7 +58,8 @@ def build_item_table(capabilities: dict) -> Dict[str, ItemData]:
             name=name,
             classification=get_classification(item_data.get("type", "filler")),
             mod_id=item_data.get("mod_id", ""),
-            count=item_data.get("count", 1)
+            count=item_data.get("count", 1),
+            requires_option=item_data.get("requires_option", "")
         )
 
     return item_table

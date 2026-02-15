@@ -1,4 +1,5 @@
 #include "ap_generated_config.h"
+#include "Types/ap_shared_manifest_types.h"
 #include "ap_base64.h"
 #include "ap_config.h"
 #include "ap_logger.h"
@@ -155,6 +156,15 @@ bool APGeneratedConfig::load_template_file(const std::filesystem::path &path)
                 def.range_start = value.value("range_start", 0);
                 def.range_end = value.value("range_end", 100);
 
+                // Parse choices for text_choice type
+                if (value.contains("choices") && value["choices"].is_array())
+                {
+                    for (const auto &c : value["choices"])
+                    {
+                        def.choices.push_back(c.get<std::string>());
+                    }
+                }
+
                 // Check if this key already exists (game-specific overrides default)
                 bool found = false;
                 for (auto &existing : option_definitions_)
@@ -199,6 +209,70 @@ void APGeneratedConfig::populate_defaults()
 std::vector<OptionDefinition> APGeneratedConfig::get_option_definitions() const
 {
     return option_definitions_;
+}
+
+void APGeneratedConfig::merge_mod_options(const std::vector<ManifestOptionDef> &mod_options)
+{
+    for (const auto &mopt : mod_options)
+    {
+        // Convert ManifestOptionDef to OptionDefinition
+        OptionDefinition def;
+        def.key = mopt.key;
+        def.type = mopt.type;
+        def.default_value = mopt.default_value;
+        def.range_start = mopt.range_start;
+        def.range_end = mopt.range_end;
+        def.choices = mopt.choices;
+        def.description = mopt.description;
+
+        // Validate text_choice: default must be in choices
+        if (def.type == "text_choice" && !def.choices.empty())
+        {
+            bool valid = false;
+            for (const auto &c : def.choices)
+            {
+                if (c == def.default_value)
+                {
+                    valid = true;
+                    break;
+                }
+            }
+            if (!valid)
+            {
+                APLogger::get()->log(LogLevel::Warn, "APGeneratedConfig",
+                                     "Option '" + def.key + "': default '" + def.default_value +
+                                         "' is not in choices list");
+            }
+        }
+
+        // Mod options override existing definitions (highest priority)
+        bool replaced = false;
+        for (auto &existing : option_definitions_)
+        {
+            if (existing.key == def.key)
+            {
+                existing = def;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced)
+        {
+            option_definitions_.push_back(def);
+        }
+
+        // Set default value if not already set
+        if (options_.find(def.key) == options_.end())
+        {
+            options_[def.key] = def.default_value;
+        }
+    }
+
+    if (!mod_options.empty())
+    {
+        APLogger::get()->log(LogLevel::Debug, "APGeneratedConfig",
+                             "Merged " + std::to_string(mod_options.size()) + " mod-declared options");
+    }
 }
 
 // =============================================================================

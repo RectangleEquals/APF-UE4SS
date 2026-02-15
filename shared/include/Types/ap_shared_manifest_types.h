@@ -48,6 +48,28 @@ struct ActionResult {
 };
 
 // =============================================================================
+// Count Requirement (for requires_count logic)
+// =============================================================================
+
+struct CountRequirement {
+    std::string item;
+    int count = 1;
+};
+
+// =============================================================================
+// Region Definition (capabilities)
+// =============================================================================
+
+struct RegionDef {
+    std::string name;
+    std::vector<std::string> requires_all;   // ALL required (AND)
+    std::vector<std::string> requires_any;   // ANY required (OR)
+    std::vector<CountRequirement> requires_count; // N of item required
+    std::string requires_option;             // Option conditional
+    bool suppress_vocab_warning = false;     // True if name was ^-prefixed
+};
+
+// =============================================================================
 // Location Definition (capabilities)
 // =============================================================================
 
@@ -55,6 +77,12 @@ struct LocationDef {
     std::string name;
     int amount = 1;
     bool unique = false;
+    std::string region;                      // Region this location belongs to
+    std::vector<std::string> requires_all;   // ALL required (AND)
+    std::vector<std::string> requires_any;   // ANY required (OR)
+    std::vector<CountRequirement> requires_count; // N of item required
+    std::string requires_option;             // Option conditional
+    bool suppress_vocab_warning = false;     // True if name was ^-prefixed
 };
 
 // =============================================================================
@@ -67,6 +95,22 @@ struct ItemDef {
     int amount = 1;
     std::string action;
     std::vector<ActionArg> args;
+    std::string requires_option;             // Option conditional
+    bool suppress_vocab_warning = false;     // True if name was ^-prefixed
+};
+
+// =============================================================================
+// Manifest Option Definition (declared by mods in their manifests)
+// =============================================================================
+
+struct ManifestOptionDef {
+    std::string key;
+    std::string type;                        // "toggle", "range", "text_choice"
+    std::string default_value;               // Stored as string for uniformity
+    int range_start = 0;                     // For "range" type
+    int range_end = 100;                     // For "range" type
+    std::vector<std::string> choices;        // For "text_choice" type (required)
+    std::string description;
 };
 
 // =============================================================================
@@ -95,8 +139,10 @@ struct Manifest {
     bool enabled = true;
     std::string description;
     std::vector<IncompatibilityRule> incompatible;
+    std::vector<RegionDef> regions;
     std::vector<LocationDef> locations;
     std::vector<ItemDef> items;
+    std::vector<ManifestOptionDef> options;
 };
 
 } // namespace ap

@@ -91,6 +91,15 @@ class AP_API APCapabilities
     ValidationResult validate() const;
 
     /**
+     * @brief Apply vocabulary defaults (region requirements from Templates/<game>/Regions.json).
+     *
+     * Should be called after all manifests are added and before config generation.
+     * Loads vocabulary files and merges region defaults into regions_.
+     * Returns warnings about implicit inheritance.
+     */
+    std::vector<std::string> apply_vocabulary_defaults();
+
+    /**
      * @brief Get list of detected conflicts.
      * @return Vector of conflicts.
      */
@@ -230,12 +239,26 @@ class AP_API APCapabilities
      */
     size_t get_item_count() const;
 
+    /**
+     * @brief Get merged regions from all manifests.
+     * @return Vector of region definitions.
+     */
+    std::vector<RegionDef> get_regions() const;
+
+    /**
+     * @brief Get collected option definitions from all manifests.
+     * @return Vector of manifest option definitions.
+     */
+    std::vector<ManifestOptionDef> get_mod_options() const;
+
   private:
     // =========================================================================
     // Private Member Variables (only data this class OWNS)
     // =========================================================================
     std::vector<LocationOwnership> locations_;
     std::vector<ItemOwnership> items_;
+    std::vector<RegionDef> regions_;                    // Merged regions from all manifests
+    std::vector<ManifestOptionDef> mod_options_;        // Collected options from all manifests
 };
 
 } // namespace ap

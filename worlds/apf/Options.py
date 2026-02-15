@@ -5,7 +5,21 @@ This module defines the configuration options that can be set in the player's YA
 """
 
 from dataclasses import dataclass
-from Options import PerGameCommonOptions, TextChoice, Range
+from Options import Choice, PerGameCommonOptions, TextChoice, Range
+
+
+class LogicMode(Choice):
+    """
+    Logic mode for the AP Framework.
+
+    none: All locations are accessible from the start (Sphere 0). No logic enforcement.
+    basic: Regions and item requirements are enforced based on the capabilities config.
+           Locations may require specific items or region access.
+    """
+    display_name = "Logic Mode"
+    option_none = 0
+    option_basic = 1
+    default = 1
 
 
 class CapabilitiesData(TextChoice):
@@ -48,5 +62,6 @@ class TrapItemChance(Range):
 class APFrameworkOptions(PerGameCommonOptions):
     """Options dataclass for AP Framework worlds."""
     capabilities_data: CapabilitiesData
+    logic_mode: LogicMode
     filler_item_weight: FillerItemWeight
     trap_item_chance: TrapItemChance

@@ -19,7 +19,7 @@ from BaseClasses import Item, Location, Region, Tutorial, ItemClassification, Mu
 from worlds.AutoWorld import World, WebWorld
 
 from .Items import APFrameworkItem, ItemData, build_item_table, get_filler_items, get_trap_items
-from .Locations import APFrameworkLocation, LocationData, build_location_table
+from .Locations import APFrameworkLocation, LocationData, CountRequirement, build_location_table
 from .Options import APFrameworkOptions
 from .Rules import set_rules, set_completion_rules
 
@@ -68,6 +68,7 @@ class APFrameworkWorld(World):
 
     item_table: Dict[str, ItemData]
     location_table: Dict[str, LocationData]
+    region_table: Dict[str, Dict[str, Any]]  # region_name -> {requires_all, requires_any, requires_count, requires_option}
     capabilities: Dict[str, Any]
     id_remapping: Dict[int, int]
 
@@ -83,6 +84,7 @@ class APFrameworkWorld(World):
         super().__init__(multiworld, player)
         self.item_table = {}
         self.location_table = {}
+        self.region_table = {}
         self.capabilities = {}
         self.id_remapping = {}
 
@@ -109,9 +111,19 @@ class APFrameworkWorld(World):
         except Exception as e:
             raise Exception(f"[{self.game}] Failed to decode capabilities_data: {e}")
 
+        # Filter capabilities by requires_option before building tables
+        self._filter_by_requires_option()
+
         # Build item and location tables
         self.item_table = build_item_table(self.capabilities)
         self.location_table = build_location_table(self.capabilities)
+
+        # Build region table from capabilities
+        self.region_table = self._build_region_table()
+
+        # Set topology_present based on logic mode
+        if self.options.logic_mode.value == 1 and self.region_table:  # basic
+            self.__class__.topology_present = True
 
         # Update class-level ID mappings (required for item/location creation)
         self.__class__.item_name_to_id = {
@@ -135,12 +147,16 @@ class APFrameworkWorld(World):
               f"{dict(list(self.__class__.item_name_to_id.items())[:5])}")
         print(f"  location_name_to_id ({len(self.__class__.location_name_to_id)} entries): "
               f"{dict(list(self.__class__.location_name_to_id.items())[:5])}")
+        print(f"  regions: {list(self.region_table.keys())}")
+        print(f"  logic_mode: {'basic' if self.options.logic_mode.value == 1 else 'none'}")
 
     def _process_capabilities(self, data: dict) -> dict:
         """Unwrap nested structure and validate."""
-        # The C++ framework nests locations/items under a "capabilities" key
+        # The C++ framework nests locations/items/regions under a "capabilities" key
         if "capabilities" in data and isinstance(data["capabilities"], dict):
             caps = data["capabilities"]
+            if "regions" in caps:
+                data["regions"] = caps["regions"]
             if "locations" in caps:
                 data["locations"] = caps["locations"]
             if "items" in caps:
@@ -151,6 +167,78 @@ class APFrameworkWorld(World):
             if field not in data:
                 raise ValueError(f"Missing required field: {field}")
         return data
+
+    def _filter_by_requires_option(self) -> None:
+        """Filter capabilities entries by requires_option against player's YAML options.
+
+        Removes locations, items, and regions from self.capabilities that have a
+        requires_option condition not satisfied by the player's chosen options.
+
+        Condition formats:
+        - "opt_name"         -> include if option is truthy (non-zero, non-empty, true)
+        - "opt_name=value"   -> include if option equals the specific value
+        """
+        def _check_condition(condition: str) -> bool:
+            if "=" in condition:
+                opt_name, expected = condition.split("=", 1)
+            else:
+                opt_name = condition
+                expected = None
+
+            # Look up the option value from the player's options
+            opt = getattr(self.options, opt_name, None)
+            if opt is None:
+                # Unknown option — include by default (no filtering)
+                return True
+
+            value = opt.value
+            if expected is not None:
+                # Exact match — compare as string (handles Choice display names and Range values)
+                return str(value).lower() == expected.lower()
+            else:
+                # Truthy check
+                return bool(value)
+
+        def _filter_list(entries: list) -> list:
+            result = []
+            for entry in entries:
+                condition = entry.get("requires_option", "")
+                if not condition or _check_condition(condition):
+                    result.append(entry)
+            return result
+
+        self.capabilities["locations"] = _filter_list(self.capabilities.get("locations", []))
+        self.capabilities["items"] = _filter_list(self.capabilities.get("items", []))
+        if "regions" in self.capabilities:
+            self.capabilities["regions"] = _filter_list(self.capabilities.get("regions", []))
+
+    def _build_region_table(self) -> Dict[str, Dict[str, Any]]:
+        """Build region table from capabilities regions data.
+
+        Returns:
+            Dict mapping region name to requirement data:
+            {
+                "requires_all": [...],
+                "requires_any": [...],
+                "requires_count": [CountRequirement(...)],
+            }
+        """
+        region_table: Dict[str, Dict[str, Any]] = {}
+
+        for region_data in self.capabilities.get("regions", []):
+            name = region_data["name"]
+            requires_count_raw = region_data.get("requires_count", [])
+            requires_count = [
+                CountRequirement(item=rc["item"], count=rc.get("count", 1))
+                for rc in requires_count_raw
+            ]
+            region_table[name] = {
+                "requires_all": region_data.get("requires", []),
+                "requires_any": region_data.get("requires_any", []),
+                "requires_count": requires_count,
+            }
+
+        return region_table
 
     def _update_data_package(self) -> None:
         """Update reverse mappings and network data package.
@@ -224,7 +312,7 @@ class APFrameworkWorld(World):
 
         self.id_remapping = remap
 
-        # Apply remapping to location table
+        # Apply remapping to location table (preserve all fields)
         new_location_table = {}
         for name, data in self.location_table.items():
             new_code = remap.get(data.code, data.code)
@@ -233,11 +321,15 @@ class APFrameworkWorld(World):
                 name=data.name,
                 mod_id=data.mod_id,
                 instance=data.instance,
-                region=data.region
+                region=data.region,
+                requires_all=data.requires_all,
+                requires_any=data.requires_any,
+                requires_count=data.requires_count,
+                requires_option=data.requires_option,
             )
         self.location_table = new_location_table
 
-        # Apply remapping to item table
+        # Apply remapping to item table (preserve all fields)
         new_item_table = {}
         for name, data in self.item_table.items():
             new_code = remap.get(data.code, data.code)
@@ -246,7 +338,8 @@ class APFrameworkWorld(World):
                 name=data.name,
                 classification=data.classification,
                 mod_id=data.mod_id,
-                count=data.count
+                count=data.count,
+                requires_option=data.requires_option,
             )
         self.item_table = new_item_table
 
@@ -262,28 +355,50 @@ class APFrameworkWorld(World):
         self._update_data_package()
 
     def create_regions(self) -> None:
-        """Create regions and locations."""
-        # Create Menu region (required by Archipelago)
+        """Create regions and locations.
+
+        When logic_mode is "basic" and regions are defined, creates proper regions
+        with Menu connecting to all of them. Locations are placed into their
+        designated regions. Locations without a declared region go into "Main".
+
+        When logic_mode is "none" or no regions exist, all locations go into a
+        single "Main" region (flat Sphere 0 behavior).
+        """
         menu_region = Region("Menu", self.player, self.multiworld)
         self.multiworld.regions.append(menu_region)
 
-        # Create Main region (all locations go here by default)
-        main_region = Region("Main", self.player, self.multiworld)
+        use_regions = (self.options.logic_mode.value == 1 and self.region_table)
 
-        # Create locations
+        # Build region objects — always create "Main" as the default region
+        regions: Dict[str, Region] = {}
+        regions["Main"] = Region("Main", self.player, self.multiworld)
+
+        if use_regions:
+            for region_name in self.region_table:
+                if region_name not in regions:
+                    regions[region_name] = Region(region_name, self.player, self.multiworld)
+
+        # Place locations into their target regions
         for loc_name, loc_data in self.location_table.items():
+            target_region = loc_data.region if use_regions else "Main"
+
+            # If the target region wasn't declared, create it on-the-fly
+            if target_region not in regions:
+                regions[target_region] = Region(target_region, self.player, self.multiworld)
+
+            region = regions[target_region]
             location = APFrameworkLocation(
                 self.player,
                 loc_name,
                 loc_data.code,
-                main_region
+                region
             )
-            main_region.locations.append(location)
+            region.locations.append(location)
 
-        # Connect Menu to Main
-        menu_region.connect(main_region)
-
-        self.multiworld.regions.append(main_region)
+        # Connect Menu to all regions (flat topology — item requirements enforce ordering)
+        for region in regions.values():
+            menu_region.connect(region)
+            self.multiworld.regions.append(region)
 
     def create_item(self, name: str) -> APFrameworkItem:
         """Create an item by name. Required by Archipelago for pre-fill and similar."""

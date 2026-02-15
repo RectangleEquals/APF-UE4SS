@@ -4,6 +4,7 @@
 #include "ap_logger.h"
 #include "ap_mod_registry.h"
 #include "ap_path_util.h"
+#include "ap_vocabulary.h"
 
 #include <algorithm>
 #include <chrono>
@@ -185,6 +186,35 @@ APCapabilities::~APCapabilities() = default;
 
 void APCapabilities::add_manifest(const Manifest &manifest)
 {
+    // Merge regions (by name — later declarations override earlier ones)
+    for (const auto &reg : manifest.regions)
+    {
+        bool merged = false;
+        for (auto &existing : regions_)
+        {
+            if (existing.name == reg.name)
+            {
+                // Override requirements if the new manifest declares them
+                if (!reg.requires_all.empty() || !reg.requires_any.empty() || !reg.requires_count.empty())
+                {
+                    existing.requires_all = reg.requires_all;
+                    existing.requires_any = reg.requires_any;
+                    existing.requires_count = reg.requires_count;
+                    APLogger::get()->log(LogLevel::Info, "APCapabilities",
+                                         "Region '" + reg.name + "' requirements overridden by mod: " + manifest.mod_id);
+                }
+                if (!reg.requires_option.empty())
+                    existing.requires_option = reg.requires_option;
+                merged = true;
+                break;
+            }
+        }
+        if (!merged)
+        {
+            regions_.push_back(reg);
+        }
+    }
+
     // Add locations
     for (const auto &loc : manifest.locations)
     {
@@ -194,6 +224,11 @@ void APCapabilities::add_manifest(const Manifest &manifest)
             ownership.mod_id = manifest.mod_id;
             ownership.location_name = loc.name;
             ownership.instance = i;
+            ownership.region = loc.region;
+            ownership.requires_all = loc.requires_all;
+            ownership.requires_any = loc.requires_any;
+            ownership.requires_count = loc.requires_count;
+            ownership.requires_option = loc.requires_option;
             locations_.push_back(ownership);
         }
     }
@@ -208,7 +243,27 @@ void APCapabilities::add_manifest(const Manifest &manifest)
         ownership.action = item.action;
         ownership.args = item.args;
         ownership.max_count = (item.amount < 0) ? -1 : item.amount;
+        ownership.requires_option = item.requires_option;
         items_.push_back(ownership);
+    }
+
+    // Collect mod-declared options (last-wins on key conflict)
+    for (const auto &opt : manifest.options)
+    {
+        bool replaced = false;
+        for (auto &existing : mod_options_)
+        {
+            if (existing.key == opt.key)
+            {
+                existing = opt;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced)
+        {
+            mod_options_.push_back(opt);
+        }
     }
 }
 
@@ -216,6 +271,8 @@ void APCapabilities::clear()
 {
     locations_.clear();
     items_.clear();
+    regions_.clear();
+    mod_options_.clear();
 }
 
 // =============================================================================
@@ -268,25 +325,54 @@ ValidationResult APCapabilities::validate() const
         }
     }
 
+    // Build lookup of unique flags from manifests for location validation
+    // Key: "mod_id:location_name", Value: unique flag
+    std::map<std::string, bool> location_unique_flags;
+    for (const auto &[mod_id, manifest] : manifest_map)
+    {
+        for (const auto &loc : manifest.locations)
+        {
+            location_unique_flags[mod_id + ":" + loc.name] = loc.unique;
+        }
+    }
+
     // Check for duplicate location names across mods
-    std::map<std::string, std::string> location_owners;
+    // unique=true means this location MUST NOT be shared — conflict if another mod uses same name
+    // unique=false (default) means shared names are allowed with a warning
+    struct LocationOwnerInfo { std::string mod_id; bool unique; };
+    std::map<std::string, LocationOwnerInfo> location_owners;
     for (const auto &loc : locations_)
     {
         std::string key = loc.location_name + "#" + std::to_string(loc.instance);
         auto it = location_owners.find(key);
-        if (it != location_owners.end() && it->second != loc.mod_id)
+        if (it != location_owners.end() && it->second.mod_id != loc.mod_id)
         {
-            Conflict conflict;
-            conflict.capability_name = "location_conflict";
-            conflict.mod_id_1 = it->second;
-            conflict.mod_id_2 = loc.mod_id;
-            conflict.description = "Duplicate location: " + loc.location_name;
-            result.conflicts.push_back(conflict);
-            result.valid = false;
+            bool this_unique = location_unique_flags[loc.mod_id + ":" + loc.location_name];
+            bool other_unique = it->second.unique;
+
+            if (this_unique || other_unique)
+            {
+                // At least one mod marked it unique — hard conflict
+                Conflict conflict;
+                conflict.capability_name = "location_conflict";
+                conflict.mod_id_1 = it->second.mod_id;
+                conflict.mod_id_2 = loc.mod_id;
+                conflict.description = "Duplicate unique location: " + loc.location_name;
+                result.conflicts.push_back(conflict);
+                result.valid = false;
+            }
+            else
+            {
+                // Both non-unique — warn but allow
+                result.warnings.push_back(
+                    "Location '" + loc.location_name + "' defined by both " +
+                    it->second.mod_id + " and " + loc.mod_id + " (neither marked unique)");
+            }
         }
         else
         {
-            location_owners[key] = loc.mod_id;
+            bool is_unique = location_unique_flags[loc.mod_id + ":" + loc.location_name];
+            location_owners[key] = {loc.mod_id, is_unique};
         }
     }
 
@@ -297,17 +383,35 @@ ValidationResult APCapabilities::validate() const
         auto it = item_owners.find(item.item_name);
         if (it != item_owners.end() && it->second != item.mod_id)
         {
-            Conflict conflict;
-            conflict.capability_name = "item_conflict";
-            conflict.mod_id_1 = it->second;
-            conflict.mod_id_2 = item.mod_id;
-            conflict.description = "Duplicate item: " + item.item_name;
-            result.conflicts.push_back(conflict);
-            result.valid = false;
+            // Items don't have a unique field — shared item names across mods are
+            // allowed (cross-mod cooperation via name references). Warn for visibility.
+            result.warnings.push_back(
+                "Item '" + item.item_name + "' defined by both " +
+                it->second + " and " + item.mod_id);
         }
         else
         {
             item_owners[item.item_name] = item.mod_id;
+        }
+    }
+
+    // Vocabulary validation (advisory)
+    auto framework_folder = APPathUtil::get()->find_framework_mod_folder();
+    if (framework_folder)
+    {
+        std::string game_name = APConfig::get()->get_game_name();
+        auto vocab_dir = *framework_folder / "Templates" / game_name;
+
+        APVocabulary vocab;
+        if (vocab.load(vocab_dir))
+        {
+            // Validate each manifest's names against vocabulary
+            for (const auto &[mod_id, manifest] : manifest_map)
+            {
+                auto vocab_warnings = vocab.validate_manifest(manifest);
+                result.warnings.insert(result.warnings.end(),
+                                       vocab_warnings.begin(), vocab_warnings.end());
+            }
         }
     }
 
@@ -322,6 +426,34 @@ std::vector<Conflict> APCapabilities::get_conflicts() const
 bool APCapabilities::has_conflicts() const
 {
     return !validate().valid;
+}
+
+std::vector<std::string> APCapabilities::apply_vocabulary_defaults()
+{
+    std::vector<std::string> warnings;
+
+    auto framework_folder = APPathUtil::get()->find_framework_mod_folder();
+    if (!framework_folder)
+        return warnings;
+
+    std::string game_name = APConfig::get()->get_game_name();
+    auto vocab_dir = *framework_folder / "Templates" / game_name;
+
+    APVocabulary vocab;
+    if (!vocab.load(vocab_dir))
+        return warnings;
+
+    // Apply region defaults from vocabulary
+    // This modifies regions_ to add vocabulary-defined regions that are
+    // referenced by locations but not explicitly declared by any manifest
+    warnings = vocab.apply_region_defaults(regions_, locations_, "(all mods)");
+
+    for (const auto &w : warnings)
+    {
+        APLogger::get()->log(LogLevel::Warn, "APCapabilities", w);
+    }
+
+    return warnings;
 }
 
 // =============================================================================
@@ -436,11 +568,40 @@ std::string APCapabilities::compute_checksum() const
         sha.update(mod_id);
         sha.update(manifest.version);
 
-        // Include location names
+        // Include region definitions (sorted by name for determinism)
+        // Note: requires_option is NOT included — it's player-variable
+        std::vector<RegionDef> sorted_regions = manifest.regions;
+        std::sort(sorted_regions.begin(), sorted_regions.end(),
+                  [](const RegionDef &a, const RegionDef &b) { return a.name < b.name; });
+        for (const auto &reg : sorted_regions)
+        {
+            sha.update(reg.name);
+            for (const auto &r : reg.requires_all)
+                sha.update(r);
+            for (const auto &r : reg.requires_any)
+                sha.update(r);
+            for (const auto &rc : reg.requires_count)
+            {
+                sha.update(rc.item);
+                sha.update(std::to_string(rc.count));
+            }
+        }
+
+        // Include location names and requirements
         for (const auto &loc : manifest.locations)
         {
             sha.update(loc.name);
             sha.update(std::to_string(loc.amount));
+            sha.update(loc.region);
+            for (const auto &r : loc.requires_all)
+                sha.update(r);
+            for (const auto &r : loc.requires_any)
+                sha.update(r);
+            for (const auto &rc : loc.requires_count)
+            {
+                sha.update(rc.item);
+                sha.update(std::to_string(rc.count));
+            }
         }
 
         // Include item names
@@ -486,6 +647,18 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         config.mods.push_back(info);
     }
 
+    // Add regions
+    for (const auto &reg : regions_)
+    {
+        CapabilitiesConfigRegion cfg_reg;
+        cfg_reg.name = reg.name;
+        cfg_reg.requires_all = reg.requires_all;
+        cfg_reg.requires_any = reg.requires_any;
+        cfg_reg.requires_count = reg.requires_count;
+        cfg_reg.requires_option = reg.requires_option;
+        config.capabilities.regions.push_back(cfg_reg);
+    }
+
     // Add locations
     for (const auto &loc : locations_)
     {
@@ -494,6 +667,11 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_loc.name = loc.location_name;
         cfg_loc.mod_id = loc.mod_id;
         cfg_loc.instance = loc.instance;
+        cfg_loc.region = loc.region;
+        cfg_loc.requires_all = loc.requires_all;
+        cfg_loc.requires_any = loc.requires_any;
+        cfg_loc.requires_count = loc.requires_count;
+        cfg_loc.requires_option = loc.requires_option;
         config.capabilities.locations.push_back(cfg_loc);
     }
 
@@ -506,6 +684,7 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_item.type = item_type_to_string(item.type);
         cfg_item.mod_id = item.mod_id;
         cfg_item.count = item.max_count;
+        cfg_item.requires_option = item.requires_option;
         config.capabilities.items.push_back(cfg_item);
     }
 
@@ -549,6 +728,10 @@ std::filesystem::path APCapabilities::write_capabilities_config_default() const
         auto templates_dir = *framework_folder / "Templates";
         std::string game_name = APConfig::get()->get_game_name();
         APGeneratedConfig::get()->load_templates(templates_dir, game_name);
+
+        // Merge mod-declared options into generated config
+        // Priority: default_options.json < game_options.json < manifest options
+        APGeneratedConfig::get()->merge_mod_options(mod_options_);
     }
 
     std::string yaml_filename = "AP_" + slot_name + ".yaml";
@@ -625,6 +808,16 @@ size_t APCapabilities::get_location_count() const
 size_t APCapabilities::get_item_count() const
 {
     return items_.size();
+}
+
+std::vector<RegionDef> APCapabilities::get_regions() const
+{
+    return regions_;
+}
+
+std::vector<ManifestOptionDef> APCapabilities::get_mod_options() const
+{
+    return mod_options_;
 }
 
 } // namespace ap

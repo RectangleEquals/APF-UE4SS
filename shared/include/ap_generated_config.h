@@ -18,6 +18,8 @@
  *   3. Merge: game-specific entries override/extend defaults
  */
 
+#include "Types/ap_shared_manifest_types.h"
+
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -36,10 +38,11 @@ namespace ap
 struct OptionDefinition
 {
     std::string key;
-    std::string type;          // "toggle", "range", "text_choice"
-    std::string default_value; // stored as string for uniformity
-    int range_start = 0;       // for "range" type
-    int range_end = 100;       // for "range" type
+    std::string type;                        // "toggle", "range", "text_choice"
+    std::string default_value;               // stored as string for uniformity
+    int range_start = 0;                     // for "range" type
+    int range_end = 100;                     // for "range" type
+    std::vector<std::string> choices;        // for "text_choice" type (required)
     std::string description;
 };
 
@@ -90,6 +93,14 @@ class APGeneratedConfig
      * Useful for UI mods to discover available options and their constraints.
      */
     std::vector<OptionDefinition> get_option_definitions() const;
+
+    /**
+     * @brief Merge option definitions declared by mods into the config.
+     *
+     * Called after load_templates(). Mod-declared options have highest priority:
+     * default_options.json < game_options.json < manifest options.
+     */
+    void merge_mod_options(const std::vector<ManifestOptionDef> &mod_options);
 
     // =========================================================================
     // YAML Generation

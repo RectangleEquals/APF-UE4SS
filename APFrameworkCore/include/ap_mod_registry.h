@@ -196,6 +196,20 @@ class AP_API APModRegistry
 
   private:
     // =========================================================================
+    // Private Helpers
+    // =========================================================================
+
+    /**
+     * @brief Parse requires, requires_any, requires_count from a JSON object.
+     *
+     * Common to locations, regions, and potentially other entry types.
+     */
+    static void parse_requirements(const nlohmann::json &j,
+                                   std::vector<std::string> &out_requires,
+                                   std::vector<std::string> &out_requires_any,
+                                   std::vector<CountRequirement> &out_requires_count);
+
+    // =========================================================================
     // Private Member Variables
     // =========================================================================
     std::unordered_map<std::string, Manifest> manifests_;
