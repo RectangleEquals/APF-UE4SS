@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
+#include <regex>
+#include <set>
 
 namespace ap
 {
@@ -71,34 +73,23 @@ bool APVocabulary::load_regions(const std::filesystem::path &path)
 
         for (const auto &reg : j["regions"])
         {
-            VocabRegion vr;
-            vr.name = reg.value("name", "");
-            if (vr.name.empty())
-                continue;
-
-            if (reg.contains("requires") && reg["requires"].is_array())
+            // Vocabulary regions are just name strings
+            std::string name;
+            if (reg.is_string())
             {
-                for (const auto &r : reg["requires"])
-                    vr.requires_all.push_back(r.get<std::string>());
+                name = reg.get<std::string>();
             }
-            if (reg.contains("requires_any") && reg["requires_any"].is_array())
+            else if (reg.is_object())
             {
-                for (const auto &r : reg["requires_any"])
-                    vr.requires_any.push_back(r.get<std::string>());
-            }
-            if (reg.contains("requires_count") && reg["requires_count"].is_array())
-            {
-                for (const auto &rc : reg["requires_count"])
-                {
-                    CountRequirement cr;
-                    cr.item = rc.value("item", "");
-                    cr.count = rc.value("count", 1);
-                    if (!cr.item.empty())
-                        vr.requires_count.push_back(cr);
-                }
+                name = reg.value("name", "");
             }
 
-            regions_[vr.name] = vr;
+            if (!name.empty())
+            {
+                VocabRegion vr;
+                vr.name = name;
+                regions_[name] = vr;
+            }
         }
 
         return !regions_.empty();
@@ -128,13 +119,23 @@ bool APVocabulary::load_items(const std::filesystem::path &path)
 
         for (const auto &item : j["items"])
         {
-            VocabItem vi;
-            vi.name = item.value("name", "");
-            vi.type = item.value("type", "filler");
-            if (vi.name.empty())
-                continue;
+            // Vocabulary items are just name strings
+            std::string name;
+            if (item.is_string())
+            {
+                name = item.get<std::string>();
+            }
+            else if (item.is_object())
+            {
+                name = item.value("name", "");
+            }
 
-            items_[vi.name] = vi;
+            if (!name.empty())
+            {
+                VocabItem vi;
+                vi.name = name;
+                items_[name] = vi;
+            }
         }
 
         return !items_.empty();
@@ -164,13 +165,23 @@ bool APVocabulary::load_locations(const std::filesystem::path &path)
 
         for (const auto &loc : j["locations"])
         {
-            VocabLocation vl;
-            vl.name = loc.value("name", "");
-            vl.region = loc.value("region", "");
-            if (vl.name.empty())
-                continue;
+            // Vocabulary locations are just name strings
+            std::string name;
+            if (loc.is_string())
+            {
+                name = loc.get<std::string>();
+            }
+            else if (loc.is_object())
+            {
+                name = loc.value("name", "");
+            }
 
-            locations_[vl.name] = vl;
+            if (!name.empty())
+            {
+                VocabLocation vl;
+                vl.name = name;
+                locations_[name] = vl;
+            }
         }
 
         return !locations_.empty();
@@ -212,8 +223,6 @@ std::vector<std::string> APVocabulary::validate_manifest(const Manifest &manifes
     {
         for (const auto &reg : manifest.regions)
         {
-            if (reg.suppress_vocab_warning)
-                continue;
             if (regions_.find(reg.name) == regions_.end())
             {
                 std::string suggestion = find_closest_match(reg.name, region_names);
@@ -231,8 +240,6 @@ std::vector<std::string> APVocabulary::validate_manifest(const Manifest &manifes
     {
         for (const auto &loc : manifest.locations)
         {
-            if (loc.suppress_vocab_warning)
-                continue;
             if (locations_.find(loc.name) == locations_.end())
             {
                 std::string suggestion = find_closest_match(loc.name, location_names);
@@ -250,8 +257,6 @@ std::vector<std::string> APVocabulary::validate_manifest(const Manifest &manifes
     {
         for (const auto &item : manifest.items)
         {
-            if (item.suppress_vocab_warning)
-                continue;
             if (items_.find(item.name) == items_.end())
             {
                 std::string suggestion = find_closest_match(item.name, item_names);
@@ -264,107 +269,81 @@ std::vector<std::string> APVocabulary::validate_manifest(const Manifest &manifes
         }
     }
 
-    // Also validate item references in requirements
+    // Validate item and region references inside logic strings
+    // Extract (Item: NAME) and (Can Access: REGION) tokens from logic expressions
+    std::set<std::string> logic_item_refs;
+    std::set<std::string> logic_region_refs;
+
+    auto extract_logic_refs = [&](const std::string &logic)
+    {
+        if (logic.empty())
+            return;
+
+        // Extract (Item: NAME) and (Item: NAME : COUNT)
+        static const std::regex item_re(R"(\(Item:\s*([^:)]+?)(?:\s*:\s*\d+)?\s*\))");
+        auto it_begin = std::sregex_iterator(logic.begin(), logic.end(), item_re);
+        auto it_end = std::sregex_iterator();
+        for (auto it = it_begin; it != it_end; ++it)
+        {
+            std::string name = (*it)[1].str();
+            // Trim whitespace
+            name.erase(0, name.find_first_not_of(" \t"));
+            name.erase(name.find_last_not_of(" \t") + 1);
+            if (!name.empty())
+                logic_item_refs.insert(name);
+        }
+
+        // Extract (Can Access: REGION)
+        static const std::regex region_re(R"(\(Can Access:\s*([^)]+?)\s*\))");
+        auto rg_begin = std::sregex_iterator(logic.begin(), logic.end(), region_re);
+        auto rg_end = std::sregex_iterator();
+        for (auto rg = rg_begin; rg != rg_end; ++rg)
+        {
+            std::string name = (*rg)[1].str();
+            name.erase(0, name.find_first_not_of(" \t"));
+            name.erase(name.find_last_not_of(" \t") + 1);
+            if (!name.empty())
+                logic_region_refs.insert(name);
+        }
+    };
+
+    // Collect logic strings from regions and locations
+    for (const auto &reg : manifest.regions)
+        extract_logic_refs(reg.logic);
+    for (const auto &loc : manifest.locations)
+        extract_logic_refs(loc.logic);
+
+    // Validate item references from logic
     if (!items_.empty())
     {
-        auto validate_item_refs = [&](const std::vector<std::string> &refs, const std::string &context)
+        for (const auto &ref : logic_item_refs)
         {
-            for (const auto &ref : refs)
+            if (items_.find(ref) == items_.end())
             {
-                if (items_.find(ref) == items_.end())
-                {
-                    std::string suggestion = find_closest_match(ref, item_names);
-                    std::string msg = "[Vocabulary] Mod '" + manifest.mod_id + "': " + context +
-                                      " references item '" + ref + "' not in vocabulary";
-                    if (!suggestion.empty())
-                        msg += " (did you mean '" + suggestion + "'?)";
-                    warnings.push_back(msg);
-                }
-            }
-        };
-
-        for (const auto &loc : manifest.locations)
-        {
-            validate_item_refs(loc.requires_all, "location '" + loc.name + "'");
-            validate_item_refs(loc.requires_any, "location '" + loc.name + "'");
-            for (const auto &rc : loc.requires_count)
-            {
-                if (items_.find(rc.item) == items_.end())
-                {
-                    std::string suggestion = find_closest_match(rc.item, item_names);
-                    std::string msg = "[Vocabulary] Mod '" + manifest.mod_id + "': location '" +
-                                      loc.name + "' requires_count references item '" + rc.item +
-                                      "' not in vocabulary";
-                    if (!suggestion.empty())
-                        msg += " (did you mean '" + suggestion + "'?)";
-                    warnings.push_back(msg);
-                }
+                std::string suggestion = find_closest_match(ref, item_names);
+                std::string msg = "[Vocabulary] Mod '" + manifest.mod_id +
+                                  "': logic references item '" + ref + "' not in vocabulary";
+                if (!suggestion.empty())
+                    msg += " (did you mean '" + suggestion + "'?)";
+                warnings.push_back(msg);
             }
         }
     }
 
-    return warnings;
-}
-
-std::vector<std::string> APVocabulary::apply_region_defaults(std::vector<RegionDef> &regions,
-                                                             const std::vector<LocationOwnership> &locations,
-                                                             const std::string &manifest_mod_id) const
-{
-    std::vector<std::string> warnings;
-
-    if (!loaded_ || regions_.empty())
-        return warnings;
-
-    // Find region names used by locations that aren't already declared
-    std::set<std::string> declared_regions;
-    for (const auto &reg : regions)
-        declared_regions.insert(reg.name);
-
-    std::set<std::string> used_regions;
-    for (const auto &loc : locations)
+    // Validate region references from logic
+    if (!regions_.empty())
     {
-        if (!loc.region.empty())
-            used_regions.insert(loc.region);
-    }
-
-    // For each used region not declared by any manifest
-    for (const auto &region_name : used_regions)
-    {
-        if (declared_regions.count(region_name) > 0)
-            continue;
-
-        auto vocab_it = regions_.find(region_name);
-        if (vocab_it == regions_.end())
-            continue;
-
-        // Apply vocabulary defaults
-        RegionDef inherited;
-        inherited.name = vocab_it->second.name;
-        inherited.requires_all = vocab_it->second.requires_all;
-        inherited.requires_any = vocab_it->second.requires_any;
-        inherited.requires_count = vocab_it->second.requires_count;
-        regions.push_back(inherited);
-
-        // Build description of inherited requirements for warning
-        std::string req_desc;
-        if (!inherited.requires_all.empty())
+        for (const auto &ref : logic_region_refs)
         {
-            req_desc += "requires: [";
-            for (size_t i = 0; i < inherited.requires_all.size(); ++i)
+            if (regions_.find(ref) == regions_.end())
             {
-                if (i > 0)
-                    req_desc += ", ";
-                req_desc += "\"" + inherited.requires_all[i] + "\"";
+                std::string suggestion = find_closest_match(ref, region_names);
+                std::string msg = "[Vocabulary] Mod '" + manifest.mod_id +
+                                  "': logic references region '" + ref + "' not in vocabulary";
+                if (!suggestion.empty())
+                    msg += " (did you mean '" + suggestion + "'?)";
+                warnings.push_back(msg);
             }
-            req_desc += "]";
-        }
-
-        if (!req_desc.empty())
-        {
-            warnings.push_back(
-                "[Vocabulary] Mod '" + manifest_mod_id + "' uses region '" + region_name +
-                "' without declaring requirements - inheriting defaults from Regions.json (" +
-                req_desc + "). Consider declaring requirements explicitly.");
         }
     }
 

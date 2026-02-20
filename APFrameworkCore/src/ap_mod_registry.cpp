@@ -1,9 +1,11 @@
 #include "ap_mod_registry.h"
+#include "ap_config.h"
 #include "ap_logger.h"
 #include "ap_path_util.h"
 
 #include <nlohmann/json.hpp>
 #include <regex>
+#include <set>
 
 namespace ap
 {
@@ -291,6 +293,16 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
         manifest.version = j.value("version", "1.0.0");
         manifest.enabled = j.value("enabled", true);
         manifest.description = j.value("description", "");
+        manifest.vocab_validation = j.value("vocab_validation", false);
+
+        // Parse depends array
+        if (j.contains("depends") && j["depends"].is_array())
+        {
+            for (const auto &dep : j["depends"])
+            {
+                manifest.depends.push_back(dep.get<std::string>());
+            }
+        }
 
         // Parse incompatibility rules
         if (j.contains("incompatible") && j["incompatible"].is_array())
@@ -359,15 +371,8 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                 {
                     RegionDef def;
                     def.name = reg.value("name", "");
-                    parse_requirements(reg, def.requires_all, def.requires_any, def.requires_count);
+                    def.logic = reg.value("logic", "");
                     def.requires_option = reg.value("requires_option", "");
-
-                    // Handle ^ prefix
-                    if (!def.name.empty() && def.name[0] == '^')
-                    {
-                        def.name = def.name.substr(1);
-                        def.suppress_vocab_warning = true;
-                    }
 
                     if (!def.name.empty())
                     {
@@ -384,17 +389,9 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     LocationDef def;
                     def.name = loc.value("name", "");
                     def.amount = loc.value("amount", 1);
-                    def.unique = loc.value("unique", false);
                     def.region = loc.value("region", "");
-                    parse_requirements(loc, def.requires_all, def.requires_any, def.requires_count);
+                    def.logic = loc.value("logic", "");
                     def.requires_option = loc.value("requires_option", "");
-
-                    // Handle ^ prefix
-                    if (!def.name.empty() && def.name[0] == '^')
-                    {
-                        def.name = def.name.substr(1);
-                        def.suppress_vocab_warning = true;
-                    }
 
                     if (!def.name.empty())
                     {
@@ -414,13 +411,6 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.amount = item.value("amount", 1);
                     def.action = item.value("action", "");
                     def.requires_option = item.value("requires_option", "");
-
-                    // Handle ^ prefix
-                    if (!def.name.empty() && def.name[0] == '^')
-                    {
-                        def.name = def.name.substr(1);
-                        def.suppress_vocab_warning = true;
-                    }
 
                     // Parse action args
                     if (item.contains("args") && item["args"].is_array())
@@ -462,56 +452,159 @@ std::optional<Manifest> APModRegistry::parse_manifest_file(const std::filesystem
     {
         return std::nullopt;
     }
-    return parse_manifest(content);
+
+    // Process includes before parsing: resolve external logic files and merge
+    // into the capabilities JSON so parse_manifest() sees final merged data.
+    try
+    {
+        nlohmann::json j = nlohmann::json::parse(content);
+
+        if (j.contains("capabilities") && j["capabilities"].is_object())
+        {
+            auto &caps = j["capabilities"];
+
+            if (caps.contains("include") && caps["include"].is_array())
+            {
+                auto manifest_dir = file_path.parent_path();
+                std::set<std::string> visited;
+                resolve_includes(caps, manifest_dir, visited);
+            }
+        }
+
+        // Serialize back and parse
+        return parse_manifest(j.dump());
+    }
+    catch (const nlohmann::json::exception &e)
+    {
+        APLogger::get()->log(LogLevel::Error, "APModRegistry",
+                             "JSON error processing includes for " + file_path.string() + ": " + e.what());
+        return std::nullopt;
+    }
 }
 
 // =============================================================================
-// Requirement Parsing Helper
+// Include Resolution
 // =============================================================================
 
-void APModRegistry::parse_requirements(const nlohmann::json &j,
-                                       std::vector<std::string> &out_requires,
-                                       std::vector<std::string> &out_requires_any,
-                                       std::vector<CountRequirement> &out_requires_count)
+void APModRegistry::resolve_includes(nlohmann::json &caps,
+                                     const std::filesystem::path &manifest_dir,
+                                     std::set<std::string> &visited) const
 {
-    // Parse "requires": ["A", "B"] — need ALL (AND)
-    if (j.contains("requires") && j["requires"].is_array())
+    if (!caps.contains("include") || !caps["include"].is_array())
+        return;
+
+    auto includes = caps["include"];
+    caps.erase("include"); // Remove include key — final JSON has no references
+
+    // Build Templates/<game>/logic/ path for shared logic fallback
+    std::filesystem::path shared_logic_dir;
+    auto framework_folder = APPathUtil::get()->find_framework_mod_folder();
+    if (framework_folder)
     {
-        for (const auto &req : j["requires"])
-        {
-            std::string name = req.get<std::string>();
-            // Strip ^ prefix from item references too
-            if (!name.empty() && name[0] == '^')
-                name = name.substr(1);
-            out_requires.push_back(name);
-        }
+        std::string game_name = APConfig::get()->get_game_name();
+        shared_logic_dir = *framework_folder / "Templates" / game_name / "logic";
     }
 
-    // Parse "requires_any": ["A", "B"] — need ANY (OR)
-    if (j.contains("requires_any") && j["requires_any"].is_array())
+    for (const auto &inc : includes)
     {
-        for (const auto &req : j["requires_any"])
-        {
-            std::string name = req.get<std::string>();
-            if (!name.empty() && name[0] == '^')
-                name = name.substr(1);
-            out_requires_any.push_back(name);
-        }
-    }
+        if (!inc.is_string())
+            continue;
 
-    // Parse "requires_count": [{"item": "XP", "count": 5}] — need N of item
-    if (j.contains("requires_count") && j["requires_count"].is_array())
-    {
-        for (const auto &rc : j["requires_count"])
+        std::string include_path_str = inc.get<std::string>();
+
+        // Resolve path: local first, then shared logic
+        std::filesystem::path resolved;
+        auto local_path = manifest_dir / include_path_str;
+        if (APPathUtil::get()->file_exists(local_path))
         {
-            CountRequirement cr;
-            cr.item = rc.value("item", "");
-            cr.count = rc.value("count", 1);
-            // Strip ^ prefix from item references
-            if (!cr.item.empty() && cr.item[0] == '^')
-                cr.item = cr.item.substr(1);
-            if (!cr.item.empty())
-                out_requires_count.push_back(cr);
+            resolved = local_path;
+        }
+        else if (!shared_logic_dir.empty())
+        {
+            auto shared_path = shared_logic_dir / include_path_str;
+            if (APPathUtil::get()->file_exists(shared_path))
+            {
+                resolved = shared_path;
+            }
+        }
+
+        if (resolved.empty())
+        {
+            APLogger::get()->log(LogLevel::Warn, "APModRegistry",
+                                 "Include file not found: " + include_path_str);
+            continue;
+        }
+
+        // Circular include detection
+        std::string canonical = resolved.string();
+        if (visited.count(canonical) > 0)
+        {
+            APLogger::get()->log(LogLevel::Error, "APModRegistry",
+                                 "Circular include detected: " + canonical);
+            continue;
+        }
+        visited.insert(canonical);
+
+        // Load the included file
+        std::string file_content = APPathUtil::get()->read_file(resolved);
+        if (file_content.empty())
+        {
+            APLogger::get()->log(LogLevel::Warn, "APModRegistry",
+                                 "Include file empty or unreadable: " + canonical);
+            continue;
+        }
+
+        try
+        {
+            nlohmann::json included = nlohmann::json::parse(file_content);
+
+            // Recurse: included files can also have includes
+            if (included.contains("include") && included["include"].is_array())
+            {
+                resolve_includes(included, resolved.parent_path(), visited);
+            }
+
+            // Merge arrays: included content first, then manifest's own
+            if (included.contains("regions") && included["regions"].is_array())
+            {
+                nlohmann::json merged = included["regions"];
+                if (caps.contains("regions") && caps["regions"].is_array())
+                {
+                    for (const auto &r : caps["regions"])
+                        merged.push_back(r);
+                }
+                caps["regions"] = merged;
+            }
+
+            if (included.contains("locations") && included["locations"].is_array())
+            {
+                nlohmann::json merged = included["locations"];
+                if (caps.contains("locations") && caps["locations"].is_array())
+                {
+                    for (const auto &l : caps["locations"])
+                        merged.push_back(l);
+                }
+                caps["locations"] = merged;
+            }
+
+            if (included.contains("items") && included["items"].is_array())
+            {
+                nlohmann::json merged = included["items"];
+                if (caps.contains("items") && caps["items"].is_array())
+                {
+                    for (const auto &i : caps["items"])
+                        merged.push_back(i);
+                }
+                caps["items"] = merged;
+            }
+
+            APLogger::get()->log(LogLevel::Debug, "APModRegistry",
+                                 "Resolved include: " + include_path_str + " -> " + canonical);
+        }
+        catch (const nlohmann::json::exception &e)
+        {
+            APLogger::get()->log(LogLevel::Error, "APModRegistry",
+                                 "Failed to parse include " + canonical + ": " + e.what());
         }
     }
 }

@@ -5,7 +5,9 @@
 
 #include <filesystem>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -200,14 +202,16 @@ class AP_API APModRegistry
     // =========================================================================
 
     /**
-     * @brief Parse requires, requires_any, requires_count from a JSON object.
+     * @brief Resolve include directives in capabilities JSON.
      *
-     * Common to locations, regions, and potentially other entry types.
+     * Processes "include" arrays, loading external JSON files and merging
+     * their regions/locations/items arrays into the capabilities object.
+     * Search path: manifest directory first, then Templates/<game>/logic/.
+     * Supports transitive includes with circular detection.
      */
-    static void parse_requirements(const nlohmann::json &j,
-                                   std::vector<std::string> &out_requires,
-                                   std::vector<std::string> &out_requires_any,
-                                   std::vector<CountRequirement> &out_requires_count);
+    void resolve_includes(nlohmann::json &caps,
+                          const std::filesystem::path &manifest_dir,
+                          std::set<std::string> &visited) const;
 
     // =========================================================================
     // Private Member Variables

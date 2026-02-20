@@ -18,12 +18,6 @@ class APFrameworkLocation(Location):
     game: str = "APFramework"  # Will be overridden per-game
 
 
-class CountRequirement(NamedTuple):
-    """Requirement for N of a specific item."""
-    item: str
-    count: int
-
-
 class LocationData(NamedTuple):
     """Data structure for location definitions."""
     code: int
@@ -31,10 +25,8 @@ class LocationData(NamedTuple):
     mod_id: str
     instance: int  # Instance number for multi-instance locations
     region: str  # Region this location belongs to (default: "Main")
-    requires_all: List[str] = []     # ALL required items (AND)
-    requires_any: List[str] = []     # ANY required items (OR)
-    requires_count: List[CountRequirement] = []  # N of item required
-    requires_option: str = ""        # Option conditional
+    logic: str = ""              # Logic expression string
+    requires_option: str = ""    # Simple boolean option filter (convenience shorthand)
 
 
 def build_location_table(capabilities: dict) -> Dict[str, LocationData]:
@@ -65,23 +57,14 @@ def build_location_table(capabilities: dict) -> Dict[str, LocationData]:
         instance = loc_data.get("instance", 1)
         display_name = f"{name} #{instance}" if name_counts[name] > 1 else name
 
-        # Parse requires_count entries
-        requires_count_raw = loc_data.get("requires_count", [])
-        requires_count = [
-            CountRequirement(item=rc["item"], count=rc.get("count", 1))
-            for rc in requires_count_raw
-        ]
-
         location_table[display_name] = LocationData(
             code=loc_data["id"],
             name=display_name,
             mod_id=loc_data.get("mod_id", ""),
             instance=instance,
             region=loc_data.get("region", "Main"),
-            requires_all=loc_data.get("requires", []),
-            requires_any=loc_data.get("requires_any", []),
-            requires_count=requires_count,
-            requires_option=loc_data.get("requires_option", "")
+            logic=loc_data.get("logic", ""),
+            requires_option=loc_data.get("requires_option", ""),
         )
 
     return location_table

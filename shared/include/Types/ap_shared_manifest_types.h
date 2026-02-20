@@ -48,25 +48,13 @@ struct ActionResult {
 };
 
 // =============================================================================
-// Count Requirement (for requires_count logic)
-// =============================================================================
-
-struct CountRequirement {
-    std::string item;
-    int count = 1;
-};
-
-// =============================================================================
 // Region Definition (capabilities)
 // =============================================================================
 
 struct RegionDef {
     std::string name;
-    std::vector<std::string> requires_all;   // ALL required (AND)
-    std::vector<std::string> requires_any;   // ANY required (OR)
-    std::vector<CountRequirement> requires_count; // N of item required
+    std::string logic;                       // Logic expression string
     std::string requires_option;             // Option conditional
-    bool suppress_vocab_warning = false;     // True if name was ^-prefixed
 };
 
 // =============================================================================
@@ -76,13 +64,9 @@ struct RegionDef {
 struct LocationDef {
     std::string name;
     int amount = 1;
-    bool unique = false;
     std::string region;                      // Region this location belongs to
-    std::vector<std::string> requires_all;   // ALL required (AND)
-    std::vector<std::string> requires_any;   // ANY required (OR)
-    std::vector<CountRequirement> requires_count; // N of item required
+    std::string logic;                       // Logic expression string
     std::string requires_option;             // Option conditional
-    bool suppress_vocab_warning = false;     // True if name was ^-prefixed
 };
 
 // =============================================================================
@@ -96,7 +80,6 @@ struct ItemDef {
     std::string action;
     std::vector<ActionArg> args;
     std::string requires_option;             // Option conditional
-    bool suppress_vocab_warning = false;     // True if name was ^-prefixed
 };
 
 // =============================================================================
@@ -138,6 +121,8 @@ struct Manifest {
     std::string version;
     bool enabled = true;
     std::string description;
+    bool vocab_validation = false;           // Opt-in vocabulary validation
+    std::vector<std::string> depends;        // Mod IDs this mod depends on
     std::vector<IncompatibilityRule> incompatible;
     std::vector<RegionDef> regions;
     std::vector<LocationDef> locations;

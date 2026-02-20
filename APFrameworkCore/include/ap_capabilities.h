@@ -91,15 +91,6 @@ class AP_API APCapabilities
     ValidationResult validate() const;
 
     /**
-     * @brief Apply vocabulary defaults (region requirements from Templates/<game>/Regions.json).
-     *
-     * Should be called after all manifests are added and before config generation.
-     * Loads vocabulary files and merges region defaults into regions_.
-     * Returns warnings about implicit inheritance.
-     */
-    std::vector<std::string> apply_vocabulary_defaults();
-
-    /**
      * @brief Get list of detected conflicts.
      * @return Vector of conflicts.
      */

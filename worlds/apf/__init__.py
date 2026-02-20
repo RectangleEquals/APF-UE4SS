@@ -11,7 +11,7 @@ To create a game-specific world:
 3. Optionally override methods to add game-specific logic
 """
 
-from typing import Dict, List, Any, ClassVar, Set
+from typing import Dict, Any, ClassVar, Set
 import base64
 import json
 
@@ -19,7 +19,8 @@ from BaseClasses import Item, Location, Region, Tutorial, ItemClassification, Mu
 from worlds.AutoWorld import World, WebWorld
 
 from .Items import APFrameworkItem, ItemData, build_item_table, get_filler_items, get_trap_items
-from .Locations import APFrameworkLocation, LocationData, CountRequirement, build_location_table
+from .Locations import APFrameworkLocation, LocationData, build_location_table
+from .LogicParser import is_always_false
 from .Options import APFrameworkOptions
 from .Rules import set_rules, set_completion_rules
 
@@ -68,7 +69,7 @@ class APFrameworkWorld(World):
 
     item_table: Dict[str, ItemData]
     location_table: Dict[str, LocationData]
-    region_table: Dict[str, Dict[str, Any]]  # region_name -> {requires_all, requires_any, requires_count, requires_option}
+    region_table: Dict[str, str]  # region_name -> logic expression string
     capabilities: Dict[str, Any]
     id_remapping: Dict[int, int]
 
@@ -111,8 +112,9 @@ class APFrameworkWorld(World):
         except Exception as e:
             raise Exception(f"[{self.game}] Failed to decode capabilities_data: {e}")
 
-        # Filter capabilities by requires_option before building tables
+        # Filter capabilities by requires_option and logic before building tables
         self._filter_by_requires_option()
+        self._filter_by_logic()
 
         # Build item and location tables
         self.item_table = build_item_table(self.capabilities)
@@ -212,31 +214,47 @@ class APFrameworkWorld(World):
         if "regions" in self.capabilities:
             self.capabilities["regions"] = _filter_list(self.capabilities.get("regions", []))
 
-    def _build_region_table(self) -> Dict[str, Dict[str, Any]]:
+    def _filter_by_logic(self) -> None:
+        """Filter capabilities entries whose logic evaluates to always-False.
+
+        After requires_option filtering, some entries may still have logic
+        containing (Option: ...) expressions that simplify to False. These
+        entries should be removed from the pool entirely rather than creating
+        locations with never-satisfiable rules.
+        """
+        # Build option values dict for logic evaluation
+        option_values = {}
+        for attr_name in dir(self.options):
+            if attr_name.startswith("_"):
+                continue
+            opt = getattr(self.options, attr_name, None)
+            if hasattr(opt, "value"):
+                option_values[attr_name] = opt.value
+
+        def _keep(entry: dict) -> bool:
+            logic = entry.get("logic", "")
+            return not is_always_false(logic, option_values)
+
+        self.capabilities["locations"] = [
+            e for e in self.capabilities.get("locations", []) if _keep(e)]
+        if "regions" in self.capabilities:
+            self.capabilities["regions"] = [
+                e for e in self.capabilities.get("regions", []) if _keep(e)]
+
+    def _build_region_table(self) -> Dict[str, str]:
         """Build region table from capabilities regions data.
 
         Returns:
-            Dict mapping region name to requirement data:
-            {
-                "requires_all": [...],
-                "requires_any": [...],
-                "requires_count": [CountRequirement(...)],
-            }
+            Dict mapping region name to logic expression string.
+            Logic is already OR-merged by the C++ capabilities config
+            when multiple mods contribute to the same region.
         """
-        region_table: Dict[str, Dict[str, Any]] = {}
+        region_table: Dict[str, str] = {}
 
         for region_data in self.capabilities.get("regions", []):
             name = region_data["name"]
-            requires_count_raw = region_data.get("requires_count", [])
-            requires_count = [
-                CountRequirement(item=rc["item"], count=rc.get("count", 1))
-                for rc in requires_count_raw
-            ]
-            region_table[name] = {
-                "requires_all": region_data.get("requires", []),
-                "requires_any": region_data.get("requires_any", []),
-                "requires_count": requires_count,
-            }
+            logic = region_data.get("logic", "")
+            region_table[name] = logic
 
         return region_table
 
@@ -322,9 +340,7 @@ class APFrameworkWorld(World):
                 mod_id=data.mod_id,
                 instance=data.instance,
                 region=data.region,
-                requires_all=data.requires_all,
-                requires_any=data.requires_any,
-                requires_count=data.requires_count,
+                logic=data.logic,
                 requires_option=data.requires_option,
             )
         self.location_table = new_location_table

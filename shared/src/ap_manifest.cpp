@@ -61,7 +61,9 @@ bool APManifest::load(const std::filesystem::path& mod_folder) {
                 LocationDef def;
                 def.name = loc.value("name", "");
                 def.amount = loc.value("amount", 1);
-                def.unique = loc.value("unique", false);
+                def.region = loc.value("region", "");
+                def.logic = loc.value("logic", "");
+                def.requires_option = loc.value("requires_option", "");
                 if (!def.name.empty()) {
                     manifest_.locations.push_back(def);
                 }

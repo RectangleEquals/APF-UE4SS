@@ -117,9 +117,7 @@ struct LocationOwnership {
   int64_t location_id = 0;
   int instance = 1;
   std::string region;                                // Region this location belongs to
-  std::vector<std::string> requires_all;              // ALL required (AND)
-  std::vector<std::string> requires_any;             // ANY required (OR)
-  std::vector<CountRequirement> requires_count;      // N of item required
+  std::string logic;                                 // Logic expression string
   std::string requires_option;                       // Option conditional
 };
 
@@ -247,9 +245,7 @@ struct CapabilitiesConfigLocation {
   std::string mod_id;
   int instance = 1;
   std::string region;                                // Region name
-  std::vector<std::string> requires_all;              // ALL required (AND)
-  std::vector<std::string> requires_any;             // ANY required (OR)
-  std::vector<CountRequirement> requires_count;      // N of item required
+  std::string logic;                                 // Logic expression string
   std::string requires_option;                       // Option conditional
 };
 
@@ -264,9 +260,7 @@ struct CapabilitiesConfigItem {
 
 struct CapabilitiesConfigRegion {
   std::string name;
-  std::vector<std::string> requires_all;              // ALL required (AND)
-  std::vector<std::string> requires_any;             // ANY required (OR)
-  std::vector<CountRequirement> requires_count;      // N of item required
+  std::string logic;                                 // Logic expression string
   std::string requires_option;                       // Option conditional
 };
 
@@ -313,17 +307,8 @@ struct CapabilitiesConfig {
     for (const auto &region : capabilities.regions) {
       nlohmann::ordered_json r;
       r["name"] = region.name;
-      if (!region.requires_all.empty())
-        r["requires"] = region.requires_all;
-      if (!region.requires_any.empty())
-        r["requires_any"] = region.requires_any;
-      if (!region.requires_count.empty()) {
-        nlohmann::ordered_json rc_arr = nlohmann::ordered_json::array();
-        for (const auto &rc : region.requires_count) {
-          rc_arr.push_back({{"item", rc.item}, {"count", rc.count}});
-        }
-        r["requires_count"] = rc_arr;
-      }
+      if (!region.logic.empty())
+        r["logic"] = region.logic;
       if (!region.requires_option.empty())
         r["requires_option"] = region.requires_option;
       regions_arr.push_back(r);
@@ -341,17 +326,8 @@ struct CapabilitiesConfig {
       l["instance"] = loc.instance;
       if (!loc.region.empty())
         l["region"] = loc.region;
-      if (!loc.requires_all.empty())
-        l["requires"] = loc.requires_all;
-      if (!loc.requires_any.empty())
-        l["requires_any"] = loc.requires_any;
-      if (!loc.requires_count.empty()) {
-        nlohmann::ordered_json rc_arr = nlohmann::ordered_json::array();
-        for (const auto &rc : loc.requires_count) {
-          rc_arr.push_back({{"item", rc.item}, {"count", rc.count}});
-        }
-        l["requires_count"] = rc_arr;
-      }
+      if (!loc.logic.empty())
+        l["logic"] = loc.logic;
       if (!loc.requires_option.empty())
         l["requires_option"] = loc.requires_option;
       locs_arr.push_back(l);

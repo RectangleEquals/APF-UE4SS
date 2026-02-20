@@ -5,13 +5,14 @@
  * @brief Game vocabulary loading and validation for the AP Framework.
  *
  * Loads optional vocabulary files from Templates/<game_name>/:
- * - Regions.json: canonical region names with default requirements
- * - Items.json: canonical item names with types
- * - Locations.json: canonical location names with regions
+ * - Regions.json: canonical region names
+ * - Items.json: canonical item names
+ * - Locations.json: canonical location names
  *
- * When vocabulary is present, the framework validates manifest names against it
- * with fuzzy suggestions for typos. The ^ prefix suppresses warnings for
- * intentionally non-vocabulary names.
+ * Vocabulary is naming conventions only — no logic, no requirements.
+ * Validation is opt-in per manifest (vocab_validation: true).
+ * When enabled, the framework validates manifest names against vocabulary
+ * with fuzzy suggestions for typos.
  *
  * Vocabulary is advisory, not enforced — validation produces warnings, not errors.
  */
@@ -27,27 +28,22 @@ namespace ap
 {
 
 // =============================================================================
-// Vocabulary Entry Types
+// Vocabulary Entry Types (name-only, no logic)
 // =============================================================================
 
 struct VocabRegion
 {
     std::string name;
-    std::vector<std::string> requires_all;
-    std::vector<std::string> requires_any;
-    std::vector<CountRequirement> requires_count;
 };
 
 struct VocabItem
 {
     std::string name;
-    std::string type; // "progression", "useful", "filler", "trap"
 };
 
 struct VocabLocation
 {
     std::string name;
-    std::string region;
 };
 
 // =============================================================================
@@ -77,27 +73,10 @@ class APVocabulary
      * @param manifest Manifest to validate.
      * @return Vector of warning messages. Empty if all names are valid or no vocabulary loaded.
      *
-     * Rules:
-     * - Names in vocabulary: accepted, no warning
-     * - Names not in vocabulary without ^ prefix: WARNING with fuzzy suggestions
-     * - Names with suppress_vocab_warning=true (was ^-prefixed): accepted, no warning
-     * - No vocabulary loaded: all names accepted
+     * Only runs if manifest has vocab_validation=true.
+     * Extracts item/region names from logic strings for validation.
      */
     std::vector<std::string> validate_manifest(const Manifest &manifest) const;
-
-    /**
-     * @brief Apply region default requirements from vocabulary.
-     * @param regions Mutable reference to regions vector — vocabulary defaults are merged in.
-     * @param manifest_mod_id Mod ID for logging purposes.
-     * @return Vector of warning messages about implicit inheritance.
-     *
-     * If a location references a region that's in the vocabulary but not declared
-     * by the mod, the vocabulary region (with its default requirements) is added
-     * and a warning is logged encouraging explicit declaration.
-     */
-    std::vector<std::string> apply_region_defaults(std::vector<RegionDef> &regions,
-                                                   const std::vector<LocationOwnership> &locations,
-                                                   const std::string &manifest_mod_id) const;
 
     // Getters for vocabulary entries
     std::vector<VocabRegion> get_regions() const;

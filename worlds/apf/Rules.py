@@ -1,119 +1,104 @@
 """
 Access rules for the AP Framework World.
 
-Rules are built from declarative requirements in the capabilities config:
-- requires (AND): All listed items must be collected
-- requires_any (OR): At least one listed item must be collected
-- requires_count: N copies of a specific item must be collected
+Rules are built from logic expression strings parsed by LogicParser.
+Logic expressions support:
+- (Item: Name)          — has at least 1 of item
+- (Item: Name : N)      — has at least N of item
+- (Can Access: Region)  — can reach a region
+- (Option: Name)        — boolean option check (resolved at generation time)
+- (Option: Name OP Val) — option comparison (resolved at generation time)
+- AND, OR, True, False, grouping with ()
 
 Logic is only applied when logic_mode is "basic". When "none", all locations
 are accessible from the start (Sphere 0 behavior).
 """
 
-from typing import TYPE_CHECKING, Callable, Dict, List
-from BaseClasses import CollectionState
+from typing import TYPE_CHECKING, Dict, Any
 from worlds.generic.Rules import set_rule
+
+from . import LogicParser
 
 if TYPE_CHECKING:
     from . import APFrameworkWorld
-    from .Locations import CountRequirement
 
 
-def build_rule(
-    player: int,
-    requires_all: List[str],
-    requires_any: List[str],
-    requires_count: List["CountRequirement"],
-) -> Callable[[CollectionState], bool]:
-    """
-    Build a combined access rule lambda from declarative requirements.
-
-    Args:
-        player: Player number
-        requires_all: Items that ALL must be collected (AND)
-        requires_any: Items where at least ONE must be collected (OR)
-        requires_count: Items where N copies must be collected
-
-    Returns:
-        Lambda that checks the CollectionState
-    """
-    def rule(state: CollectionState) -> bool:
-        # Check AND requirements
-        for item_name in requires_all:
-            if not state.has(item_name, player):
-                return False
-
-        # Check OR requirements
-        if requires_any:
-            if not any(state.has(item_name, player) for item_name in requires_any):
-                return False
-
-        # Check count requirements
-        for cr in requires_count:
-            if not state.has(cr.item, player, cr.count):
-                return False
-
-        return True
-
-    return rule
-
-
-def has_requirements(
-    requires_all: List[str],
-    requires_any: List[str],
-    requires_count: list,
-) -> bool:
-    """Check if any requirements are specified."""
-    return bool(requires_all or requires_any or requires_count)
+def _collect_option_values(world: "APFrameworkWorld") -> Dict[str, Any]:
+    """Collect all option values into a dict for logic evaluation."""
+    options_dict: Dict[str, Any] = {}
+    for attr_name in dir(world.options):
+        if attr_name.startswith('_'):
+            continue
+        opt = getattr(world.options, attr_name, None)
+        if opt is not None and hasattr(opt, 'value'):
+            options_dict[attr_name] = opt.value
+    return options_dict
 
 
 def set_rules(world: "APFrameworkWorld") -> None:
     """
-    Set access rules for regions and locations based on capabilities config.
+    Set access rules for regions and locations based on logic expressions.
 
     Only applies rules when logic_mode is "basic". When "none", all locations
     remain accessible from the start.
     """
-    # Check logic mode
     if world.options.logic_mode.value == 0:  # none
         return
 
+    options = _collect_option_values(world)
+
     # Apply region entrance rules
-    for region_name, region_data in world.region_table.items():
-        if region_name == "Menu":
+    for region_name, region_logic in world.region_table.items():
+        if region_name == "Menu" or not region_logic:
             continue
 
-        if has_requirements(
-            region_data.get("requires_all", []),
-            region_data.get("requires_any", []),
-            region_data.get("requires_count", []),
-        ):
-            # Find the entrance to this region
-            region = world.multiworld.get_region(region_name, world.player)
-            for entrance in region.entrances:
-                set_rule(
-                    entrance,
-                    build_rule(
-                        world.player,
-                        region_data.get("requires_all", []),
-                        region_data.get("requires_any", []),
-                        region_data.get("requires_count", []),
-                    ),
-                )
+        rule = LogicParser.parse_and_compile(region_logic, world.player, options)
+        if rule is None:
+            continue  # Always accessible, no rule needed
+
+        region = world.multiworld.get_region(region_name, world.player)
+
+        # Register indirect conditions for (Can Access: ...) references
+        ast = LogicParser.parse(region_logic)
+        if options:
+            ast = LogicParser.evaluate_options(ast, options)
+            ast = LogicParser.simplify(ast)
+        for ref_name in LogicParser.extract_region_refs(ast):
+            try:
+                ref_region = world.multiworld.get_region(ref_name, world.player)
+                for entrance in region.entrances:
+                    world.multiworld.register_indirect_condition(ref_region, entrance)
+            except KeyError:
+                pass  # Referenced region doesn't exist — caught by AP validation
+
+        for entrance in region.entrances:
+            set_rule(entrance, rule)
 
     # Apply per-location rules
     for loc_name, loc_data in world.location_table.items():
-        if has_requirements(loc_data.requires_all, loc_data.requires_any, loc_data.requires_count):
-            location = world.multiworld.get_location(loc_name, world.player)
-            set_rule(
-                location,
-                build_rule(
-                    world.player,
-                    loc_data.requires_all,
-                    loc_data.requires_any,
-                    loc_data.requires_count,
-                ),
-            )
+        if not loc_data.logic:
+            continue
+
+        rule = LogicParser.parse_and_compile(loc_data.logic, world.player, options)
+        if rule is None:
+            continue  # Always accessible
+
+        location = world.multiworld.get_location(loc_name, world.player)
+
+        # Register indirect conditions for (Can Access: ...) references
+        ast = LogicParser.parse(loc_data.logic)
+        if options:
+            ast = LogicParser.evaluate_options(ast, options)
+            ast = LogicParser.simplify(ast)
+        for ref_name in LogicParser.extract_region_refs(ast):
+            try:
+                ref_region = world.multiworld.get_region(ref_name, world.player)
+                for entrance in location.parent_region.entrances:
+                    world.multiworld.register_indirect_condition(ref_region, entrance)
+            except KeyError:
+                pass
+
+        set_rule(location, rule)
 
 
 def set_completion_rules(world: "APFrameworkWorld") -> None:
