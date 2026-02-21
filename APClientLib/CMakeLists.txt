@@ -8,6 +8,7 @@ set(SOURCES
     src/ap_action_executor.cpp
 	src/ap_callbacks.cpp
     src/ap_client_manager.cpp
+    src/ap_database.cpp
 )
 
 # Note: ap_path_util.h is now in APShared
@@ -17,6 +18,7 @@ set(HEADERS
 	include/ap_callbacks.h
     include/ap_ipc_client.h
     include/ap_action_executor.h
+    include/ap_database.h
 )
 
 add_library(APClientLib SHARED ${SOURCES} ${HEADERS})
@@ -35,7 +37,7 @@ target_include_directories(APClientLib
 
 target_compile_definitions(APClientLib PRIVATE AP_EXPORTS)
 
-target_link_libraries(APClientLib PRIVATE APShared lua_static)
+target_link_libraries(APClientLib PRIVATE APShared lua_static sqlite3)
 
 target_compile_options(APClientLib
     PRIVATE

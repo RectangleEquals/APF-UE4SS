@@ -42,10 +42,15 @@ def set_rules(world: "APFrameworkWorld") -> None:
     Only applies rules when logic_mode is "basic". When "none", all locations
     remain accessible from the start.
     """
+    log = world.log
+
     if world.options.logic_mode.value == 0:  # none
+        log.debug("Logic mode is 'none' — skipping rules", "Rules")
         return
 
     options = _collect_option_values(world)
+    region_rule_count = 0
+    location_rule_count = 0
 
     # Apply region entrance rules
     for region_name, region_logic in world.region_table.items():
@@ -73,6 +78,8 @@ def set_rules(world: "APFrameworkWorld") -> None:
 
         for entrance in region.entrances:
             set_rule(entrance, rule)
+        region_rule_count += 1
+        log.trace(f"Region rule: {region_name} <- {region_logic}", "Rules")
 
     # Apply per-location rules
     for loc_name, loc_data in world.location_table.items():
@@ -99,23 +106,92 @@ def set_rules(world: "APFrameworkWorld") -> None:
                 pass
 
         set_rule(location, rule)
+        location_rule_count += 1
+        log.trace(f"Location rule: {loc_name} <- {loc_data.logic}", "Rules")
+
+    log.info(
+        f"Applied {region_rule_count} region rules, "
+        f"{location_rule_count} location rules",
+        "Rules",
+    )
 
 
 def set_completion_rules(world: "APFrameworkWorld") -> None:
     """
     Set the completion condition for the world.
 
-    Looks for a well-known completion location (Victory, Goal, etc.).
-    Falls back to requiring the Main region to be reachable.
+    Priority:
+    1. Goal system — if goals are defined in capabilities and a goal option exists,
+       use the selected goal's logic expression as the completion condition.
+    2. Well-known completion location (Victory, Goal, Completion, Win).
+    3. Fallback: reaching the Main region.
     """
+    log = world.log
+
+    # Check for goal system
+    goals = world.capabilities.get("goals", [])
+    if goals:
+        selected_goal_name = None
+
+        # Check if a goal option was set by the player
+        goal_opt = getattr(world.options, "goal", None)
+        if goal_opt is not None and hasattr(goal_opt, "value"):
+            # The option value might be an int index or a string name
+            val = goal_opt.value
+            if isinstance(val, int):
+                # Choice options store the index — find the matching name
+                goal_names = [g["name"] for g in goals]
+                if 0 <= val < len(goal_names):
+                    selected_goal_name = goal_names[val]
+            else:
+                selected_goal_name = str(val)
+        elif len(goals) == 1:
+            # Only one goal — use it directly
+            selected_goal_name = goals[0]["name"]
+
+        if selected_goal_name:
+            # Find the matching goal's logic
+            for goal in goals:
+                if goal["name"] == selected_goal_name:
+                    logic = goal.get("logic", "")
+                    if logic and logic != "True":
+                        options = _collect_option_values(world)
+                        rule = LogicParser.parse_and_compile(
+                            logic, world.player, options)
+                        if rule is not None:
+                            world.multiworld.completion_condition[world.player] = rule
+                            log.info(
+                                f"Completion: goal '{selected_goal_name}' "
+                                f"with logic: {logic}",
+                                "Rules",
+                            )
+                            return
+                    # logic is "True" or empty — any state completes
+                    world.multiworld.completion_condition[world.player] = \
+                        lambda state: True
+                    log.info(
+                        f"Completion: goal '{selected_goal_name}' (always true)",
+                        "Rules",
+                    )
+                    return
+
+        log.debug(
+            f"{len(goals)} goals defined but none selected — trying fallbacks",
+            "Rules",
+        )
+
+    # Fallback: well-known completion locations
     completion_location_names = ["Victory", "Goal", "Completion", "Win"]
 
     for name in completion_location_names:
         if name in world.location_table:
             world.multiworld.completion_condition[world.player] = \
-                lambda state, loc_name=name: state.can_reach(loc_name, "Location", world.player)
+                lambda state, loc_name=name: state.can_reach(
+                    loc_name, "Location", world.player)
+            log.info(f"Completion: well-known location '{name}'", "Rules")
             return
 
-    # Fallback: completion when Main region is reachable
+    # Final fallback: completion when Main region is reachable
     world.multiworld.completion_condition[world.player] = \
         lambda state: state.can_reach_region("Main", world.player)
+    log.debug("Completion: fallback to Main region reachable", "Rules")

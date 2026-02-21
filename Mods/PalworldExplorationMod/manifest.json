@@ -1,0 +1,20 @@
+{
+    "mod_id": "spectrecular.palworld.exploration",
+    "name": "Palworld Exploration Mode",
+    "version": "1.0.0",
+    "enabled": true,
+    "capabilities": {
+        "regions": [
+            { "name": "Post-Grass Boss", "logic": "(Item: Explorer's Pass) AND (Item: Compass)" }
+        ],
+        "items": [
+            { "name": "Explorer's Pass", "type": "progression", "amount": 1 },
+            { "name": "Compass", "type": "useful", "amount": 1 }
+        ],
+        "locations": [
+            { "name": "Discovery: Hidden Grassland Cave", "region": "Post-Grass Boss" },
+            { "name": "Discovery: Ancient Ruins", "region": "Post-Grass Boss",
+              "logic": "(Item: Explorer's Pass : 2)" }
+        ]
+    }
+}

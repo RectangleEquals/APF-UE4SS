@@ -41,17 +41,17 @@ bool APManifest::load(const std::filesystem::path& mod_folder) {
         manifest_.enabled = j.value("enabled", true);
         manifest_.description = j.value("description", "");
 
-        // Incompatibility rules
+        // Incompatible — unified Dependency format (same as depends)
         if (j.contains("incompatible") && j["incompatible"].is_array()) {
             for (const auto& inc : j["incompatible"]) {
-                IncompatibilityRule rule;
-                rule.id = inc.value("id", "");
-                if (inc.contains("versions") && inc["versions"].is_array()) {
-                    for (const auto& v : inc["versions"]) {
-                        rule.versions.push_back(v.get<std::string>());
-                    }
-                }
-                manifest_.incompatible.push_back(rule);
+                manifest_.incompatible.push_back(Dependency::parse(inc.get<std::string>()));
+            }
+        }
+
+        // Depends — unified Dependency with optional semver constraints
+        if (j.contains("depends") && j["depends"].is_array()) {
+            for (const auto& dep : j["depends"]) {
+                manifest_.depends.push_back(Dependency::parse(dep.get<std::string>()));
             }
         }
 

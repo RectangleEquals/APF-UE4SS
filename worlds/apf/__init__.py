@@ -20,6 +20,7 @@ from worlds.AutoWorld import World, WebWorld
 
 from .Items import APFrameworkItem, ItemData, build_item_table, get_filler_items, get_trap_items
 from .Locations import APFrameworkLocation, LocationData, build_location_table
+from .Logger import APFLogger
 from .LogicParser import is_always_false
 from .Options import APFrameworkOptions
 from .Rules import set_rules, set_completion_rules
@@ -72,6 +73,7 @@ class APFrameworkWorld(World):
     region_table: Dict[str, str]  # region_name -> logic expression string
     capabilities: Dict[str, Any]
     id_remapping: Dict[int, int]
+    log: APFLogger
 
     # Item/Location name to ID mappings (required by Archipelago)
     item_name_to_id: ClassVar[Dict[str, int]] = {}
@@ -88,6 +90,7 @@ class APFrameworkWorld(World):
         self.region_table = {}
         self.capabilities = {}
         self.id_remapping = {}
+        self.log = APFLogger()  # default warn level until generate_early
 
     # =========================================================================
     # World Generation
@@ -98,6 +101,14 @@ class APFrameworkWorld(World):
         Decode base64 capabilities data and set up item/location tables.
         Called before item/location creation.
         """
+        # Initialize logger from YAML options
+        log_level = getattr(self.options, "apf_log", None)
+        log_file = getattr(self.options, "apf_logfile", None)
+        self.log = APFLogger(
+            min_level=log_level.current_key if log_level else "warn",
+            logfile=log_file.value if log_file else "",
+        )
+
         cap_data = self.options.capabilities_data.value
         if not cap_data:
             raise Exception(
@@ -115,6 +126,9 @@ class APFrameworkWorld(World):
         # Filter capabilities by requires_option and logic before building tables
         self._filter_by_requires_option()
         self._filter_by_logic()
+
+        # Apply item overrides (cross-mod item type changes)
+        self._apply_item_overrides()
 
         # Build item and location tables
         self.item_table = build_item_table(self.capabilities)
@@ -143,18 +157,27 @@ class APFrameworkWorld(World):
         # ClassVars are still {}). We must refresh it after populating the tables.
         self._update_data_package()
 
-        # Diagnostic logging for data package debugging
-        print(f"[APFramework DEBUG] generate_early complete:")
-        print(f"  item_name_to_id ({len(self.__class__.item_name_to_id)} entries): "
-              f"{dict(list(self.__class__.item_name_to_id.items())[:5])}")
-        print(f"  location_name_to_id ({len(self.__class__.location_name_to_id)} entries): "
-              f"{dict(list(self.__class__.location_name_to_id.items())[:5])}")
-        print(f"  regions: {list(self.region_table.keys())}")
-        print(f"  logic_mode: {'basic' if self.options.logic_mode.value == 1 else 'none'}")
+        # Statistics summary
+        logic_str = "basic" if self.options.logic_mode.value == 1 else "none"
+        self.log.info(
+            f"generate_early complete: {len(self.item_table)} items, "
+            f"{len(self.location_table)} locations, "
+            f"{len(self.region_table)} regions, "
+            f"logic_mode={logic_str}",
+            "World",
+        )
+        goals = self.capabilities.get("goals", [])
+        overrides = self.capabilities.get("item_overrides", [])
+        if goals or overrides:
+            self.log.info(
+                f"  {len(goals)} goals, {len(overrides)} item overrides",
+                "World",
+            )
 
     def _process_capabilities(self, data: dict) -> dict:
         """Unwrap nested structure and validate."""
-        # The C++ framework nests locations/items/regions under a "capabilities" key
+        # The C++ framework nests locations/items/regions/goals/item_overrides
+        # under a "capabilities" key
         if "capabilities" in data and isinstance(data["capabilities"], dict):
             caps = data["capabilities"]
             if "regions" in caps:
@@ -163,6 +186,10 @@ class APFrameworkWorld(World):
                 data["locations"] = caps["locations"]
             if "items" in caps:
                 data["items"] = caps["items"]
+            if "goals" in caps:
+                data["goals"] = caps["goals"]
+            if "item_overrides" in caps:
+                data["item_overrides"] = caps["item_overrides"]
 
         required = ["version", "game", "locations", "items", "checksum"]
         for field in required:
@@ -177,8 +204,9 @@ class APFrameworkWorld(World):
         requires_option condition not satisfied by the player's chosen options.
 
         Condition formats:
-        - "opt_name"         -> include if option is truthy (non-zero, non-empty, true)
-        - "opt_name=value"   -> include if option equals the specific value
+        - "opt_name"             -> include if option is truthy (non-zero, non-empty, true)
+        - "opt_name=value"       -> include if option equals the specific value
+        - "opt_name=val1|val2"   -> include if option equals any of the alternatives
         """
         def _check_condition(condition: str) -> bool:
             if "=" in condition:
@@ -195,24 +223,44 @@ class APFrameworkWorld(World):
 
             value = opt.value
             if expected is not None:
-                # Exact match — compare as string (handles Choice display names and Range values)
-                return str(value).lower() == expected.lower()
+                # Support pipe-separated alternatives: "opt=val1|val2"
+                alternatives = [a.strip().lower() for a in expected.split("|")]
+                return str(value).lower() in alternatives
             else:
                 # Truthy check
                 return bool(value)
 
-        def _filter_list(entries: list) -> list:
+        def _filter_list(entries: list, kind: str) -> list:
             result = []
             for entry in entries:
                 condition = entry.get("requires_option", "")
                 if not condition or _check_condition(condition):
                     result.append(entry)
+                else:
+                    self.log.debug(
+                        f"Filtered {kind} '{entry.get('name', '?')}' "
+                        f"(requires_option: {condition})",
+                        "Filter",
+                    )
             return result
 
-        self.capabilities["locations"] = _filter_list(self.capabilities.get("locations", []))
-        self.capabilities["items"] = _filter_list(self.capabilities.get("items", []))
+        locs_before = len(self.capabilities.get("locations", []))
+        items_before = len(self.capabilities.get("items", []))
+        self.capabilities["locations"] = _filter_list(
+            self.capabilities.get("locations", []), "location")
+        self.capabilities["items"] = _filter_list(
+            self.capabilities.get("items", []), "item")
         if "regions" in self.capabilities:
-            self.capabilities["regions"] = _filter_list(self.capabilities.get("regions", []))
+            self.capabilities["regions"] = _filter_list(
+                self.capabilities.get("regions", []), "region")
+        locs_after = len(self.capabilities["locations"])
+        items_after = len(self.capabilities["items"])
+        if locs_before != locs_after or items_before != items_after:
+            self.log.info(
+                f"requires_option: filtered {locs_before - locs_after}/{locs_before} locs, "
+                f"{items_before - items_after}/{items_before} items",
+                "Filter",
+            )
 
     def _filter_by_logic(self) -> None:
         """Filter capabilities entries whose logic evaluates to always-False.
@@ -231,15 +279,75 @@ class APFrameworkWorld(World):
             if hasattr(opt, "value"):
                 option_values[attr_name] = opt.value
 
-        def _keep(entry: dict) -> bool:
+        removed_count = 0
+
+        def _keep(entry: dict, kind: str) -> bool:
+            nonlocal removed_count
             logic = entry.get("logic", "")
-            return not is_always_false(logic, option_values)
+            if is_always_false(logic, option_values):
+                self.log.debug(
+                    f"Removed always-false {kind} '{entry.get('name', '?')}': {logic}",
+                    "Filter",
+                )
+                removed_count += 1
+                return False
+            return True
 
         self.capabilities["locations"] = [
-            e for e in self.capabilities.get("locations", []) if _keep(e)]
+            e for e in self.capabilities.get("locations", [])
+            if _keep(e, "location")]
         if "regions" in self.capabilities:
             self.capabilities["regions"] = [
-                e for e in self.capabilities.get("regions", []) if _keep(e)]
+                e for e in self.capabilities.get("regions", [])
+                if _keep(e, "region")]
+        if removed_count:
+            self.log.info(
+                f"logic filter: removed {removed_count} always-false entries",
+                "Filter",
+            )
+
+    def _apply_item_overrides(self) -> None:
+        """Apply cross-mod item type overrides.
+
+        When Mod B declares an item_override targeting Mod A's item, the target
+        item's type is changed if the override's requires_option condition is met.
+        """
+        overrides = self.capabilities.get("item_overrides", [])
+        if not overrides:
+            return
+
+        for ovr in overrides:
+            target_item = ovr.get("target_item", "")
+            target_mod = ovr.get("target_mod", "")
+            new_type = ovr.get("type", "")
+            condition = ovr.get("requires_option", "")
+
+            if not target_item or not new_type:
+                continue
+
+            # Check if condition is satisfied
+            if condition:
+                opt = getattr(self.options, condition, None)
+                if opt is None or not bool(opt.value):
+                    self.log.debug(
+                        f"Override skipped: '{target_item}' "
+                        f"(requires_option '{condition}' not met)",
+                        "Override",
+                    )
+                    continue  # Condition not met — skip this override
+
+            # Find and modify the target item in capabilities
+            for item in self.capabilities.get("items", []):
+                name_match = item.get("name", "") == target_item
+                mod_match = not target_mod or item.get("mod_id", "") == target_mod
+                if name_match and mod_match:
+                    old_type = item.get("type", "?")
+                    item["type"] = new_type
+                    self.log.info(
+                        f"Item override: '{target_item}' {old_type} -> {new_type} "
+                        f"(by {ovr.get('source_mod', 'unknown')})",
+                        "Override",
+                    )
 
     def _build_region_table(self) -> Dict[str, str]:
         """Build region table from capabilities regions data.
@@ -278,11 +386,13 @@ class APFrameworkWorld(World):
         import worlds
         worlds.network_data_package["games"][self.game] = self.__class__.get_data_package_data()
 
-        print(f"[APFramework DEBUG] Data package updated:")
         dp = worlds.network_data_package["games"][self.game]
-        print(f"  items: {len(dp.get('item_name_to_id', {}))}, "
-              f"locations: {len(dp.get('location_name_to_id', {}))}, "
-              f"checksum: {dp.get('checksum', 'N/A')}")
+        self.log.debug(
+            f"Data package updated: {len(dp.get('item_name_to_id', {}))} items, "
+            f"{len(dp.get('location_name_to_id', {}))} locations, "
+            f"checksum={dp.get('checksum', 'N/A')}",
+            "DataPackage",
+        )
 
     def check_id_conflicts(self) -> None:
         """Check for ID conflicts with other worlds and remap if necessary."""
@@ -416,6 +526,12 @@ class APFrameworkWorld(World):
             menu_region.connect(region)
             self.multiworld.regions.append(region)
 
+        loc_count = sum(len(r.locations) for r in regions.values())
+        self.log.info(
+            f"Created {len(regions)} regions with {loc_count} locations",
+            "Regions",
+        )
+
     def create_item(self, name: str) -> APFrameworkItem:
         """Create an item by name. Required by Archipelago for pre-fill and similar."""
         item_data = self.item_table.get(name)
@@ -425,42 +541,105 @@ class APFrameworkWorld(World):
                                self.item_name_to_id.get(name, 0), self.player)
 
     def create_items(self) -> None:
-        """Create items and add to item pool."""
-        # Count total locations
+        """Create items and add to item pool.
+
+        Balances the pool so len(itempool) == len(locations):
+        - Over-budget: culls lowest-priority items (trap < filler < useful).
+          Never culls progression — that indicates a manifest bug.
+        - Under-budget: fills remaining slots with filler/trap items.
+        """
+        import random
+
         total_locations = len(self.location_table)
 
-        # Create defined items first
-        items_created = 0
-        filler_item_names = []
+        # --- Count phase ---
+        # Separate fixed items (count >= 1) from filler templates (count == -1)
+        fixed_items: list[tuple[str, ItemData]] = []
+        filler_item_names: list[str] = []
 
         for item_name, item_data in self.item_table.items():
             if item_data.count == -1:
-                # This is a filler item - save for later
                 filler_item_names.append(item_name)
-                continue
+            else:
+                for _ in range(item_data.count):
+                    fixed_items.append((item_name, item_data))
 
-            # Create specified count of this item
-            for _ in range(item_data.count):
-                item = APFrameworkItem(
-                    item_name,
-                    item_data.classification,
-                    item_data.code,
-                    self.player
+        fixed_count = len(fixed_items)
+        self.log.debug(
+            f"Pool budget: {fixed_count} fixed items, "
+            f"{len(filler_item_names)} filler templates, "
+            f"{total_locations} locations",
+            "Items",
+        )
+
+        # --- Over-budget cull ---
+        if fixed_count > total_locations:
+            excess = fixed_count - total_locations
+            self.log.warn(
+                f"Over-budget by {excess}: {fixed_count} fixed items > "
+                f"{total_locations} locations — culling lowest priority",
+                "Items",
+            )
+
+            # Priority: trap(0) < filler(1) < useful(2) < progression(3)
+            _PRIORITY = {
+                ItemClassification.trap: 0,
+                ItemClassification.filler: 1,
+                ItemClassification.useful: 2,
+                ItemClassification.progression: 3,
+            }
+
+            # Sort: lowest priority first; within same priority, highest index
+            # first so we cull duplicates before unique entries
+            fixed_items.sort(
+                key=lambda pair: (_PRIORITY.get(pair[1].classification, 1), -pair[1].count),
+            )
+
+            culled = 0
+            remaining_items: list[tuple[str, ItemData]] = []
+            for name, data in fixed_items:
+                if culled < excess and _PRIORITY.get(data.classification, 1) < 3:
+                    self.log.warn(f"Culled item: '{name}' ({data.classification.name})", "Items")
+                    culled += 1
+                else:
+                    remaining_items.append((name, data))
+
+            if culled < excess:
+                raise Exception(
+                    f"[{self.game}] Cannot balance item pool: {excess} excess items "
+                    f"but only {culled} non-progression items available to cull. "
+                    f"This is a manifest configuration error."
                 )
-                self.multiworld.itempool.append(item)
-                items_created += 1
 
-        # Fill remaining slots with filler items
-        remaining = total_locations - items_created
+            fixed_items = remaining_items
 
+        # --- Create fixed items ---
+        prog_count = 0
+        useful_count = 0
+        filler_count = 0
+        trap_count = 0
+
+        for item_name, item_data in fixed_items:
+            item = APFrameworkItem(
+                item_name, item_data.classification, item_data.code, self.player
+            )
+            self.multiworld.itempool.append(item)
+            if item_data.classification == ItemClassification.progression:
+                prog_count += 1
+            elif item_data.classification == ItemClassification.useful:
+                useful_count += 1
+            elif item_data.classification == ItemClassification.trap:
+                trap_count += 1
+            else:
+                filler_count += 1
+
+        # --- Under-budget fill ---
+        remaining = total_locations - len(fixed_items)
         if remaining > 0 and filler_item_names:
-            # Get trap chance
             trap_chance = self.options.trap_item_chance.value / 100.0
             trap_items = get_trap_items(self.item_table)
 
-            import random
-            for i in range(remaining):
-                # Determine if this should be a trap
+            for _ in range(remaining):
                 if trap_items and random.random() < trap_chance:
                     item_name = random.choice(trap_items)
                 else:
@@ -468,12 +647,26 @@ class APFrameworkWorld(World):
 
                 item_data = self.item_table[item_name]
                 item = APFrameworkItem(
-                    item_name,
-                    item_data.classification,
-                    item_data.code,
-                    self.player
+                    item_name, item_data.classification, item_data.code, self.player
                 )
                 self.multiworld.itempool.append(item)
+                if item_data.classification == ItemClassification.trap:
+                    trap_count += 1
+                else:
+                    filler_count += 1
+
+        # --- Log composition ---
+        total_created = prog_count + useful_count + filler_count + trap_count
+        self.log.info(
+            f"Item pool: {prog_count} progression, {useful_count} useful, "
+            f"{filler_count} filler, {trap_count} trap = {total_created} total "
+            f"for {total_locations} locations",
+            "Items",
+        )
+
+        assert total_created == total_locations, (
+            f"Item pool size mismatch: {total_created} items != {total_locations} locations"
+        )
 
     def set_rules(self) -> None:
         """Set access rules for locations."""
@@ -483,10 +676,12 @@ class APFrameworkWorld(World):
     def fill_slot_data(self) -> Dict[str, Any]:
         """Return data to be sent to the client."""
         slot_data = {"id_remapping": self.id_remapping}
-        print(f"[APFramework DEBUG] fill_slot_data called:")
-        print(f"  id_remapping: {self.id_remapping}")
-        print(f"  item_name_to_id: {len(self.__class__.item_name_to_id)} entries")
-        print(f"  location_name_to_id: {len(self.__class__.location_name_to_id)} entries")
+        self.log.debug(
+            f"fill_slot_data: {len(self.id_remapping)} remaps, "
+            f"{len(self.__class__.item_name_to_id)} items, "
+            f"{len(self.__class__.location_name_to_id)} locations",
+            "SlotData",
+        )
         return slot_data
 
     def get_filler_item_name(self) -> str:

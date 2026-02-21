@@ -54,6 +54,8 @@ size_t APModRegistry::discover_manifests()
         auto manifest_path = entry.path() / "manifest.json";
         if (!APPathUtil::get()->file_exists(manifest_path))
         {
+            APLogger::get()->log(LogLevel::Trace, "APModRegistry",
+                                 "Skipped (no manifest): " + entry.path().filename().string());
             continue;
         }
 
@@ -295,30 +297,23 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
         manifest.description = j.value("description", "");
         manifest.vocab_validation = j.value("vocab_validation", false);
 
-        // Parse depends array
+        // Parse depends array — unified Dependency with optional semver constraints
+        // e.g. "some.mod", "some.mod (>=1.0.0)", "some.mod (>=1.0.0, <2.0.0)"
         if (j.contains("depends") && j["depends"].is_array())
         {
             for (const auto &dep : j["depends"])
             {
-                manifest.depends.push_back(dep.get<std::string>());
+                manifest.depends.push_back(Dependency::parse(dep.get<std::string>()));
             }
         }
 
-        // Parse incompatibility rules
+        // Parse incompatible array — same unified Dependency format
+        // e.g. "other.mod" (all versions), "other.mod (>=2.0.0)" (specific range)
         if (j.contains("incompatible") && j["incompatible"].is_array())
         {
-            for (const auto &rule : j["incompatible"])
+            for (const auto &inc : j["incompatible"])
             {
-                IncompatibilityRule inc;
-                inc.id = rule.value("id", "");
-                if (rule.contains("versions") && rule["versions"].is_array())
-                {
-                    for (const auto &ver : rule["versions"])
-                    {
-                        inc.versions.push_back(ver.get<std::string>());
-                    }
-                }
-                manifest.incompatible.push_back(inc);
+                manifest.incompatible.push_back(Dependency::parse(inc.get<std::string>()));
             }
         }
 
@@ -359,10 +354,46 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
             }
         }
 
+        // Parse goals (top-level, aggregated across all mods)
+        if (j.contains("goals") && j["goals"].is_array())
+        {
+            for (const auto &goal : j["goals"])
+            {
+                GoalDef def;
+                def.name = goal.value("name", "");
+                def.display = goal.value("display", "");
+                def.description = goal.value("description", "");
+                def.logic = goal.value("logic", "");
+
+                if (!def.name.empty())
+                {
+                    manifest.goals.push_back(def);
+                }
+            }
+        }
+
         // Parse capabilities section
         if (j.contains("capabilities") && j["capabilities"].is_object())
         {
             const auto &caps = j["capabilities"];
+
+            // Parse item_overrides (cross-mod item type overrides)
+            if (caps.contains("item_overrides") && caps["item_overrides"].is_array())
+            {
+                for (const auto &ovr : caps["item_overrides"])
+                {
+                    ItemOverrideDef def;
+                    def.target_item = ovr.value("target_item", "");
+                    def.target_mod = ovr.value("target_mod", "");
+                    def.type = ovr.value("type", "");
+                    def.requires_option = ovr.value("requires_option", "");
+
+                    if (!def.target_item.empty() && !def.type.empty())
+                    {
+                        manifest.item_overrides.push_back(def);
+                    }
+                }
+            }
 
             // Parse regions
             if (caps.contains("regions") && caps["regions"].is_array())
@@ -435,6 +466,14 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                 }
             }
         }
+
+        APLogger::get()->log(LogLevel::Debug, "APModRegistry",
+                             "Parsed " + manifest.mod_id + ": " +
+                                 std::to_string(manifest.items.size()) + " items, " +
+                                 std::to_string(manifest.locations.size()) + " locs, " +
+                                 std::to_string(manifest.regions.size()) + " regions, " +
+                                 std::to_string(manifest.goals.size()) + " goals, " +
+                                 std::to_string(manifest.item_overrides.size()) + " overrides");
 
         return manifest;
     }

@@ -146,9 +146,9 @@ public:
 
     /**
      * @brief Get incompatibility rules.
-     * @return Vector of IncompatibilityRule.
+     * @return Vector of Dependency.
      */
-    const std::vector<IncompatibilityRule>& get_incompatible() const { return manifest_.incompatible; }
+    const std::vector<Dependency>& get_incompatible() const { return manifest_.incompatible; }
 
     /**
      * @brief Get action names defined by this mod's items.

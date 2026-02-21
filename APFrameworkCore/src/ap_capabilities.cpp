@@ -270,6 +270,38 @@ void APCapabilities::add_manifest(const Manifest &manifest)
             mod_options_.push_back(opt);
         }
     }
+
+    // Collect goals (deduplicated by name, last-wins)
+    for (const auto &goal : manifest.goals)
+    {
+        bool replaced = false;
+        for (auto &existing : goals_)
+        {
+            if (existing.name == goal.name)
+            {
+                existing = goal;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced)
+        {
+            goals_.push_back(goal);
+        }
+    }
+
+    // Collect item overrides
+    for (const auto &ovr : manifest.item_overrides)
+    {
+        item_overrides_.push_back(ovr);
+    }
+
+    APLogger::get()->log(LogLevel::Debug, "APCapabilities",
+                         "Added " + manifest.mod_id + ": " +
+                             std::to_string(manifest.items.size()) + " items, " +
+                             std::to_string(manifest.locations.size()) + " locs, " +
+                             std::to_string(manifest.regions.size()) + " regions, " +
+                             std::to_string(manifest.goals.size()) + " goals");
 }
 
 void APCapabilities::clear()
@@ -278,6 +310,8 @@ void APCapabilities::clear()
     items_.clear();
     regions_.clear();
     mod_options_.clear();
+    goals_.clear();
+    item_overrides_.clear();
 }
 
 // =============================================================================
@@ -297,32 +331,31 @@ ValidationResult APCapabilities::validate() const
         manifest_map[m.mod_id] = m;
     }
 
-    // Check for incompatibilities between mods
+    APLogger::get()->log(LogLevel::Debug, "APCapabilities",
+                         "Validating " + std::to_string(manifest_map.size()) + " manifests");
+
+    // Check for incompatibilities between mods (using semver constraints)
     for (const auto &[mod_id, manifest] : manifest_map)
     {
-        for (const auto &rule : manifest.incompatible)
+        for (const auto &inc : manifest.incompatible)
         {
-            auto it = manifest_map.find(rule.id);
+            auto it = manifest_map.find(inc.mod_id);
             if (it != manifest_map.end())
             {
-                // Check version constraints
-                bool version_match = rule.versions.empty();
-                for (const auto &ver : rule.versions)
-                {
-                    if (ver == it->second.version || ver == "*")
-                    {
-                        version_match = true;
-                        break;
-                    }
-                }
-
-                if (version_match)
+                // No constraints: incompatible with ALL versions of the target mod
+                // With constraints: incompatible only with matching versions
+                if (inc.constraints.empty() || inc.version_satisfied(it->second.version))
                 {
                     Conflict conflict;
                     conflict.capability_name = "mod_incompatibility";
                     conflict.mod_id_1 = mod_id;
-                    conflict.mod_id_2 = rule.id;
-                    conflict.description = mod_id + " is incompatible with " + rule.id;
+                    conflict.mod_id_2 = inc.mod_id;
+                    std::string desc = mod_id + " is incompatible with " + inc.mod_id;
+                    if (!inc.constraints.empty())
+                    {
+                        desc += " (" + inc.constraint_string() + "), found v" + it->second.version;
+                    }
+                    conflict.description = desc;
                     result.conflicts.push_back(conflict);
                     result.valid = false;
                 }
@@ -330,19 +363,30 @@ ValidationResult APCapabilities::validate() const
         }
     }
 
-    // Validate dependencies — all listed mod_ids must be discovered and enabled
+    // Validate dependencies — mod must exist and satisfy version constraints
     for (const auto &[mod_id, manifest] : manifest_map)
     {
         for (const auto &dep : manifest.depends)
         {
-            auto it = manifest_map.find(dep);
+            auto it = manifest_map.find(dep.mod_id);
             if (it == manifest_map.end())
             {
                 Conflict conflict;
                 conflict.capability_name = "missing_dependency";
                 conflict.mod_id_1 = mod_id;
-                conflict.mod_id_2 = dep;
-                conflict.description = mod_id + " depends on " + dep + " which is not discovered/enabled";
+                conflict.mod_id_2 = dep.mod_id;
+                conflict.description = mod_id + " depends on " + dep.mod_id + " which is not discovered/enabled";
+                result.conflicts.push_back(conflict);
+                result.valid = false;
+            }
+            else if (!dep.version_satisfied(it->second.version))
+            {
+                Conflict conflict;
+                conflict.capability_name = "version_mismatch";
+                conflict.mod_id_1 = mod_id;
+                conflict.mod_id_2 = dep.mod_id;
+                conflict.description = mod_id + " depends on " + dep.mod_id +
+                    " (" + dep.constraint_string() + ") but found v" + it->second.version;
                 result.conflicts.push_back(conflict);
                 result.valid = false;
             }
@@ -406,6 +450,11 @@ ValidationResult APCapabilities::validate() const
             }
         }
     }
+
+    APLogger::get()->log(result.valid ? LogLevel::Info : LogLevel::Warn, "APCapabilities",
+                         "Validation: " + std::string(result.valid ? "passed" : "FAILED") +
+                             " (" + std::to_string(result.conflicts.size()) + " conflicts, " +
+                             std::to_string(result.warnings.size()) + " warnings)");
 
     return result;
 }
@@ -560,6 +609,29 @@ std::string APCapabilities::compute_checksum() const
             sha.update(item_type_to_string(item.type));
             sha.update(std::to_string(item.amount));
         }
+
+        // Include goals
+        for (const auto &goal : manifest.goals)
+        {
+            sha.update(goal.name);
+            sha.update(goal.logic);
+        }
+
+        // Include dependency constraints
+        for (const auto &dep : manifest.depends)
+        {
+            sha.update("dep:");
+            sha.update(dep.mod_id);
+            sha.update(dep.constraint_string());
+        }
+
+        // Include incompatibility constraints
+        for (const auto &inc : manifest.incompatible)
+        {
+            sha.update("inc:");
+            sha.update(inc.mod_id);
+            sha.update(inc.constraint_string());
+        }
     }
 
     return sha.final_hex();
@@ -633,6 +705,57 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         config.capabilities.items.push_back(cfg_item);
     }
 
+    // Add goals (track source mod_id for attribution)
+    auto manifest_map = APModRegistry::get()->get_enabled_manifests();
+    for (const auto &m : manifest_map)
+    {
+        for (const auto &goal : m.goals)
+        {
+            // Only add if this goal is in our collected goals_ (deduplication already happened)
+            bool found = false;
+            for (const auto &g : goals_)
+            {
+                if (g.name == goal.name)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (found)
+            {
+                CapabilitiesConfigGoal cfg_goal;
+                cfg_goal.name = goal.name;
+                cfg_goal.display = goal.display;
+                cfg_goal.description = goal.description;
+                cfg_goal.logic = goal.logic;
+                cfg_goal.mod_id = m.mod_id;
+                config.capabilities.goals.push_back(cfg_goal);
+            }
+        }
+    }
+
+    // Add item overrides (track source mod_id for attribution)
+    for (const auto &m : manifest_map)
+    {
+        for (const auto &ovr : m.item_overrides)
+        {
+            CapabilitiesConfigItemOverride cfg_ovr;
+            cfg_ovr.target_item = ovr.target_item;
+            cfg_ovr.target_mod = ovr.target_mod;
+            cfg_ovr.type = ovr.type;
+            cfg_ovr.requires_option = ovr.requires_option;
+            cfg_ovr.source_mod = m.mod_id;
+            config.capabilities.item_overrides.push_back(cfg_ovr);
+        }
+    }
+
+    APLogger::get()->log(LogLevel::Info, "APCapabilities",
+                         "Generated config: " + std::to_string(config.mods.size()) + " mods, " +
+                             std::to_string(config.capabilities.locations.size()) + " locs, " +
+                             std::to_string(config.capabilities.items.size()) + " items, " +
+                             std::to_string(config.capabilities.regions.size()) + " regions, " +
+                             std::to_string(config.capabilities.goals.size()) + " goals");
+
     return config;
 }
 
@@ -674,9 +797,25 @@ std::filesystem::path APCapabilities::write_capabilities_config_default() const
         std::string game_name = APConfig::get()->get_game_name();
         APGeneratedConfig::get()->load_templates(templates_dir, game_name);
 
+        // Build mod options including auto-generated goal option
+        auto options_with_goals = mod_options_;
+        if (goals_.size() > 1)
+        {
+            ManifestOptionDef goal_opt;
+            goal_opt.key = "goal";
+            goal_opt.type = "text_choice";
+            goal_opt.description = "Win condition for this game";
+            for (const auto &g : goals_)
+            {
+                goal_opt.choices.push_back(g.name);
+            }
+            goal_opt.default_value = goals_.front().name;
+            options_with_goals.push_back(goal_opt);
+        }
+
         // Merge mod-declared options into generated config
         // Priority: default_options.json < game_options.json < manifest options
-        APGeneratedConfig::get()->merge_mod_options(mod_options_);
+        APGeneratedConfig::get()->merge_mod_options(options_with_goals);
     }
 
     std::string yaml_filename = "AP_" + slot_name + ".yaml";
@@ -763,6 +902,16 @@ std::vector<RegionDef> APCapabilities::get_regions() const
 std::vector<ManifestOptionDef> APCapabilities::get_mod_options() const
 {
     return mod_options_;
+}
+
+std::vector<GoalDef> APCapabilities::get_goals() const
+{
+    return goals_;
+}
+
+std::vector<ItemOverrideDef> APCapabilities::get_item_overrides() const
+{
+    return item_overrides_;
 }
 
 } // namespace ap

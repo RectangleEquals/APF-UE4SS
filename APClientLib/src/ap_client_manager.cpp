@@ -2,6 +2,7 @@
 #include "ap_action_executor.h"
 #include "ap_callbacks.h"
 #include "ap_config.h"
+#include "ap_database.h"
 #include "ap_ipc_client.h"
 #include "ap_logger.h"
 
@@ -402,6 +403,48 @@ int APClientManager::create_lua_module(lua_State *L)
         }
 
         return APIPCClient::get()->send_message(msg);
+    };
+
+    // =========================================================================
+    // Database Functions (SQLite query interface for mods)
+    // =========================================================================
+
+    module["db_open"] = [](const std::string &path) -> bool {
+        return APDatabase::get()->open(path);
+    };
+
+    module["db_query"] = [](const std::string &sql, sol::this_state ts) -> sol::object {
+        auto *db = APDatabase::get();
+        if (!db->is_open())
+        {
+            APLogger::get()->log(LogLevel::Error, "APDatabase",
+                                 "db_query called but no database is open");
+            return sol::make_object(ts.lua_state(), sol::nil);
+        }
+
+        auto rows = db->query(sql);
+        sol::state_view lua(ts.lua_state());
+        sol::table result = lua.create_table();
+
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            sol::table row_table = lua.create_table();
+            for (const auto &[col, val] : rows[i])
+            {
+                row_table[col] = val;
+            }
+            result[static_cast<int>(i + 1)] = row_table;
+        }
+
+        return result;
+    };
+
+    module["db_close"] = []() {
+        APDatabase::get()->close();
+    };
+
+    module["db_is_open"] = []() -> bool {
+        return APDatabase::get()->is_open();
     };
 
     // =========================================================================

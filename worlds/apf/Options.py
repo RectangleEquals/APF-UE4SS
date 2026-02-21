@@ -58,6 +58,27 @@ class TrapItemChance(Range):
     default = 10
 
 
+class APFLogLevel(Choice):
+    """
+    Minimum log level for APFramework debug output.
+
+    Not included in generated YAMLs — add manually for debugging.
+    """
+    display_name = "APF Log Level"
+    option_trace = 0
+    option_debug = 1
+    option_info = 2
+    option_warn = 3
+    option_error = 4
+    default = 3
+
+
+class APFLogFile(TextChoice):
+    """File path for APFramework log output. Leave empty for console (print)."""
+    display_name = "APF Log File"
+    default = ""
+
+
 @dataclass
 class APFrameworkOptions(PerGameCommonOptions):
     """Options dataclass for AP Framework worlds."""
@@ -65,3 +86,5 @@ class APFrameworkOptions(PerGameCommonOptions):
     logic_mode: LogicMode
     filler_item_weight: FillerItemWeight
     trap_item_chance: TrapItemChance
+    apf_log: APFLogLevel
+    apf_logfile: APFLogFile

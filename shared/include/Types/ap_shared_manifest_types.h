@@ -12,6 +12,7 @@
  */
 
 #include "ap_shared_enums.h"
+#include "ap_version.h"
 
 #include <nlohmann/json.hpp>
 #include <string>
@@ -97,13 +98,29 @@ struct ManifestOptionDef {
 };
 
 // =============================================================================
-// Incompatibility Rule
+// Goal Definition (declared by mods — aggregated across all mods)
 // =============================================================================
 
-struct IncompatibilityRule {
-    std::string id;
-    std::vector<std::string> versions;
+struct GoalDef {
+    std::string name;                        // Unique identifier (e.g., "all_bosses")
+    std::string display;                     // Display name (e.g., "Defeat All Tower Bosses")
+    std::string description;                 // Description shown to player
+    std::string logic;                       // Logic expression for completion condition
 };
+
+// =============================================================================
+// Item Override Definition (Mod B conditionally changes Mod A's item type)
+// =============================================================================
+
+struct ItemOverrideDef {
+    std::string target_item;                 // Item name to override
+    std::string target_mod;                  // Mod that owns the target item
+    std::string type;                        // New item type (e.g., "filler", "progression")
+    std::string requires_option;             // Only apply when this option condition is met
+};
+
+// NOTE: IncompatibilityRule removed — both `depends` and `incompatible` now use
+// the unified Dependency struct from ap_version.h which supports semver constraints.
 
 // =============================================================================
 // Manifest (full structure)
@@ -122,12 +139,14 @@ struct Manifest {
     bool enabled = true;
     std::string description;
     bool vocab_validation = false;           // Opt-in vocabulary validation
-    std::vector<std::string> depends;        // Mod IDs this mod depends on
-    std::vector<IncompatibilityRule> incompatible;
+    std::vector<Dependency> depends;             // Mod dependencies with optional semver constraints
+    std::vector<Dependency> incompatible;        // Incompatible mods with optional semver constraints
     std::vector<RegionDef> regions;
     std::vector<LocationDef> locations;
     std::vector<ItemDef> items;
     std::vector<ManifestOptionDef> options;
+    std::vector<GoalDef> goals;              // Completion goals declared by this mod
+    std::vector<ItemOverrideDef> item_overrides; // Cross-mod item type overrides
 };
 
 } // namespace ap

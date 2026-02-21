@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(APFramework VERSION 1.0.0 LANGUAGES CXX)
+project(APFramework VERSION 1.0.0 LANGUAGES CXX C)
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
@@ -136,6 +136,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp ryml)
 
 add_subdirectory(third_party/lua-5.4.7)
+add_subdirectory(third_party/sqlite3)
 
 # Shared library (must be built before framework and client)
 add_subdirectory(shared)

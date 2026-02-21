@@ -242,6 +242,18 @@ class AP_API APCapabilities
      */
     std::vector<ManifestOptionDef> get_mod_options() const;
 
+    /**
+     * @brief Get aggregated goals from all manifests.
+     * @return Vector of goal definitions.
+     */
+    std::vector<GoalDef> get_goals() const;
+
+    /**
+     * @brief Get collected item overrides from all manifests.
+     * @return Vector of item override definitions.
+     */
+    std::vector<ItemOverrideDef> get_item_overrides() const;
+
   private:
     // =========================================================================
     // Private Member Variables (only data this class OWNS)
@@ -250,6 +262,8 @@ class AP_API APCapabilities
     std::vector<ItemOwnership> items_;
     std::vector<RegionDef> regions_;                    // Merged regions from all manifests
     std::vector<ManifestOptionDef> mod_options_;        // Collected options from all manifests
+    std::vector<GoalDef> goals_;                        // Aggregated goals from all manifests
+    std::vector<ItemOverrideDef> item_overrides_;       // Collected item overrides from all manifests
 };
 
 } // namespace ap

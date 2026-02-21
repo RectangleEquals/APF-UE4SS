@@ -264,10 +264,28 @@ struct CapabilitiesConfigRegion {
   std::string requires_option;                       // Option conditional
 };
 
+struct CapabilitiesConfigGoal {
+  std::string name;                                  // Unique identifier
+  std::string display;                               // Display name for player
+  std::string description;                           // Description shown to player
+  std::string logic;                                 // Logic expression for completion
+  std::string mod_id;                                // Mod that declared this goal
+};
+
+struct CapabilitiesConfigItemOverride {
+  std::string target_item;                           // Item name to override
+  std::string target_mod;                            // Mod that owns the target item
+  std::string type;                                  // New item type
+  std::string requires_option;                       // Condition for applying override
+  std::string source_mod;                            // Mod that declared this override
+};
+
 struct CapabilitiesData {
   std::vector<CapabilitiesConfigRegion> regions;
   std::vector<CapabilitiesConfigLocation> locations;
   std::vector<CapabilitiesConfigItem> items;
+  std::vector<CapabilitiesConfigGoal> goals;
+  std::vector<CapabilitiesConfigItemOverride> item_overrides;
 };
 
 struct CapabilitiesConfig {
@@ -348,6 +366,38 @@ struct CapabilitiesConfig {
       items_arr.push_back(it);
     }
     caps["items"] = items_arr;
+
+    // Emit goals
+    if (!capabilities.goals.empty()) {
+      nlohmann::ordered_json goals_arr = nlohmann::ordered_json::array();
+      for (const auto &goal : capabilities.goals) {
+        nlohmann::ordered_json g;
+        g["name"] = goal.name;
+        g["display"] = goal.display;
+        if (!goal.description.empty())
+          g["description"] = goal.description;
+        g["logic"] = goal.logic;
+        g["mod_id"] = goal.mod_id;
+        goals_arr.push_back(g);
+      }
+      caps["goals"] = goals_arr;
+    }
+
+    // Emit item_overrides
+    if (!capabilities.item_overrides.empty()) {
+      nlohmann::ordered_json overrides_arr = nlohmann::ordered_json::array();
+      for (const auto &ovr : capabilities.item_overrides) {
+        nlohmann::ordered_json o;
+        o["target_item"] = ovr.target_item;
+        o["target_mod"] = ovr.target_mod;
+        o["type"] = ovr.type;
+        if (!ovr.requires_option.empty())
+          o["requires_option"] = ovr.requires_option;
+        o["source_mod"] = ovr.source_mod;
+        overrides_arr.push_back(o);
+      }
+      caps["item_overrides"] = overrides_arr;
+    }
 
     j["capabilities"] = caps;
 
