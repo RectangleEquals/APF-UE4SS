@@ -3,6 +3,7 @@
 #include "ap_exports.h"
 
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <sol/sol.hpp>
 #include <string>
@@ -56,6 +57,8 @@ class AP_API APCallbacks
     void set_state_active_callback(sol::protected_function callback);
     void set_state_error_callback(sol::protected_function callback);
     void set_command_response_callback(sol::protected_function callback);
+    void set_tracker_snapshot_callback(sol::protected_function callback);
+    void set_tracker_update_callback(sol::protected_function callback);
 
     // =========================================================================
     // Callback Invocation
@@ -73,6 +76,8 @@ class AP_API APCallbacks
     void invoke_state_error(const std::string &message);
     void invoke_command_response(const std::string &command, bool success, const std::string &error,
                                  const std::string &data_json);
+    void invoke_tracker_snapshot(const nlohmann::json &payload);
+    void invoke_tracker_update(const nlohmann::json &payload);
 
     // =========================================================================
     // Clear All Callbacks
@@ -97,6 +102,11 @@ class AP_API APCallbacks
     std::optional<sol::protected_function> callback_state_active_;
     std::optional<sol::protected_function> callback_state_error_;
     std::optional<sol::protected_function> callback_command_response_;
+    std::optional<sol::protected_function> callback_tracker_snapshot_;
+    std::optional<sol::protected_function> callback_tracker_update_;
+
+    /// Recursively convert a JSON value to a Lua object
+    sol::object json_to_lua(sol::state_view &lua, const nlohmann::json &j);
 };
 
 } // namespace ap::client

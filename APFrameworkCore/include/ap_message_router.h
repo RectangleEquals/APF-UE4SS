@@ -182,6 +182,18 @@ class AP_API APMessageRouter
      */
     void broadcast_ap_message(const std::string &type, const std::string &message);
 
+    // ==========================================================================
+    // Tracker Broadcasting
+    // ==========================================================================
+
+    /**
+     * @brief Recompute tracker state and broadcast updates to subscribers.
+     *
+     * Call after any state change that affects tracker results
+     * (item progression count change, location checked, etc.)
+     */
+    void broadcast_tracker_update();
+
   private:
     // =========================================================================
     // Private Member Variables

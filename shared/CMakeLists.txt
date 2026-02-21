@@ -9,6 +9,7 @@ set(SOURCES
     src/ap_base64.cpp
     src/ap_generated_config.cpp
     src/ap_version.cpp
+    src/ap_logic_evaluator.cpp
 )
 
 set(HEADERS
@@ -32,6 +33,7 @@ set(HEADERS
     include/ap_base64.h
     include/ap_generated_config.h
     include/ap_version.h
+    include/ap_logic_evaluator.h
 )
 
 add_library(APShared STATIC ${SOURCES} ${HEADERS})

@@ -11,6 +11,7 @@ set(SOURCES
     src/ap_vocabulary.cpp
     src/ap_state_manager.cpp
     src/ap_message_router.cpp
+    src/ap_tracker_engine.cpp
     src/main.cpp
 )
 
@@ -26,6 +27,7 @@ set(HEADERS
     include/ap_vocabulary.h
     include/ap_state_manager.h
     include/ap_message_router.h
+    include/ap_tracker_engine.h
     include/thread_safe_queue.h
     include/atomic_state.h
     include/stop_token.h

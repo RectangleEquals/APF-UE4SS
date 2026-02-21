@@ -4,6 +4,7 @@
 #include "ap_ipc_server.h"
 #include "ap_logger.h"
 #include "ap_state_manager.h"
+#include "ap_tracker_engine.h"
 
 #include <chrono>
 #include <nlohmann/json.hpp>
@@ -169,6 +170,9 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
     APLogger::get()->log(LogLevel::Info, "APMessageRouter",
                          "Location checked: " + location_name + " (ID: " + std::to_string(location_id) + ")");
 
+    // Recompute tracker after location checked
+    broadcast_tracker_update();
+
     return location_id;
 }
 
@@ -189,6 +193,9 @@ void APMessageRouter::route_location_checks(const std::vector<int64_t> &location
     {
         APArchipelagoClient::get()->send_location_checks(new_checks);
         APStateManager::get()->save_state();
+
+        // Recompute tracker after location checks
+        broadcast_tracker_update();
     }
 }
 
@@ -270,6 +277,9 @@ void APMessageRouter::handle_action_result(const std::string &mod_id, const Acti
         {
             APStateManager::get()->increment_item_progression_count(result.item_id);
             APStateManager::get()->save_state();
+
+            // Recompute tracker after item progression change
+            broadcast_tracker_update();
         }
     }
     else
@@ -320,6 +330,37 @@ void APMessageRouter::broadcast_ap_message(const std::string &type, const std::s
     msg.payload = {{"type", type}, {"message", message}};
 
     APIPCServer::get()->broadcast(msg);
+}
+
+// =============================================================================
+// Tracker Broadcasting
+// =============================================================================
+
+void APMessageRouter::broadcast_tracker_update()
+{
+    auto *tracker = APTrackerEngine::get();
+    if (!tracker->is_initialized() || !tracker->has_subscribers())
+    {
+        return;
+    }
+
+    auto update = tracker->compute_update();
+    auto update_json = update.to_json();
+
+    auto subscribers = tracker->get_subscribers();
+    for (const auto &mod_id : subscribers)
+    {
+        IPCMessage msg;
+        msg.type = IPCMessageType::TRACKER_UPDATE;
+        msg.source = IPCTarget::FRAMEWORK;
+        msg.target = mod_id;
+        msg.payload = update_json;
+
+        APIPCServer::get()->send_message(mod_id, msg);
+    }
+
+    APLogger::get()->log(LogLevel::Trace, "APMessageRouter",
+                         "Tracker update broadcast to " + std::to_string(subscribers.size()) + " subscriber(s)");
 }
 
 } // namespace ap

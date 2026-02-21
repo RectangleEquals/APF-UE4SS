@@ -337,6 +337,24 @@ void APArchipelagoClient::setup_callbacks()
             }
         }
 
+        // Extract option values (from fill_slot_data in Python apworld)
+        if (slot_data.contains("option_values") && slot_data["option_values"].is_object())
+        {
+            for (const auto &[key, val] : slot_data["option_values"].items())
+            {
+                if (val.is_string())
+                {
+                    info.option_values[key] = val.get<std::string>();
+                }
+                else
+                {
+                    info.option_values[key] = val.dump();
+                }
+            }
+            APLogger::get()->log(LogLevel::Debug, "APArchipelagoClient",
+                                 "Extracted " + std::to_string(info.option_values.size()) + " option values from slot_data");
+        }
+
         slot_info_ = info;
 
         APLogger::get()->log(LogLevel::Info, "APArchipelagoClient",

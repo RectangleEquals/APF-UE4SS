@@ -674,10 +674,27 @@ class APFrameworkWorld(World):
         set_completion_rules(self)
 
     def fill_slot_data(self) -> Dict[str, Any]:
-        """Return data to be sent to the client."""
+        """Return data to be sent to the client.
+
+        Includes option_values so the C++ tracker engine can evaluate
+        (Option: ...) logic expressions at runtime with the player's
+        actual chosen YAML options.
+        """
         slot_data = {"id_remapping": self.id_remapping}
+
+        # Serialize option values for C++ logic evaluation
+        options_dict: Dict[str, str] = {}
+        for attr_name in dir(self.options):
+            if attr_name.startswith("_"):
+                continue
+            opt = getattr(self.options, attr_name, None)
+            if hasattr(opt, "value"):
+                options_dict[attr_name] = str(opt.value)
+        slot_data["option_values"] = options_dict
+
         self.log.debug(
             f"fill_slot_data: {len(self.id_remapping)} remaps, "
+            f"{len(options_dict)} options, "
             f"{len(self.__class__.item_name_to_id)} items, "
             f"{len(self.__class__.location_name_to_id)} locations",
             "SlotData",

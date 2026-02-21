@@ -1,0 +1,7 @@
+{
+    "mod_id": "archipelago.palworld.tracker",
+    "name": "Palworld Archipelago Tracker",
+    "version": "1.0.0",
+    "description": "In-game location accessibility tracker for Archipelago",
+    "enabled": true
+}

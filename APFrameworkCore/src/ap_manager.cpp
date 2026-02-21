@@ -10,6 +10,7 @@
 #include "ap_path_util.h"
 #include "ap_polling_thread.h"
 #include "ap_state_manager.h"
+#include "ap_tracker_engine.h"
 
 #include <chrono>
 #include <sstream>
@@ -476,6 +477,32 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
             cmd_reconnect();
         }
     }
+    // Tracker subscription
+    else if (msg.type == IPCMessageType::SUBSCRIBE_TRACKER)
+    {
+        auto *tracker = APTrackerEngine::get();
+        tracker->add_subscriber(client_id);
+        APLogger::get()->log(LogLevel::Info, "APManager", "Tracker subscriber added: " + client_id);
+
+        // Send full snapshot if tracker is initialized
+        if (tracker->is_initialized())
+        {
+            auto snapshot = tracker->compute_snapshot();
+
+            IPCMessage response;
+            response.type = IPCMessageType::TRACKER_SNAPSHOT;
+            response.source = IPCTarget::FRAMEWORK;
+            response.target = client_id;
+            response.payload = snapshot.to_json();
+
+            APIPCServer::get()->send_message(client_id, response);
+        }
+    }
+    else if (msg.type == IPCMessageType::UNSUBSCRIBE_TRACKER)
+    {
+        APTrackerEngine::get()->remove_subscriber(client_id);
+        APLogger::get()->log(LogLevel::Info, "APManager", "Tracker subscriber removed: " + client_id);
+    }
     // Generic command system
     else if (msg.type == IPCMessageType::COMMAND)
     {
@@ -821,6 +848,22 @@ void APManager::start_ap_connection()
         // Sync checked locations from server
         std::set<int64_t> server_checked(info.checked_locations.begin(), info.checked_locations.end());
         APStateManager::get()->set_checked_locations(server_checked);
+
+        // Initialize tracker engine with option values from slot_data
+        if (!info.option_values.empty())
+        {
+            APTrackerEngine::get()->initialize(info.option_values);
+            APLogger::get()->log(LogLevel::Info, "APManager",
+                                 "Tracker engine initialized with " + std::to_string(info.option_values.size()) +
+                                     " option values");
+        }
+        else
+        {
+            // Initialize with empty options (logic will use defaults)
+            APTrackerEngine::get()->initialize({});
+            APLogger::get()->log(LogLevel::Debug, "APManager",
+                                 "Tracker engine initialized with no option values");
+        }
     });
 
     APArchipelagoClient::get()->set_slot_refused_callback([](const std::vector<std::string> &errors) {

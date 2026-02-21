@@ -254,6 +254,33 @@ class AP_API APCapabilities
      */
     std::vector<ItemOverrideDef> get_item_overrides() const;
 
+    // ==========================================================================
+    // Region Contribution Tracking (for tracker ecosystem metadata)
+    // ==========================================================================
+
+    /**
+     * @brief Per-mod contribution to a region's logic (before OR-merge).
+     */
+    struct RegionContribution
+    {
+        std::string region_name;
+        std::string mod_id;
+        std::string logic; ///< This mod's original logic fragment
+    };
+
+    /**
+     * @brief Get all region contributions (per-mod logic before OR-merge).
+     * @return Vector of all region contributions.
+     */
+    std::vector<RegionContribution> get_all_region_contributions() const;
+
+    /**
+     * @brief Get contributions for a specific region.
+     * @param region_name Region to query.
+     * @return Vector of contributions to that region.
+     */
+    std::vector<RegionContribution> get_region_contributions(const std::string &region_name) const;
+
   private:
     // =========================================================================
     // Private Member Variables (only data this class OWNS)
@@ -264,6 +291,7 @@ class AP_API APCapabilities
     std::vector<ManifestOptionDef> mod_options_;        // Collected options from all manifests
     std::vector<GoalDef> goals_;                        // Aggregated goals from all manifests
     std::vector<ItemOverrideDef> item_overrides_;       // Collected item overrides from all manifests
+    std::vector<RegionContribution> region_contributions_; // Per-mod region logic before OR-merge
 };
 
 } // namespace ap

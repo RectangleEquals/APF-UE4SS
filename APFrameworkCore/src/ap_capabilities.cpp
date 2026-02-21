@@ -191,6 +191,12 @@ void APCapabilities::add_manifest(const Manifest &manifest)
     // are OR'd together. Each mod provides an alternative access path.
     for (const auto &reg : manifest.regions)
     {
+        // Store per-mod contribution before merging (for tracker ecosystem metadata)
+        if (!reg.logic.empty())
+        {
+            region_contributions_.push_back({reg.name, manifest.mod_id, reg.logic});
+        }
+
         bool merged = false;
         for (auto &existing : regions_)
         {
@@ -312,6 +318,7 @@ void APCapabilities::clear()
     mod_options_.clear();
     goals_.clear();
     item_overrides_.clear();
+    region_contributions_.clear();
 }
 
 // =============================================================================
@@ -912,6 +919,24 @@ std::vector<GoalDef> APCapabilities::get_goals() const
 std::vector<ItemOverrideDef> APCapabilities::get_item_overrides() const
 {
     return item_overrides_;
+}
+
+std::vector<APCapabilities::RegionContribution> APCapabilities::get_all_region_contributions() const
+{
+    return region_contributions_;
+}
+
+std::vector<APCapabilities::RegionContribution> APCapabilities::get_region_contributions(const std::string &region_name) const
+{
+    std::vector<RegionContribution> result;
+    for (const auto &contrib : region_contributions_)
+    {
+        if (contrib.region_name == region_name)
+        {
+            result.push_back(contrib);
+        }
+    }
+    return result;
 }
 
 } // namespace ap

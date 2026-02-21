@@ -9,6 +9,7 @@
  */
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,7 @@ struct SlotInfo
     std::string game;
     std::vector<int64_t> checked_locations;
     std::vector<int64_t> missing_locations;
+    std::map<std::string, std::string> option_values;
 };
 
 } // namespace ap

@@ -84,6 +84,16 @@ void APCallbacks::set_command_response_callback(sol::protected_function callback
     callback_command_response_ = callback;
 }
 
+void APCallbacks::set_tracker_snapshot_callback(sol::protected_function callback)
+{
+    callback_tracker_snapshot_ = callback;
+}
+
+void APCallbacks::set_tracker_update_callback(sol::protected_function callback)
+{
+    callback_tracker_update_ = callback;
+}
+
 // =============================================================================
 // Callback Invocation
 // =============================================================================
@@ -160,6 +170,30 @@ void APCallbacks::invoke_command_response(const std::string &command, bool succe
     });
 }
 
+void APCallbacks::invoke_tracker_snapshot(const nlohmann::json &payload)
+{
+    invoke_callback(callback_tracker_snapshot_, "on_tracker_snapshot", [&](sol::protected_function &cb) {
+        sol::state_view *lua = APClientManager::get()->get_cached_lua();
+        if (!lua)
+            return sol::protected_function_result();
+
+        sol::object lua_table = json_to_lua(*lua, payload);
+        return cb(lua_table);
+    });
+}
+
+void APCallbacks::invoke_tracker_update(const nlohmann::json &payload)
+{
+    invoke_callback(callback_tracker_update_, "on_tracker_update", [&](sol::protected_function &cb) {
+        sol::state_view *lua = APClientManager::get()->get_cached_lua();
+        if (!lua)
+            return sol::protected_function_result();
+
+        sol::object lua_table = json_to_lua(*lua, payload);
+        return cb(lua_table);
+    });
+}
+
 // =============================================================================
 // Clear All Callbacks
 // =============================================================================
@@ -177,6 +211,8 @@ void APCallbacks::clear_all()
     callback_state_active_.reset();
     callback_state_error_.reset();
     callback_command_response_.reset();
+    callback_tracker_snapshot_.reset();
+    callback_tracker_update_.reset();
 }
 
 // =============================================================================
@@ -212,6 +248,50 @@ bool APCallbacks::invoke_callback(
                              "Callback exception in " + callback_name + ": " + e.what());
         return false;
     }
+}
+
+sol::object APCallbacks::json_to_lua(sol::state_view &lua, const nlohmann::json &j)
+{
+    if (j.is_null())
+    {
+        return sol::make_object(lua.lua_state(), sol::nil);
+    }
+    if (j.is_boolean())
+    {
+        return sol::make_object(lua.lua_state(), j.get<bool>());
+    }
+    if (j.is_number_integer())
+    {
+        return sol::make_object(lua.lua_state(), j.get<int64_t>());
+    }
+    if (j.is_number_float())
+    {
+        return sol::make_object(lua.lua_state(), j.get<double>());
+    }
+    if (j.is_string())
+    {
+        return sol::make_object(lua.lua_state(), j.get<std::string>());
+    }
+    if (j.is_array())
+    {
+        sol::table tbl = lua.create_table();
+        for (size_t i = 0; i < j.size(); ++i)
+        {
+            tbl[static_cast<int>(i + 1)] = json_to_lua(lua, j[i]);
+        }
+        return tbl;
+    }
+    if (j.is_object())
+    {
+        sol::table tbl = lua.create_table();
+        for (const auto &[key, val] : j.items())
+        {
+            tbl[key] = json_to_lua(lua, val);
+        }
+        return tbl;
+    }
+
+    return sol::make_object(lua.lua_state(), sol::nil);
 }
 
 } // namespace ap::client

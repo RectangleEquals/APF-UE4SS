@@ -268,6 +268,14 @@ void APClientManager::handle_ipc_message(const ap::ClientIPCMessage &msg)
 
         callbacks->invoke_command_response(command, success, error, data.dump());
     }
+    else if (msg.type == IPCMessageType::TRACKER_SNAPSHOT)
+    {
+        callbacks->invoke_tracker_snapshot(msg.payload);
+    }
+    else if (msg.type == IPCMessageType::TRACKER_UPDATE)
+    {
+        callbacks->invoke_tracker_update(msg.payload);
+    }
 }
 
 int APClientManager::create_lua_module(lua_State *L)
@@ -406,6 +414,36 @@ int APClientManager::create_lua_module(lua_State *L)
     };
 
     // =========================================================================
+    // Tracker Functions
+    // =========================================================================
+
+    module["subscribe_tracker"] = []() -> bool {
+        if (!APIPCClient::get()->is_connected())
+            return false;
+
+        ap::ClientIPCMessage msg;
+        msg.type = IPCMessageType::SUBSCRIBE_TRACKER;
+        msg.source = APClientManager::get()->get_manifest().get_mod_id();
+        msg.target = IPCTarget::FRAMEWORK;
+        msg.payload = nlohmann::json::object();
+
+        return APIPCClient::get()->send_message(msg);
+    };
+
+    module["unsubscribe_tracker"] = []() -> bool {
+        if (!APIPCClient::get()->is_connected())
+            return false;
+
+        ap::ClientIPCMessage msg;
+        msg.type = IPCMessageType::UNSUBSCRIBE_TRACKER;
+        msg.source = APClientManager::get()->get_manifest().get_mod_id();
+        msg.target = IPCTarget::FRAMEWORK;
+        msg.payload = nlohmann::json::object();
+
+        return APIPCClient::get()->send_message(msg);
+    };
+
+    // =========================================================================
     // Database Functions (SQLite query interface for mods)
     // =========================================================================
 
@@ -467,6 +505,12 @@ int APClientManager::create_lua_module(lua_State *L)
     module["on_state_error"] = [callbacks](sol::protected_function cb) { callbacks->set_state_error_callback(cb); };
     module["on_command_response"] = [callbacks](sol::protected_function cb) {
         callbacks->set_command_response_callback(cb);
+    };
+    module["on_tracker_snapshot"] = [callbacks](sol::protected_function cb) {
+        callbacks->set_tracker_snapshot_callback(cb);
+    };
+    module["on_tracker_update"] = [callbacks](sol::protected_function cb) {
+        callbacks->set_tracker_update_callback(cb);
     };
 
     return sol::stack::push(L, module);

@@ -81,6 +81,12 @@ namespace IPCMessageType {
     constexpr const char* GET_MODS_RESPONSE         = "get_mods_response";
     constexpr const char* GET_LOGS_RESPONSE         = "get_logs_response";
     constexpr const char* GET_DATA_PACKAGE_RESPONSE = "get_data_package_response";
+
+    // Tracker Protocol
+    constexpr const char* SUBSCRIBE_TRACKER   = "subscribe_tracker";
+    constexpr const char* UNSUBSCRIBE_TRACKER = "unsubscribe_tracker";
+    constexpr const char* TRACKER_SNAPSHOT    = "tracker_snapshot";
+    constexpr const char* TRACKER_UPDATE      = "tracker_update";
 }
 
 // =============================================================================
