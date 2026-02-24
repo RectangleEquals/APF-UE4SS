@@ -148,11 +148,11 @@ local function count_by_score(locations)
 end
 
 -- ============================================================================
--- ModActor Discovery + Race Condition Handling
+-- ModActor Discovery
 -- ============================================================================
 
 --- Initialize the UI module.
---- Sets up ModActor discovery via NotifyOnNewObject and FindFirstOf fallback.
+--- Sets up ModActor discovery via hooking InitLuaInterop in the ModActor BP.
 --- @param client table  APClient reference (from APClientLib)
 function TrackerUI.init(client)
     APClient = client
@@ -160,9 +160,9 @@ function TrackerUI.init(client)
     RegisterHook("/Script/Engine.PlayerController:ClientRestart", function (Context)
         if player_controller == nil or not player_controller:IsValid() then
             player_controller = Context:get()
-
-            RegisterHook("/Game/Mods/APTracker/ModActor.ModActor_C:InitLuaInterop", function (Context)
-                tracker_actor = Context:get()
+            
+            RegisterHook("/Game/Mods/APTracker/ModActor.ModActor_C:InitLuaInterop", function (actorContext)
+                tracker_actor = actorContext:get()
                 actor_ready = tracker_actor:IsValid()
                 if actor_ready then
                     APClient.log("info", "Found existing Tracker ModActor\n")
@@ -373,20 +373,20 @@ function TrackerUI.register_keybinds(config)
 
     -- Toggle tracker panel visibility
     local toggle_key = Key[kb.toggle_panel] or Key.F1
-    RegisterKeyBind(toggle_key, function()
+    RegisterKeyBind(toggle_key, ExecuteInGameThread(function()
         if tracker_actor and tracker_actor:IsValid() then
             tracker_actor["Toggle Panel"](tracker_actor)
-        end
+        end)
     end)
 
     -- Cycle filter mode: All → Unchecked → In Logic → All ...
     local filter_key = Key[kb.cycle_filter] or Key.F2
     local current_filter = 0
-    RegisterKeyBind(filter_key, function()
+    RegisterKeyBind(filter_key, ExecuteInGameThread(function()
         if tracker_actor and tracker_actor:IsValid() then
             current_filter = (current_filter + 1) % 3
             tracker_actor["Set Filter Mode"](tracker_actor, current_filter)
-        end
+        end)
     end)
 end
 

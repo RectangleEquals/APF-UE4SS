@@ -98,6 +98,7 @@ AP_Capabilities*.json
 docs/.claude/
 docs/Architecture/InitialDesign.md
 docs/Implementation/
+docs/private/
 
 # Ignore compiled client libraries and dependencies in APFramework mod folder
 Mods/APFrameworkMod/Scripts/*.dll
