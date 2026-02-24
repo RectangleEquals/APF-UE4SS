@@ -156,29 +156,26 @@ end
 --- @param client table  APClient reference (from APClientLib)
 function TrackerUI.init(client)
     APClient = client
+    
+    RegisterHook("/Script/Engine.PlayerController:ClientRestart", function (Context)
+        if player_controller == nil or not player_controller:IsValid() then
+            player_controller = Context:get()
 
-    -- Watch for ModActor spawns (handles initial creation + recreation on map transitions)
-    NotifyOnNewObject("/Game/Mods/APTracker/ModActor.ModActor_C", function(actor)
-        tracker_actor = actor
-        actor_ready = true
-        APClient.log("info", "Tracker ModActor spawned\n")
-
-        -- If we already have tracker data buffered, push it now
-        if pending_snapshot then
-            TrackerUI.push_full_snapshot(pending_snapshot)
-            pending_snapshot = nil
+            RegisterHook("/Game/Mods/APTracker/ModActor.ModActor_C:InitLuaInterop", function (Context)
+                tracker_actor = Context:get()
+                actor_ready = tracker_actor:IsValid()
+                if actor_ready then
+                    APClient.log("info", "Found existing Tracker ModActor\n")
+                    
+                    -- If we already have tracker data buffered, push it now
+                    if pending_snapshot then
+                        TrackerUI.push_full_snapshot(pending_snapshot)
+                        pending_snapshot = nil
+                    end
+                end
+            end)
         end
     end)
-
-    -- Also try to find an existing ModActor (if BP mod loaded before this Lua mod)
-    if FindFirstOf then
-        local existing = FindFirstOf("ModActor_C")
-        if existing and existing:IsValid() then
-            tracker_actor = existing
-            actor_ready = true
-            APClient.log("info", "Found existing Tracker ModActor\n")
-        end
-    end
 
     -- Register for sort mode changes from Blueprint
     RegisterCustomEvent("APTracker_ToLua_OnSortModeChanged", function(_widget, mode)
