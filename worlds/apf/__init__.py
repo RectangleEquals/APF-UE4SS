@@ -337,17 +337,30 @@ class APFrameworkWorld(World):
                     continue  # Condition not met — skip this override
 
             # Find and modify the target item in capabilities
+            found = False
             for item in self.capabilities.get("items", []):
                 name_match = item.get("name", "") == target_item
                 mod_match = not target_mod or item.get("mod_id", "") == target_mod
                 if name_match and mod_match:
                     old_type = item.get("type", "?")
                     item["type"] = new_type
+                    found = True
                     self.log.info(
                         f"Item override: '{target_item}' {old_type} -> {new_type} "
                         f"(by {ovr.get('source_mod', 'unknown')})",
                         "Override",
                     )
+
+            if not found:
+                source = ovr.get("source_mod", "unknown")
+                target_desc = f"'{target_item}'"
+                if target_mod:
+                    target_desc += f" (mod: {target_mod})"
+                self.log.error(
+                    f"Item override failed: {target_desc} not found in capabilities "
+                    f"(declared by {source}). Check target_item/target_mod spelling.",
+                    "Override",
+                )
 
     def _build_region_table(self) -> Dict[str, str]:
         """Build region table from capabilities regions data.

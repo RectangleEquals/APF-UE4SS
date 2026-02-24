@@ -294,4 +294,60 @@ sol::object APCallbacks::json_to_lua(sol::state_view &lua, const nlohmann::json 
     return sol::make_object(lua.lua_state(), sol::nil);
 }
 
+// =============================================================================
+// Lua -> JSON Conversion
+// =============================================================================
+
+nlohmann::json APCallbacks::lua_to_json(const sol::object &obj)
+{
+    switch (obj.get_type())
+    {
+    case sol::type::nil:
+    case sol::type::none:
+        return nullptr;
+    case sol::type::boolean:
+        return obj.as<bool>();
+    case sol::type::number:
+        if (obj.is<int64_t>())
+            return obj.as<int64_t>();
+        return obj.as<double>();
+    case sol::type::string:
+        return obj.as<std::string>();
+    case sol::type::table:
+    {
+        sol::table tbl = obj.as<sol::table>();
+
+        // Detect array vs object: check if sequential integer keys 1..N
+        bool is_array = true;
+        size_t count = 0;
+        tbl.for_each([&](sol::object key, sol::object) {
+            count++;
+            if (!key.is<int>() || key.as<int>() != static_cast<int>(count))
+                is_array = false;
+        });
+
+        if (is_array && count > 0)
+        {
+            nlohmann::json arr = nlohmann::json::array();
+            for (size_t i = 1; i <= count; ++i)
+                arr.push_back(lua_to_json(tbl[static_cast<int>(i)]));
+            return arr;
+        }
+        else
+        {
+            nlohmann::json obj_json = nlohmann::json::object();
+            tbl.for_each([&](sol::object key, sol::object val) {
+                if (key.is<std::string>())
+                    obj_json[key.as<std::string>()] = lua_to_json(val);
+                else if (key.is<int>())
+                    obj_json[std::to_string(key.as<int>())] = lua_to_json(val);
+            });
+            return obj_json;
+        }
+    }
+    default:
+        return nullptr; // userdata, function, etc. -> null
+    }
+}
+
 } // namespace ap::client

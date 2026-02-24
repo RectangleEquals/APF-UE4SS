@@ -112,6 +112,12 @@ void APClientManager::update(lua_State *L)
 
     // Poll for IPC messages
     APIPCClient::get()->poll();
+
+    // Periodically clean up stale API callbacks
+    if (!pending_api_calls_.empty())
+    {
+        cleanup_stale_api_calls();
+    }
 }
 
 void APClientManager::shutdown()
@@ -126,8 +132,10 @@ void APClientManager::shutdown()
     // Disconnect IPC
     APIPCClient::get()->disconnect();
 
-    // Clear callbacks
+    // Clear callbacks and API state
     APCallbacks::get()->clear_all();
+    api_callbacks_.clear();
+    pending_api_calls_.clear();
 
     // Reset state
     current_lifecycle_state_ = "UNINITIALIZED";
@@ -275,6 +283,117 @@ void APClientManager::handle_ipc_message(const ap::ClientIPCMessage &msg)
     else if (msg.type == IPCMessageType::TRACKER_UPDATE)
     {
         callbacks->invoke_tracker_update(msg.payload);
+    }
+    else if (msg.type == IPCMessageType::API_CALL)
+    {
+        std::string func_name = msg.payload.value("function", "");
+        std::string caller = msg.payload.value("_source", "");
+        uint64_t call_id = msg.payload.value("call_id", uint64_t(0));
+        bool wants_result = msg.payload.value("wants_result", false);
+
+        auto it = api_callbacks_.find(func_name);
+        if (it == api_callbacks_.end())
+        {
+            APLogger::get()->log(LogLevel::Warn, "APClientManager",
+                                 "API function not found: " + func_name + " (from " + caller + ")");
+            if (wants_result)
+                send_api_error(caller, call_id, "Function '" + func_name + "' not registered");
+            return;
+        }
+
+        // Convert JSON args to Lua and call the function
+        sol::state_view *lua = get_cached_lua();
+        if (!lua)
+            return;
+
+        nlohmann::json args = msg.payload.value("args", nlohmann::json::array());
+        std::vector<sol::object> lua_args;
+        for (const auto &arg : args)
+            lua_args.push_back(APCallbacks::get()->json_to_lua(*lua, arg));
+
+        // pcall the handler with up to 8 args
+        sol::protected_function &handler = it->second;
+        sol::protected_function_result result;
+        switch (lua_args.size())
+        {
+        case 0:
+            result = handler();
+            break;
+        case 1:
+            result = handler(lua_args[0]);
+            break;
+        case 2:
+            result = handler(lua_args[0], lua_args[1]);
+            break;
+        case 3:
+            result = handler(lua_args[0], lua_args[1], lua_args[2]);
+            break;
+        case 4:
+            result = handler(lua_args[0], lua_args[1], lua_args[2], lua_args[3]);
+            break;
+        case 5:
+            result = handler(lua_args[0], lua_args[1], lua_args[2], lua_args[3], lua_args[4]);
+            break;
+        case 6:
+            result = handler(lua_args[0], lua_args[1], lua_args[2], lua_args[3], lua_args[4], lua_args[5]);
+            break;
+        case 7:
+            result = handler(lua_args[0], lua_args[1], lua_args[2], lua_args[3], lua_args[4], lua_args[5],
+                             lua_args[6]);
+            break;
+        case 8:
+            result = handler(lua_args[0], lua_args[1], lua_args[2], lua_args[3], lua_args[4], lua_args[5],
+                             lua_args[6], lua_args[7]);
+            break;
+        default:
+            APLogger::get()->log(LogLevel::Error, "APClientManager",
+                                 "API call with too many args (" + std::to_string(lua_args.size()) +
+                                     ") - max 8. Use a table parameter instead.");
+            if (wants_result)
+                send_api_error(caller, call_id, "Too many arguments (max 8)");
+            return;
+        }
+
+        if (wants_result)
+        {
+            if (result.valid())
+            {
+                sol::object ret = result;
+                nlohmann::json result_json = APCallbacks::lua_to_json(ret);
+                send_api_result(caller, call_id, result_json);
+            }
+            else
+            {
+                sol::error err = result;
+                send_api_error(caller, call_id, err.what());
+            }
+        }
+    }
+    else if (msg.type == IPCMessageType::API_RESULT)
+    {
+        uint64_t call_id = msg.payload.value("call_id", uint64_t(0));
+        auto it = pending_api_calls_.find(call_id);
+        if (it == pending_api_calls_.end())
+            return;
+
+        sol::protected_function callback = it->second.callback;
+        pending_api_calls_.erase(it);
+
+        sol::state_view *lua = get_cached_lua();
+        if (!lua)
+            return;
+
+        if (msg.payload.contains("error"))
+        {
+            std::string err = msg.payload["error"];
+            callback(err, sol::nil);
+        }
+        else
+        {
+            sol::object result_obj =
+                APCallbacks::get()->json_to_lua(*lua, msg.payload.value("result", nlohmann::json()));
+            callback(sol::nil, result_obj);
+        }
     }
 }
 
@@ -486,6 +605,77 @@ int APClientManager::create_lua_module(lua_State *L)
     };
 
     // =========================================================================
+    // Cross-Mod API Functions
+    // =========================================================================
+
+    module["register_api"] = [this](sol::table api_table) {
+        api_table.for_each([this](sol::object key, sol::object val) {
+            if (key.is<std::string>() && val.is<sol::protected_function>())
+            {
+                api_callbacks_[key.as<std::string>()] = val.as<sol::protected_function>();
+            }
+        });
+        APLogger::get()->log(LogLevel::Info, "APClientManager",
+                             "API registered with " + std::to_string(api_callbacks_.size()) + " functions");
+    };
+
+    module["get_api"] = [this](sol::this_state ts, const std::string &target_mod) -> sol::object {
+        sol::state_view lua(ts);
+
+        // Create proxy table with __index metamethod
+        sol::table proxy = lua.create_table();
+        sol::table mt = lua.create_table();
+
+        mt[sol::meta_function::index] = [target_mod, this](sol::this_state ts2, sol::table /*self*/,
+                                                           const std::string &func_name) -> sol::object {
+            sol::state_view lua2(ts2);
+
+            // Return a function that sends an API_CALL when invoked
+            return sol::make_object(
+                lua2, [target_mod, func_name, this](sol::variadic_args va) { invoke_api_call(target_mod, func_name, va); });
+        };
+
+        proxy[sol::metatable_key] = mt;
+        return proxy;
+    };
+
+    module["send_to"] = [this](const std::string &target_mod, sol::table payload) -> bool {
+        if (!APIPCClient::get()->is_connected())
+            return false;
+
+        ap::ClientIPCMessage msg;
+        msg.type = IPCMessageType::COMMAND;
+        msg.source = manifest_.get_mod_id();
+        msg.target = IPCTarget::FRAMEWORK;
+        msg.payload = {{"command", "send_to"}, {"payload", {{"target_mod", target_mod}}}};
+
+        // Merge Lua table into payload
+        nlohmann::json lua_payload = APCallbacks::lua_to_json(payload);
+        if (lua_payload.is_object())
+        {
+            for (auto &[key, val] : lua_payload.items())
+            {
+                msg.payload["payload"][key] = val;
+            }
+        }
+
+        return APIPCClient::get()->send_message(msg);
+    };
+
+    module["broadcast"] = [this](sol::table payload) -> bool {
+        if (!APIPCClient::get()->is_connected())
+            return false;
+
+        ap::ClientIPCMessage msg;
+        msg.type = IPCMessageType::COMMAND;
+        msg.source = manifest_.get_mod_id();
+        msg.target = IPCTarget::FRAMEWORK;
+        msg.payload = {{"command", "broadcast"}, {"payload", APCallbacks::lua_to_json(payload)}};
+
+        return APIPCClient::get()->send_message(msg);
+    };
+
+    // =========================================================================
     // Callback Registration (delegates to APCallbacks singleton)
     // =========================================================================
 
@@ -514,6 +704,105 @@ int APClientManager::create_lua_module(lua_State *L)
     };
 
     return sol::stack::push(L, module);
+}
+
+// =============================================================================
+// Cross-Mod API Helpers
+// =============================================================================
+
+void APClientManager::invoke_api_call(const std::string &target_mod, const std::string &func_name,
+                                      sol::variadic_args va)
+{
+    if (!APIPCClient::get()->is_connected())
+        return;
+
+    // Check if last arg is a callback function
+    sol::optional<sol::protected_function> callback;
+    size_t arg_count = va.size();
+    if (arg_count > 0 && va[static_cast<int>(arg_count - 1)].get_type() == sol::type::function)
+    {
+        callback = va[static_cast<int>(arg_count - 1)].as<sol::protected_function>();
+        arg_count--;
+    }
+
+    // Serialize args to JSON array
+    nlohmann::json args_json = nlohmann::json::array();
+    for (size_t i = 0; i < arg_count; ++i)
+    {
+        args_json.push_back(APCallbacks::lua_to_json(va[static_cast<int>(i)]));
+    }
+
+    uint64_t call_id = next_call_id_++;
+    bool wants_result = callback.has_value();
+
+    // Store pending callback (if any)
+    if (wants_result)
+    {
+        pending_api_calls_[call_id] = {*callback, std::chrono::steady_clock::now()};
+    }
+
+    // Send API_CALL
+    ap::ClientIPCMessage msg;
+    msg.type = IPCMessageType::API_CALL;
+    msg.source = manifest_.get_mod_id();
+    msg.target = IPCTarget::FRAMEWORK;
+    msg.payload = {{"target_mod", target_mod}, {"function", func_name},   {"args", args_json},
+                   {"call_id", call_id},       {"wants_result", wants_result}};
+    APIPCClient::get()->send_message(msg);
+}
+
+void APClientManager::send_api_result(const std::string &target_mod, uint64_t call_id,
+                                      const nlohmann::json &result_json)
+{
+    ap::ClientIPCMessage msg;
+    msg.type = IPCMessageType::API_RESULT;
+    msg.source = manifest_.get_mod_id();
+    msg.target = IPCTarget::FRAMEWORK;
+    msg.payload = {{"target_mod", target_mod}, {"call_id", call_id}, {"result", result_json}};
+    APIPCClient::get()->send_message(msg);
+}
+
+void APClientManager::send_api_error(const std::string &target_mod, uint64_t call_id, const std::string &error)
+{
+    ap::ClientIPCMessage msg;
+    msg.type = IPCMessageType::API_RESULT;
+    msg.source = manifest_.get_mod_id();
+    msg.target = IPCTarget::FRAMEWORK;
+    msg.payload = {{"target_mod", target_mod}, {"call_id", call_id}, {"error", error}};
+    APIPCClient::get()->send_message(msg);
+}
+
+void APClientManager::cleanup_stale_api_calls()
+{
+    static constexpr auto TIMEOUT = std::chrono::seconds(10);
+    auto now = std::chrono::steady_clock::now();
+
+    auto it = pending_api_calls_.begin();
+    while (it != pending_api_calls_.end())
+    {
+        if (now - it->second.created_at > TIMEOUT)
+        {
+            APLogger::get()->log(LogLevel::Warn, "APClientManager",
+                                 "API call timed out (call_id=" + std::to_string(it->first) + ")");
+
+            // Invoke callback with timeout error
+            try
+            {
+                it->second.callback("Request timed out", sol::nil);
+            }
+            catch (const std::exception &e)
+            {
+                APLogger::get()->log(LogLevel::Error, "APClientManager",
+                                     "Error invoking timeout callback: " + std::string(e.what()));
+            }
+
+            it = pending_api_calls_.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
 }
 
 } // namespace ap::client

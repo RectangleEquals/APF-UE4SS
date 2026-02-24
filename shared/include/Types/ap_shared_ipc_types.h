@@ -87,6 +87,10 @@ namespace IPCMessageType {
     constexpr const char* UNSUBSCRIBE_TRACKER = "unsubscribe_tracker";
     constexpr const char* TRACKER_SNAPSHOT    = "tracker_snapshot";
     constexpr const char* TRACKER_UPDATE      = "tracker_update";
+
+    // Cross-Mod API Protocol
+    constexpr const char* API_CALL   = "api_call";     // Client -> Framework -> Client
+    constexpr const char* API_RESULT = "api_result";   // Client -> Framework -> Client
 }
 
 // =============================================================================

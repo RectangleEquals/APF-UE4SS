@@ -20,6 +20,7 @@ local APClient = nil
 local tracker_actor = nil
 local actor_ready = false
 local pending_snapshot = nil -- Buffered snapshot if data arrives before ModActor
+local tracker_data_ref = nil -- Reference to main.lua's tracker_data (set via set_data_ref)
 
 -- ============================================================================
 -- Rich Text Formatting
@@ -178,6 +179,17 @@ function TrackerUI.init(client)
             APClient.log("info", "Found existing Tracker ModActor\n")
         end
     end
+
+    -- Register for sort mode changes from Blueprint
+    RegisterCustomEvent("APTracker_ToLua_OnSortModeChanged", function(_widget, mode)
+        TrackerUI.apply_sort(mode:get())
+    end)
+end
+
+--- Set the tracker data reference (called from main.lua after snapshot).
+--- @param data table  Reference to the main tracker_data table
+function TrackerUI.set_data_ref(data)
+    tracker_data_ref = data
 end
 
 -- ============================================================================
@@ -379,6 +391,39 @@ function TrackerUI.register_keybinds(config)
             tracker_actor["Set Filter Mode"](tracker_actor, current_filter)
         end
     end)
+end
+
+-- ============================================================================
+-- Sort Implementation
+-- ============================================================================
+
+--- Re-sort tracker data and push a full snapshot.
+--- Called via RegisterCustomEvent when BP sort button is pressed.
+--- @param mode number  Sort mode: 0=Default, 1=Alphabetical, 2=ByScore
+function TrackerUI.apply_sort(mode)
+    if not tracker_data_ref or not tracker_data_ref.locations then return end
+
+    if mode == 0 then
+        -- Default: restore original order (by region order, then original index)
+        table.sort(tracker_data_ref.locations, function(a, b)
+            if a.region ~= b.region then return a.region < b.region end
+            return (a._sort_index or 0) < (b._sort_index or 0)
+        end)
+    elseif mode == 1 then
+        -- Alphabetical within each region
+        table.sort(tracker_data_ref.locations, function(a, b)
+            if a.region ~= b.region then return a.region < b.region end
+            return a.name < b.name
+        end)
+    elseif mode == 2 then
+        -- By score descending within each region
+        table.sort(tracker_data_ref.locations, function(a, b)
+            if a.region ~= b.region then return a.region < b.region end
+            return (a.score or 0) > (b.score or 0)
+        end)
+    end
+
+    TrackerUI.push_full_snapshot(tracker_data_ref)
 end
 
 -- ============================================================================

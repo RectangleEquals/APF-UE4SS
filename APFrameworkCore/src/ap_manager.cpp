@@ -508,6 +508,15 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
     {
         handle_command(client_id, msg);
     }
+    // Cross-mod API protocol
+    else if (msg.type == IPCMessageType::API_CALL)
+    {
+        handle_api_call(client_id, msg);
+    }
+    else if (msg.type == IPCMessageType::API_RESULT)
+    {
+        handle_api_result(client_id, msg);
+    }
 }
 
 void APManager::handle_command(const std::string &client_id, const IPCMessage &msg)
@@ -516,8 +525,27 @@ void APManager::handle_command(const std::string &client_id, const IPCMessage &m
 
     APLogger::get()->log(LogLevel::Debug, "APManager", "Command received from " + client_id + ": " + command);
 
-    // Verify priority client status
-    if (!APModRegistry::get()->is_priority_client(client_id))
+    // --- Messaging tier: any registered client ---
+    if (command == "send_to" || command == "broadcast")
+    {
+        if (!APModRegistry::get()->is_registered(client_id))
+        {
+            APLogger::get()->log(LogLevel::Warn, "APManager",
+                                 "Messaging command rejected - not registered: " + client_id);
+
+            IPCMessage response;
+            response.type = IPCMessageType::COMMAND_RESPONSE;
+            response.source = IPCTarget::FRAMEWORK;
+            response.target = client_id;
+            response.payload = {{"command", command}, {"success", false}, {"error", "Not a registered client"}};
+            APIPCServer::get()->send_message(client_id, response);
+            return;
+        }
+
+        // Handle messaging commands (send_to / broadcast) below in the main dispatch
+    }
+    // --- Admin tier: priority clients only ---
+    else if (!APModRegistry::get()->is_priority_client(client_id))
     {
         APLogger::get()->log(LogLevel::Warn, "APManager", "Command rejected - not a priority client: " + client_id);
 
@@ -605,6 +633,7 @@ void APManager::handle_command(const std::string &client_id, const IPCMessage &m
             // Forward all params except routing fields as the message payload
             nlohmann::json fwd_payload = params;
             fwd_payload.erase("target_mod");
+            fwd_payload["_source"] = client_id;
 
             IPCMessage forwarded;
             forwarded.type = IPCMessageType::AP_MESSAGE;
@@ -621,6 +650,7 @@ void APManager::handle_command(const std::string &client_id, const IPCMessage &m
     else if (command == "broadcast")
     {
         nlohmann::json params = msg.payload.value("payload", nlohmann::json::object());
+        params["_source"] = client_id;
 
         IPCMessage forwarded;
         forwarded.type = IPCMessageType::AP_MESSAGE;
@@ -644,6 +674,109 @@ void APManager::handle_command(const std::string &client_id, const IPCMessage &m
     response.payload = result;
     response.payload["command"] = command;
     APIPCServer::get()->send_message(client_id, response);
+}
+
+void APManager::handle_api_call(const std::string &client_id, const IPCMessage &msg)
+{
+    std::string target_mod = msg.payload.value("target_mod", "");
+    uint64_t call_id = msg.payload.value("call_id", uint64_t(0));
+    bool wants_result = msg.payload.value("wants_result", false);
+
+    // 1. Validate caller is registered
+    if (!APModRegistry::get()->is_registered(client_id))
+    {
+        APLogger::get()->log(LogLevel::Warn, "APManager", "API call rejected - not registered: " + client_id);
+        if (wants_result)
+        {
+            IPCMessage err_msg;
+            err_msg.type = IPCMessageType::API_RESULT;
+            err_msg.source = IPCTarget::FRAMEWORK;
+            err_msg.target = client_id;
+            err_msg.payload = {{"call_id", call_id}, {"error", "Not a registered client"}};
+            APIPCServer::get()->send_message(client_id, err_msg);
+        }
+        return;
+    }
+
+    // 2. Validate depends relationship
+    auto caller_manifest = APModRegistry::get()->get_manifest(client_id);
+    bool has_dependency = false;
+    if (caller_manifest)
+    {
+        for (const auto &dep : caller_manifest->depends)
+        {
+            if (dep.mod_id == target_mod)
+            {
+                has_dependency = true;
+                break;
+            }
+        }
+    }
+    if (!has_dependency)
+    {
+        APLogger::get()->log(LogLevel::Warn, "APManager",
+                             "API call rejected - '" + client_id + "' does not depend on '" + target_mod + "'");
+        if (wants_result)
+        {
+            IPCMessage err_msg;
+            err_msg.type = IPCMessageType::API_RESULT;
+            err_msg.source = IPCTarget::FRAMEWORK;
+            err_msg.target = client_id;
+            err_msg.payload = {{"call_id", call_id},
+                               {"error", "Mod '" + client_id + "' does not declare dependency on '" + target_mod + "'"}};
+            APIPCServer::get()->send_message(client_id, err_msg);
+        }
+        return;
+    }
+
+    // 3. Validate target is connected
+    if (!APModRegistry::get()->is_registered(target_mod))
+    {
+        APLogger::get()->log(LogLevel::Warn, "APManager", "API call rejected - target not connected: " + target_mod);
+        if (wants_result)
+        {
+            IPCMessage err_msg;
+            err_msg.type = IPCMessageType::API_RESULT;
+            err_msg.source = IPCTarget::FRAMEWORK;
+            err_msg.target = client_id;
+            err_msg.payload = {{"call_id", call_id}, {"error", "Target mod not connected: " + target_mod}};
+            APIPCServer::get()->send_message(client_id, err_msg);
+        }
+        return;
+    }
+
+    // 4. Forward to target with _source injected
+    IPCMessage forwarded;
+    forwarded.type = IPCMessageType::API_CALL;
+    forwarded.source = client_id;
+    forwarded.target = target_mod;
+    forwarded.payload = msg.payload;
+    forwarded.payload["_source"] = client_id;
+    forwarded.payload.erase("target_mod");
+
+    APIPCServer::get()->send_message(target_mod, forwarded);
+
+    APLogger::get()->log(LogLevel::Debug, "APManager",
+                         "API call forwarded: " + client_id + " -> " + target_mod + "::" +
+                             msg.payload.value("function", "?"));
+}
+
+void APManager::handle_api_result(const std::string &client_id, const IPCMessage &msg)
+{
+    std::string target_mod = msg.payload.value("target_mod", "");
+
+    // Forward result back to the original caller
+    IPCMessage forwarded;
+    forwarded.type = IPCMessageType::API_RESULT;
+    forwarded.source = client_id;
+    forwarded.target = target_mod;
+    forwarded.payload = msg.payload;
+    forwarded.payload.erase("target_mod");
+
+    APIPCServer::get()->send_message(target_mod, forwarded);
+
+    APLogger::get()->log(LogLevel::Trace, "APManager",
+                         "API result forwarded: " + client_id + " -> " + target_mod);
 }
 
 void APManager::handle_framework_event(const FrameworkEvent &event)

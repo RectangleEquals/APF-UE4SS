@@ -208,11 +208,25 @@ class AP_API APManager : public IAPManager
     void handle_ipc_message(const std::string &client_id, const IPCMessage &msg);
 
     /*
-    @brief Handle a priority client command message.
+    @brief Handle a command message (messaging tier + admin tier).
     @param client_id Mod identifier.
     @param msg IPC message.
     */
     void handle_command(const std::string &client_id, const IPCMessage &msg);
+
+    /*
+    @brief Route a cross-mod API call (validates depends, forwards to target).
+    @param client_id Calling mod identifier.
+    @param msg IPC message with API_CALL payload.
+    */
+    void handle_api_call(const std::string &client_id, const IPCMessage &msg);
+
+    /*
+    @brief Forward a cross-mod API result back to the caller.
+    @param client_id Responding mod identifier.
+    @param msg IPC message with API_RESULT payload.
+    */
+    void handle_api_result(const std::string &client_id, const IPCMessage &msg);
 
     /*
     @brief Handle a framework event.

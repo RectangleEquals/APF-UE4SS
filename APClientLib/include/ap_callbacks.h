@@ -105,8 +105,12 @@ class AP_API APCallbacks
     std::optional<sol::protected_function> callback_tracker_snapshot_;
     std::optional<sol::protected_function> callback_tracker_update_;
 
+  public:
     /// Recursively convert a JSON value to a Lua object
     sol::object json_to_lua(sol::state_view &lua, const nlohmann::json &j);
+
+    /// Recursively convert a Lua object to a JSON value (reverse of json_to_lua)
+    static nlohmann::json lua_to_json(const sol::object &obj);
 };
 
 } // namespace ap::client

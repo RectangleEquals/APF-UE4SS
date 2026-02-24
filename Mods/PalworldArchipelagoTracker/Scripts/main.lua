@@ -153,10 +153,19 @@ end
 
 APClient.on_tracker_snapshot(function(snapshot)
     APClient.log("info", "Tracker snapshot received\n")
+
+    -- Tag each location with its original index for "Default" sort restoration
+    if snapshot.locations then
+        for i, loc in ipairs(snapshot.locations) do
+            loc._sort_index = i
+        end
+    end
+
     tracker_data = snapshot
     log_tracker_summary()
 
     if TrackerUI then
+        TrackerUI.set_data_ref(tracker_data)
         TrackerUI.push_full_snapshot(tracker_data)
     end
 end)

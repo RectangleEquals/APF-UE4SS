@@ -5,8 +5,12 @@
 #include "ap_manager_base.h"
 #include "ap_manifest.h"
 
+#include <chrono>
 #include <memory>
+#include <nlohmann/json.hpp>
+#include <sol/sol.hpp>
 #include <string>
+#include <unordered_map>
 
 namespace ap::client
 {
@@ -130,6 +134,12 @@ class AP_API APClientManager : public IAPManager
     void update_cached_lua(lua_State *L);
     void handle_ipc_message(const ap::ClientIPCMessage &msg);
 
+    // Cross-mod API helpers
+    void invoke_api_call(const std::string &target_mod, const std::string &func_name, sol::variadic_args va);
+    void send_api_result(const std::string &target_mod, uint64_t call_id, const nlohmann::json &result_json);
+    void send_api_error(const std::string &target_mod, uint64_t call_id, const std::string &error);
+    void cleanup_stale_api_calls();
+
     // =========================================================================
     // Private Member Variables (only data this manager OWNS)
     // =========================================================================
@@ -142,6 +152,16 @@ class AP_API APClientManager : public IAPManager
 
     // Lifecycle state (cached from framework messages)
     std::string current_lifecycle_state_ = "UNINITIALIZED";
+
+    // Cross-mod API state
+    std::unordered_map<std::string, sol::protected_function> api_callbacks_;   // function_name -> handler
+    struct PendingCall
+    {
+        sol::protected_function callback;
+        std::chrono::steady_clock::time_point created_at;
+    };
+    std::unordered_map<uint64_t, PendingCall> pending_api_calls_; // call_id -> pending callback
+    uint64_t next_call_id_ = 1;
 
     // State
     bool initialized_ = false;
