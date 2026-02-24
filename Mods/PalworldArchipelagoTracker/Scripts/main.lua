@@ -31,8 +31,46 @@ if not success_rh then
     return
 end
 
+-- Load UI bridge module
+local success_ui, TrackerUI = pcall(require, "tracker_ui")
+if not success_ui then
+    print("[APTracker] WARNING: Failed to load tracker_ui.lua\n")
+    print("[APTracker] Error: " .. tostring(TrackerUI) .. "\n")
+    TrackerUI = nil
+end
+
+-- Load JSON parser for config file
+local success_json, lunajson = pcall(require, "lunajson")
+if not success_json then
+    lunajson = nil
+end
+
 print("[APTracker] Libraries loaded successfully\n")
 local obj_PalTimeManager = RH.add_object("/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C")
+
+-- ============================================================================
+-- Config Loading
+-- ============================================================================
+
+local tracker_config = nil
+local config_path = "Mods/PalworldArchipelagoTracker/config.json"
+
+local function load_config()
+    if not lunajson then return nil end
+    local f = io.open(config_path, "r")
+    if not f then return nil end
+    local content = f:read("*a")
+    f:close()
+    local ok, parsed = pcall(lunajson.decode, content)
+    if ok then
+        return parsed
+    else
+        print("[APTracker] WARNING: Failed to parse config.json: " .. tostring(parsed) .. "\n")
+        return nil
+    end
+end
+
+tracker_config = load_config()
 
 -- ============================================================================
 -- State
@@ -118,7 +156,9 @@ APClient.on_tracker_snapshot(function(snapshot)
     tracker_data = snapshot
     log_tracker_summary()
 
-    -- TODO: Push data to Blueprint UMG widget for UI rendering
+    if TrackerUI then
+        TrackerUI.push_full_snapshot(tracker_data)
+    end
 end)
 
 APClient.on_tracker_update(function(delta)
@@ -174,7 +214,9 @@ APClient.on_tracker_update(function(delta)
 
     log_tracker_summary()
 
-    -- TODO: Push updated data to Blueprint UMG widget
+    if TrackerUI then
+        TrackerUI.push_delta_update(tracker_data, delta)
+    end
 end)
 
 -- ============================================================================
@@ -232,7 +274,17 @@ APClient.on_error(function(code, message)
 end)
 
 -- ============================================================================
--- Initialization
+-- UI Initialization
+-- ============================================================================
+
+if TrackerUI then
+    TrackerUI.init(APClient)
+    TrackerUI.register_keybinds(tracker_config)
+    APClient.log("info", "TrackerUI module initialized\n")
+end
+
+-- ============================================================================
+-- IPC Initialization
 -- ============================================================================
 
 if APClient.connect() then
