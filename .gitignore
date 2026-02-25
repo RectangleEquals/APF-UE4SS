@@ -113,6 +113,13 @@ Mods/ExampleClientMod/Scripts/*.so
 Mods/ExampleClientMod/Scripts/lunajson.lua
 Mods/ExampleClientMod/Scripts/lunajson/**
 
+# Tool configs/database
+tools/**.*.json
+tools/*.db
+
+# Claude settings
+.claude/
+
 # Placeholder files
 *_goes_here
 

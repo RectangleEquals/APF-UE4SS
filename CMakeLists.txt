@@ -26,11 +26,7 @@ add_compile_definitions(
     # apclientpp
     AP_NO_SCHEMA
 
-    # wswrap
-    WSWRAP_NO_SSL
-
     # websocketpp
-    WEBSOCKETPP_NO_TLS
     _WEBSOCKETPP_CPP11_STL_
     _WEBSOCKETPP_CPP11_STRICT_
     _WEBSOCKETPP_CPP11_CHRONO_
@@ -104,8 +100,6 @@ set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(websocketpp URL https://github.com/zaphoyd/websocketpp/archive/4dfe1be74e684acca19ac1cf96cce0df9eac2a2d.zip)
 
 # 5. wswrap
-# Desktop-only, without submodule:
-set(WSWRAP_NO_SSL ON CACHE BOOL "" FORCE)
 FetchContent_Declare(wswrap URL https://github.com/black-sliver/wswrap/archive/d0505e0ec53a26743f11051949a0dc66bcf44951.zip)
 # Complete, with submodule:
 # FetchContent_Declare(
@@ -132,6 +126,9 @@ FetchContent_Declare(
     GIT_TAG        v0.7.2
     GIT_SUBMODULES_RECURSE ON
 )
+
+# OpenSSL (required for TLS/SSL WebSocket connections)
+find_package(OpenSSL REQUIRED)
 
 FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp ryml)
 

@@ -31,7 +31,8 @@ APArchipelagoClient::~APArchipelagoClient()
 // Connection
 // =============================================================================
 
-bool APArchipelagoClient::connect(const std::string &server, int port, const std::string &game, const std::string &uuid)
+bool APArchipelagoClient::connect(const std::string &server, int port, const std::string &game,
+                                   const std::string &uuid, const std::string &cert_store)
 {
     if (client_)
     {
@@ -41,17 +42,18 @@ bool APArchipelagoClient::connect(const std::string &server, int port, const std
     game_ = game;
     uuid_ = uuid;
 
-    // Build URI
-    std::string uri = "ws://" + server + ":" + std::to_string(port);
+    // Build URI WITHOUT scheme prefix — apclientpp auto-tries wss:// then ws://
+    std::string uri = server + ":" + std::to_string(port);
 
     try
     {
-        client_ = std::make_unique<::APClient>(uuid, game, uri);
+        client_ = std::make_unique<::APClient>(uuid, game, uri, cert_store);
 
         // Set up callbacks
         setup_callbacks();
 
-        APLogger::get()->log(LogLevel::Info, "APArchipelagoClient", "AP Client connecting to: " + uri);
+        APLogger::get()->log(LogLevel::Info, "APArchipelagoClient",
+                             "AP Client connecting to: " + uri + " (TLS auto-negotiation enabled)");
 
         return true;
     }

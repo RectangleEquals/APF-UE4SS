@@ -1006,8 +1006,9 @@ void APManager::start_ap_connection()
 
     // Connect using the AP World name (e.g., "APFramework"), not the actual game name (e.g., "Palworld")
     // The AP server expects the game field to match the AP World's game class variable
+    // cert_store: empty string = use Windows system CA store (wswrap handles this automatically)
     APArchipelagoClient::get()->connect(ap_config.host, ap_config.port,
-                                        APGeneratedConfig::get()->get_ap_world_name(), uuid);
+                                        APGeneratedConfig::get()->get_ap_world_name(), uuid, "");
 
     // Start polling thread
     polling_thread_->start(APConfig::get()->get_threading().polling_interval_ms);

@@ -81,13 +81,17 @@ class AP_API APArchipelagoClient
      * @param port Server port.
      * @param game Game name.
      * @param uuid Unique identifier for this client.
+     * @param cert_store Path to CA certificate file (empty = use system store).
      * @return true if connection initiated.
      *
      * NOTE: This only establishes the WebSocket connection.
+     * The URI is constructed WITHOUT a scheme prefix so that apclientpp
+     * auto-tries wss:// first, then falls back to ws://.
      * After room_info is received, call connect_slot() to authenticate.
      */
     bool connect(const std::string& server, int port,
-                 const std::string& game, const std::string& uuid);
+                 const std::string& game, const std::string& uuid,
+                 const std::string& cert_store = "");
 
     /**
      * @brief Connect to a slot after room_info is received.

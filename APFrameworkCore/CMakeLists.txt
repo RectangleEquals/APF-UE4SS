@@ -61,7 +61,14 @@ target_link_libraries(APFrameworkCore
         lua_static
         zlibstatic
         apclientpp
+        OpenSSL::SSL
+        OpenSSL::Crypto
 )
+
+# Windows needs crypt32 for OpenSSL certificate store access
+if(WIN32)
+    target_link_libraries(APFrameworkCore PRIVATE crypt32)
+endif()
 
 target_compile_options(lua_static
     PRIVATE
