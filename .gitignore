@@ -114,6 +114,7 @@ Mods/ExampleClientMod/Scripts/lunajson.lua
 Mods/ExampleClientMod/Scripts/lunajson/**
 
 # Tool configs/database
+tools/apf_manager/.*.json
 tools/**.*.json
 tools/*.db
 
@@ -147,3 +148,4 @@ compile_commands.json
 # Git patches
 *.patch
 *.diff
+tools/apf_manager/.apf_manager_config.json
