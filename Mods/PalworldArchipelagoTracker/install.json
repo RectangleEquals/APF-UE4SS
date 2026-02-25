@@ -1,0 +1,41 @@
+{
+    "display_name": "Palworld Archipelago Tracker",
+    "description": "In-game tracker UI showing Archipelago location/item progress. Press F1 to toggle.",
+    "requires": ["APFrameworkMod"],
+    "manual_steps": [
+        {
+            "type": "file",
+            "when": "button",
+            "caption": "Setup Guide",
+            "title": "Tracker Setup",
+            "content": "docs/mods/PalworldArchipelagoTracker.md"
+        },
+        {
+            "type": "text",
+            "when": "after_install",
+            "title": "APTracker.pak Required",
+            "content": "The in-game tracker overlay requires APTracker.pak in your LogicMods folder.\nSee the Setup Guide (button on this mod's row) for instructions."
+        }
+    ],
+    "install": [
+        { "copy": "${build_dir}/APClientLib.dll",                    "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${mod_dir}/manifest.json",                        "to": "${target_mods}/${mod_name}/" },
+        { "copy_preserve": "${mod_dir}/config.json",                 "to": "${target_mods}/${mod_name}/" },
+        { "copy": "${mod_dir}/Scripts/main.lua",                     "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${mod_dir}/Scripts/tracker_ui.lua",               "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${framework_mod}/Scripts/registry_helper.lua",    "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${framework_mod}/Scripts/lunajson.lua",           "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy_tree": "${framework_mod}/Scripts/lunajson/",         "to": "${target_mods}/${mod_name}/Scripts/lunajson/" },
+        { "ensure_mods_txt": "${mod_name} : 1" }
+    ],
+    "uninstall": [
+        { "remove_tree": "${target_mods}/${mod_name}/" }
+    ],
+    "validate": [
+        { "exists": "${target_mods}/${mod_name}/Scripts/APClientLib.dll" },
+        { "exists": "${target_mods}/${mod_name}/manifest.json" },
+        { "valid_json": "${target_mods}/${mod_name}/manifest.json" },
+        { "exists": "${target_mods}/${mod_name}/Scripts/tracker_ui.lua" },
+        { "exists": "${target_mods}/${mod_name}/Scripts/registry_helper.lua" }
+    ]
+}

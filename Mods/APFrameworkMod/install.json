@@ -1,0 +1,31 @@
+{
+    "display_name": "AP Framework Core",
+    "description": "Core orchestrator — always required. Manages mod discovery, capabilities, and AP server connection.",
+    "is_core": true,
+    "install": [
+        { "copy": "${build_dir}/APFrameworkCore.dll",             "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${build_dir}/APClientLib.dll",                 "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${mod_dir}/manifest.json",                     "to": "${target_mods}/${mod_name}/" },
+        { "copy_preserve": "${mod_dir}/framework_config.json",    "to": "${target_mods}/${mod_name}/" },
+        { "copy": "${mod_dir}/Scripts/main.lua",                  "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${mod_dir}/Scripts/registry_helper.lua",       "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${mod_dir}/Scripts/lunajson.lua",              "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy_tree": "${mod_dir}/Scripts/lunajson/",            "to": "${target_mods}/${mod_name}/Scripts/lunajson/" },
+        { "copy_tree": "${source_project}/Templates/",            "to": "${target_mods}/${mod_name}/Templates/" },
+        { "ensure_mods_txt": "APFrameworkMod : 1" }
+    ],
+    "uninstall": [
+        { "remove_tree": "${target_mods}/${mod_name}/" }
+    ],
+    "validate": [
+        { "exists": "${target_mods}/${mod_name}/Scripts/APFrameworkCore.dll" },
+        { "exists": "${target_mods}/${mod_name}/Scripts/APClientLib.dll" },
+        { "exists": "${target_mods}/${mod_name}/manifest.json" },
+        { "valid_json": "${target_mods}/${mod_name}/manifest.json" },
+        { "exists": "${target_mods}/${mod_name}/framework_config.json" },
+        { "valid_json": "${target_mods}/${mod_name}/framework_config.json" },
+        { "exists": "${target_mods}/${mod_name}/Scripts/registry_helper.lua" },
+        { "exists": "${target_mods}/${mod_name}/Templates/Palworld/logic/techshuffle/regions.json" },
+        { "mods_txt_contains": "APFrameworkMod" }
+    ]
+}
