@@ -204,8 +204,8 @@ function TrackerUI.push_full_snapshot(data)
     end
     if not data or not data.locations then return end
 
-    tracker_actor["Batch Begin"](tracker_actor)
-    tracker_actor["Clear All"](tracker_actor)
+    tracker_actor:BatchBegin()
+    tracker_actor:ClearAll()
 
     -- Group locations by region, preserving order
     local regions_locs = {}
@@ -244,7 +244,7 @@ function TrackerUI.push_full_snapshot(data)
             reg_rt = TrackerUI.format_scored_tree_multiline(reg.scored_tree)
         end
 
-        tracker_actor["Add Region"](tracker_actor,
+        tracker_actor:AddRegion(
             FText(rname),
             reg and reg.score or 0,
             reg and reg.reachable or false,
@@ -261,7 +261,7 @@ function TrackerUI.push_full_snapshot(data)
                 loc_plain = TrackerUI.format_scored_tree_plain(loc.scored_tree)
             end
 
-            tracker_actor["Add Location"](tracker_actor,
+            tracker_actor:AddLocation(
                 FText(rname),
                 loc.id,
                 FText(loc.name),
@@ -272,7 +272,7 @@ function TrackerUI.push_full_snapshot(data)
         end
     end
 
-    tracker_actor["Batch End"](tracker_actor)
+    tracker_actor:BatchEnd()
     TrackerUI.update_status_text(data)
 end
 
@@ -304,7 +304,7 @@ function TrackerUI.push_delta_update(data, delta)
                 rt = TrackerUI.format_scored_tree_multiline(reg.scored_tree)
             end
 
-            tracker_actor["Update Region"](tracker_actor,
+            tracker_actor:UpdateRegion(
                 FText(reg.name),
                 reg.score,
                 reg.reachable,
@@ -324,7 +324,7 @@ function TrackerUI.push_delta_update(data, delta)
                 plain = TrackerUI.format_scored_tree_plain(loc.scored_tree)
             end
 
-            tracker_actor["Update Location"](tracker_actor,
+            tracker_actor:UpdateLocation(
                 loc.id,
                 loc.score,
                 loc.checked or false,
@@ -353,7 +353,7 @@ function TrackerUI.update_status_text(data)
     local status = string.format(
         "<Green>%d accessible</> | <Yellow>%d partial</> | <Red>%d blocked</> | <Checked>%d checked</>",
         green, yellow, red, total_checked)
-    tracker_actor["Set Status Text"](tracker_actor, FText(status))
+    tracker_actor:SetStatusText(FText(status))
 end
 
 -- ============================================================================
@@ -365,6 +365,26 @@ local DEFAULT_KEYBINDS = {
     cycle_filter = "F2"
 }
 
+function _toggle_panel()
+    if not actor_ready or not tracker_actor or not tracker_actor:IsValid() then
+        return
+    end
+
+    APClient.log("info", "Toggling UI Panel...\n")
+    tracker_actor:TogglePanel()
+end
+
+local current_filter = 0
+function _cycle_filter()
+    if not actor_ready or not tracker_actor or not tracker_actor:IsValid() then
+        return
+    end
+    
+    current_filter = (current_filter + 1) % 3
+    APClient.log("info", "Cycling Filter Mode (".. current_filter .. ")\n")
+    tracker_actor:SetFilterMode(current_filter)
+end
+
 --- Register keyboard shortcuts for tracker UI control.
 --- Reads keybind config, falls back to defaults.
 --- @param config table|nil  Parsed config.json content
@@ -373,20 +393,14 @@ function TrackerUI.register_keybinds(config)
 
     -- Toggle tracker panel visibility
     local toggle_key = Key[kb.toggle_panel] or Key.F1
-    RegisterKeyBind(toggle_key, ExecuteInGameThread(function()
-        if tracker_actor and tracker_actor:IsValid() then
-            tracker_actor["Toggle Panel"](tracker_actor)
-        end)
+    RegisterKeyBind(toggle_key, function()
+        ExecuteInGameThread(_toggle_panel)
     end)
 
     -- Cycle filter mode: All → Unchecked → In Logic → All ...
     local filter_key = Key[kb.cycle_filter] or Key.F2
-    local current_filter = 0
-    RegisterKeyBind(filter_key, ExecuteInGameThread(function()
-        if tracker_actor and tracker_actor:IsValid() then
-            current_filter = (current_filter + 1) % 3
-            tracker_actor["Set Filter Mode"](tracker_actor, current_filter)
-        end)
+    RegisterKeyBind(filter_key, function()
+        ExecuteInGameThread(_cycle_filter)
     end)
 end
 
