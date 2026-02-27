@@ -106,3 +106,14 @@ set_target_properties(APFrameworkCore PROPERTIES
     PREFIX ""
     OUTPUT_NAME "APFrameworkCore"
 )
+
+# Copy OpenSSL DLLs to the build output directory so they can be deployed
+# alongside APFrameworkCore.dll. $<TARGET_FILE:OpenSSL::SSL/Crypto> resolves
+# to the DLL path for the imported shared library target.
+add_custom_command(TARGET APFrameworkCore POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:OpenSSL::SSL>
+        $<TARGET_FILE:OpenSSL::Crypto>
+        $<TARGET_FILE_DIR:APFrameworkCore>
+    COMMENT "Copying OpenSSL runtime DLLs to build output"
+)

@@ -5,11 +5,21 @@
  * @brief Path utility singleton for discovering UE4SS mod structure.
  *
  * Uses a two-tier discovery strategy:
- * 1. Primary: Use debug.getinfo via APManagerAccessor to get Lua source path
- * 2. Fallback: Search upward from DLL location
+ * 1. Primary:  Use debug.getinfo via APManagerAccessor to get the Lua source path,
+ *              then walk up to the Mods folder from there.
+ * 2. Fallback: Recursively search from the DLL directory for directories whose path
+ *              contains the expected ue4ss mod layout as a contiguous component
+ *              sub-sequence, ranking results by Levenshtein distance so the closest
+ *              structural match is preferred.
  *
- * The framework mod folder is identified by content (framework_config.json + manifest.json),
- * not by name, allowing users to rename the mod folder.
+ * All paths stored in the cache are normalized to the OS-native separator
+ * (backslash on Windows, forward-slash on POSIX) so that string comparisons and
+ * log output remain consistent regardless of how a path was originally constructed.
+ * Component comparisons use case-insensitive matching on all platforms to handle
+ * NTFS case-preservation on Windows and avoid subtle mismatches on any OS.
+ *
+ * The framework mod folder is identified by content (framework_config.json +
+ * manifest.json), not by name, so users may rename the mod folder freely.
  *
  * Singleton Pattern: Pass-Key + Meyers
  * - get() implementation is in .cpp file
@@ -91,6 +101,31 @@ public:
      * then navigates up from its path to find the mod folder.
      */
     std::optional<std::filesystem::path> find_current_mod_folder();
+
+    /**
+     * @brief Recursively search from @p search_root for directories whose path
+     *        contains @p pattern as a contiguous sub-sequence of path components.
+     *
+     * Pattern syntax:
+     * - Always uses '/' as separator regardless of OS.
+     * - A leading "*\/" wildcard is optional and implied —
+     *   "*\/ue4ss/Mods" and "ue4ss/Mods" are equivalent.
+     * - No other wildcards are supported.
+     *
+     * Component matching is case-insensitive on all platforms.
+     * Results are sorted by Levenshtein distance between the matched sub-path
+     * and the pattern string, closest match first.
+     *
+     * @param search_root  Directory from which to begin the recursive walk.
+     * @param pattern      Partial path pattern, e.g. "ue4ss/Mods/APFrameworkMod".
+     * @param max_depth    Maximum recursion depth (default: 8).
+     * @return Sorted vector of matching normalized paths, or std::nullopt if
+     *         no matches were found.
+     */
+    std::optional<std::vector<std::filesystem::path>>
+    find_by_pattern(const std::filesystem::path& search_root,
+                    const std::string& pattern,
+                    int max_depth = 8) const;
 
     // =========================================================================
     // Well-Known Paths
@@ -181,8 +216,9 @@ private:
     bool try_init_from_lua();
 
     /**
-     * @brief Fallback: Initialize cache by searching upward from DLL location.
-     * @return true if successful, false otherwise.
+     * @brief Fallback: recursively search from the DLL directory for the ue4ss
+     *        mod layout using find_by_pattern, then locate the framework mod by content.
+     * @return true if at least a Mods folder was found, false otherwise.
      */
     bool try_init_from_dll();
 
@@ -197,6 +233,51 @@ private:
      * @return Path to the directory containing the DLL.
      */
     std::filesystem::path get_dll_directory() const;
+
+    // =========================================================================
+    // Path helpers
+    // =========================================================================
+
+    /**
+     * @brief Normalize a path to the OS-native separator, collapsing redundant
+     *        separators and dot components.
+     *        Windows → backslash. POSIX → forward-slash.
+     */
+    std::filesystem::path normalize(const std::filesystem::path& p) const;
+
+    /**
+     * @brief Case-insensitive string comparison for a single path component.
+     *        Uses _stricmp on Windows and strcasecmp on POSIX.
+     */
+    bool iequal_component(const std::string& a, const std::string& b) const;
+
+    /**
+     * @brief Split a '/'-delimited pattern string into components, stripping
+     *        any leading "*" wildcard token and empty tokens.
+     */
+    std::vector<std::string> split_pattern(const std::string& pattern) const;
+
+    /**
+     * @brief Split a filesystem path into its string components, skipping the
+     *        root-name and root-directory entries (drive letter / leading slash).
+     */
+    std::vector<std::string> split_components(const std::filesystem::path& p) const;
+
+    /**
+     * @brief Test whether @p haystack contains @p needle as a contiguous
+     *        sub-sequence of components (case-insensitive).
+     *        On success, writes the matched portion joined with '/' into
+     *        @p out_matched_subpath for Levenshtein scoring.
+     */
+    bool components_contain_pattern(const std::vector<std::string>& haystack,
+                                    const std::vector<std::string>& needle,
+                                    std::string& out_matched_subpath) const;
+
+    /**
+     * @brief Compute the Levenshtein edit distance between two strings.
+     *        Uses std::tolower per character for case-insensitive scoring.
+     */
+    int levenshtein_distance(const std::string& a, const std::string& b) const;
 
     // Cached paths
     std::optional<std::filesystem::path> cached_ue4ss_folder_;

@@ -128,6 +128,10 @@ FetchContent_Declare(
 )
 
 # OpenSSL (required for TLS/SSL WebSocket connections)
+# Select the shared (DLL) build from vcpkg. Without this, vcpkg's OpenSSLConfig.cmake
+# defaults to static libs, making $<TARGET_FILE:OpenSSL::SSL> resolve to a .lib instead
+# of a .dll, so the post-build copy step produces nothing useful at runtime.
+set(OPENSSL_USE_STATIC_LIBS FALSE)
 find_package(OpenSSL REQUIRED)
 
 FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp ryml)

@@ -2,9 +2,18 @@
 #include "ap_logger.h"
 #include "ap_manager_base.h"
 
+#include <algorithm>
+#include <cctype>
 #include <fstream>
+#include <numeric>
 #include <sol/sol.hpp>
 #include <sstream>
+
+#ifdef _WIN32
+#include <cstring> // _stricmp
+#else
+#include <strings.h> // strcasecmp
+#endif
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -21,8 +30,9 @@ namespace ap
 
 APPathUtil::APPathUtil(ConstructorKey)
 {
-    // Get DLL directory immediately (needed for fallback)
-    cached_dll_directory_ = get_dll_directory();
+    // Capture and normalize the DLL directory immediately — the fallback
+    // strategy needs it before any Lua state exists.
+    cached_dll_directory_ = normalize(get_dll_directory());
 }
 
 APPathUtil *APPathUtil::get()
@@ -150,6 +160,7 @@ bool APPathUtil::try_init_from_lua()
         }
 
         std::filesystem::path script_path(source_path);
+        script_path = normalize(script_path);
         if (!script_path.is_absolute())
         {
             APLogger::get()->log(LogLevel::Trace, "APPathUtil",
@@ -163,10 +174,10 @@ bool APPathUtil::try_init_from_lua()
         current = current.parent_path();                           // ModFolder
         current = current.parent_path();                           // Mods
 
-        if (current.filename() == "Mods" && directory_exists(current))
+        if (iequal_component(current.filename().string(), "Mods") && directory_exists(current))
         {
-            cached_mods_folder_ = current;
-            cached_ue4ss_folder_ = current.parent_path();
+            cached_mods_folder_ = normalize(current);
+            cached_ue4ss_folder_ = normalize(current.parent_path());
 
             APLogger::get()->log(LogLevel::Trace, "APPathUtil",
                                  "try_init_from_lua: found Mods folder at " + current.string());
@@ -198,34 +209,54 @@ bool APPathUtil::try_init_from_dll()
 {
     if (cached_dll_directory_.empty())
     {
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil", "try_init_from_dll: no DLL directory");
         return false;
     }
 
-    // Search upward from DLL location for "ue4ss" folder
-    // Expected structure: <game>/Binaries/Win64/ue4ss/Mods/<ModFolder>/Scripts/APFrameworkCore.dll
-    // Or: <game>/Binaries/Win64/ue4ss/Mods/<ModFolder>/APFrameworkCore.dll
+    APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                         "try_init_from_dll: searching from " + cached_dll_directory_.string());
 
-    std::filesystem::path search_path = cached_dll_directory_;
-    for (int i = 0; i < 6 && !search_path.empty(); ++i)
+    // Step 1: search for the ue4ss folder by pattern
+    auto ue4ss_matches = find_by_pattern(cached_dll_directory_, "ue4ss");
+    if (ue4ss_matches)
     {
-        if (search_path.filename() == "ue4ss")
-        {
-            cached_ue4ss_folder_ = search_path;
+        cached_ue4ss_folder_ = (*ue4ss_matches)[0];
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                             "try_init_from_dll: found ue4ss at " + cached_ue4ss_folder_->string());
 
-            std::filesystem::path mods_path = search_path / "Mods";
-            if (directory_exists(mods_path))
-            {
-                cached_mods_folder_ = mods_path;
-            }
-            break;
+        // Derive Mods path — explicit existence check since we constructed it
+        std::filesystem::path mods_candidate = normalize(*cached_ue4ss_folder_ / "Mods");
+        if (directory_exists(mods_candidate))
+        {
+            cached_mods_folder_ = mods_candidate;
         }
-        search_path = search_path.parent_path();
+        else
+        {
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                                 "try_init_from_dll: no Mods subfolder under " +
+                                     cached_ue4ss_folder_->string());
+        }
+    }
+    else
+    {
+        // Step 2 (graceful degradation): search for ue4ss/Mods directly in case
+        // the ue4ss folder itself was renamed
+        APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                             "try_init_from_dll: ue4ss not found, trying ue4ss/Mods pattern");
+        auto mods_matches = find_by_pattern(cached_dll_directory_, "ue4ss/Mods");
+        if (mods_matches)
+        {
+            cached_mods_folder_  = (*mods_matches)[0];
+            cached_ue4ss_folder_ = normalize(cached_mods_folder_->parent_path());
+            APLogger::get()->log(LogLevel::Trace, "APPathUtil",
+                                 "try_init_from_dll: found Mods at " + cached_mods_folder_->string());
+        }
     }
 
-    // Find framework mod by content
+    // Step 3: locate framework mod by content within the Mods folder
     find_framework_mod_by_content();
 
-    return cached_ue4ss_folder_.has_value();
+    return cached_mods_folder_.has_value();
 }
 
 bool APPathUtil::find_framework_mod_by_content()
@@ -253,9 +284,9 @@ bool APPathUtil::find_framework_mod_by_content()
 
         if (file_exists(config_path) && file_exists(manifest_path))
         {
-            cached_framework_folder_ = entry.path();
+            cached_framework_folder_ = normalize(entry.path());
             APLogger::get()->log(LogLevel::Debug, "APPathUtil",
-                                 "Found framework mod at: " + entry.path().string());
+                                 "Found framework mod at: " + cached_framework_folder_->string());
             return true;
         }
     }
@@ -274,7 +305,7 @@ std::filesystem::path APPathUtil::get_dll_directory() const
 
     if (len > 0 && len < MAX_PATH)
     {
-        return std::filesystem::path(dll_path).parent_path();
+        return normalize(std::filesystem::path(dll_path).parent_path());
     }
 #endif
     return {};
@@ -378,6 +409,7 @@ std::optional<std::filesystem::path> APPathUtil::find_current_mod_folder()
             }
 
             std::filesystem::path script_path(source_path);
+            script_path = normalize(script_path);
             if (!script_path.is_absolute())
             {
                 APLogger::get()->log(LogLevel::Trace, "APPathUtil",
@@ -386,7 +418,7 @@ std::optional<std::filesystem::path> APPathUtil::find_current_mod_folder()
             }
 
             // Navigate up: .../Mods/<ModFolder>/Scripts/main.lua -> <ModFolder>
-            std::filesystem::path mod_folder = script_path.parent_path().parent_path();
+            std::filesystem::path mod_folder = normalize(script_path.parent_path().parent_path());
 
             if (directory_exists(mod_folder))
             {
@@ -506,6 +538,185 @@ bool APPathUtil::write_file(const std::filesystem::path &path, const std::string
     file << content;
     return file.good();
 }
+
+// =============================================================================
+// Path helpers
+// =============================================================================
+
+std::filesystem::path APPathUtil::normalize(const std::filesystem::path& p) const
+{
+    return p.lexically_normal().make_preferred();
+}
+
+bool APPathUtil::iequal_component(const std::string& a, const std::string& b) const
+{
+#ifdef _WIN32
+    return _stricmp(a.c_str(), b.c_str()) == 0;
+#else
+    return strcasecmp(a.c_str(), b.c_str()) == 0;
+#endif
+}
+
+std::vector<std::string> APPathUtil::split_pattern(const std::string& pattern) const
+{
+    std::vector<std::string> components;
+    std::stringstream ss(pattern);
+    std::string token;
+    while (std::getline(ss, token, '/'))
+    {
+        if (token.empty())
+            continue;
+        // Strip a leading "*" wildcard — it is always implied
+        if (components.empty() && token == "*")
+            continue;
+        components.push_back(token);
+    }
+    return components;
+}
+
+std::vector<std::string> APPathUtil::split_components(const std::filesystem::path& p) const
+{
+    std::vector<std::string> components;
+    for (const auto& part : p)
+    {
+        std::string s = part.string();
+        // Skip root-name (e.g. "C:") and root-directory (e.g. "\", "/")
+        if (s.empty() || s == "/" || s == "\\" || (s.size() == 2 && s[1] == ':'))
+            continue;
+        components.push_back(s);
+    }
+    return components;
+}
+
+bool APPathUtil::components_contain_pattern(const std::vector<std::string>& haystack,
+                                            const std::vector<std::string>& needle,
+                                            std::string& out_matched_subpath) const
+{
+    if (needle.empty() || needle.size() > haystack.size())
+        return false;
+
+    const std::size_t limit = haystack.size() - needle.size();
+    for (std::size_t i = 0; i <= limit; ++i)
+    {
+        bool match = true;
+        for (std::size_t j = 0; j < needle.size(); ++j)
+        {
+            if (!iequal_component(haystack[i + j], needle[j]))
+            {
+                match = false;
+                break;
+            }
+        }
+        if (match)
+        {
+            std::string sub;
+            for (std::size_t j = 0; j < needle.size(); ++j)
+            {
+                if (j > 0) sub += '/';
+                sub += haystack[i + j];
+            }
+            out_matched_subpath = std::move(sub);
+            return true;
+        }
+    }
+    return false;
+}
+
+int APPathUtil::levenshtein_distance(const std::string& a, const std::string& b) const
+{
+    const std::size_t m = a.size();
+    const std::size_t n = b.size();
+    std::vector<int> prev(n + 1), curr(n + 1);
+    std::iota(prev.begin(), prev.end(), 0);
+    for (std::size_t i = 1; i <= m; ++i)
+    {
+        curr[0] = static_cast<int>(i);
+        for (std::size_t j = 1; j <= n; ++j)
+        {
+            const int cost = (std::tolower(static_cast<unsigned char>(a[i - 1])) ==
+                              std::tolower(static_cast<unsigned char>(b[j - 1])))
+                             ? 0 : 1;
+            curr[j] = std::min({prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost});
+        }
+        std::swap(prev, curr);
+    }
+    return prev[n];
+}
+
+// =============================================================================
+// Pattern-based search
+// =============================================================================
+
+std::optional<std::vector<std::filesystem::path>>
+APPathUtil::find_by_pattern(const std::filesystem::path& search_root,
+                             const std::string& pattern,
+                             int max_depth) const
+{
+    const std::vector<std::string> needle = split_pattern(pattern);
+    if (needle.empty())
+        return std::nullopt;
+
+    std::string pattern_stripped;
+    for (std::size_t i = 0; i < needle.size(); ++i)
+    {
+        if (i > 0) pattern_stripped += '/';
+        pattern_stripped += needle[i];
+    }
+
+    const int root_depth = static_cast<int>(
+        split_components(normalize(search_root)).size());
+
+    struct Match { std::filesystem::path path; int score; };
+    std::vector<Match> matches;
+
+    std::error_code ec;
+    std::filesystem::recursive_directory_iterator it(
+        search_root,
+        std::filesystem::directory_options::skip_permission_denied,
+        ec);
+
+    if (ec)
+    {
+        APLogger::get()->log(LogLevel::Warn, "APPathUtil",
+                             "find_by_pattern: cannot iterate " + search_root.string() +
+                             " — " + ec.message());
+        return std::nullopt;
+    }
+
+    for (; it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+    {
+        if (ec) { ec.clear(); it.disable_recursion_pending(); continue; }
+        if (!it->is_directory()) continue;
+
+        const std::filesystem::path candidate = normalize(it->path());
+        const int entry_depth = static_cast<int>(split_components(candidate).size());
+        if (entry_depth - root_depth > max_depth)
+        {
+            it.disable_recursion_pending();
+            continue;
+        }
+
+        std::string matched_sub;
+        if (components_contain_pattern(split_components(candidate), needle, matched_sub))
+            matches.push_back({candidate, levenshtein_distance(pattern_stripped, matched_sub)});
+    }
+
+    if (matches.empty())
+        return std::nullopt;
+
+    std::stable_sort(matches.begin(), matches.end(),
+                     [](const Match& a, const Match& b) { return a.score < b.score; });
+
+    std::vector<std::filesystem::path> result;
+    result.reserve(matches.size());
+    for (auto& m : matches)
+        result.push_back(std::move(m.path));
+    return result;
+}
+
+// =============================================================================
+// File Operations
+// =============================================================================
 
 bool APPathUtil::ensure_directory_exists(const std::filesystem::path &path) const
 {

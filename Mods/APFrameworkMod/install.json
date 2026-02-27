@@ -4,6 +4,8 @@
     "is_core": true,
     "install": [
         { "copy": "${build_dir}/APFrameworkCore.dll",             "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${build_dir}/libssl-3-x64.dll",               "to": "${target_mods}/${mod_name}/Scripts/" },
+        { "copy": "${build_dir}/libcrypto-3-x64.dll",            "to": "${target_mods}/${mod_name}/Scripts/" },
         { "copy": "${build_dir}/APClientLib.dll",                 "to": "${target_mods}/${mod_name}/Scripts/" },
         { "copy": "${mod_dir}/manifest.json",                     "to": "${target_mods}/${mod_name}/" },
         { "copy_preserve": "${mod_dir}/framework_config.json",    "to": "${target_mods}/${mod_name}/" },
@@ -19,6 +21,8 @@
     ],
     "validate": [
         { "exists": "${target_mods}/${mod_name}/Scripts/APFrameworkCore.dll" },
+        { "exists": "${target_mods}/${mod_name}/Scripts/libssl-3-x64.dll" },
+        { "exists": "${target_mods}/${mod_name}/Scripts/libcrypto-3-x64.dll" },
         { "exists": "${target_mods}/${mod_name}/Scripts/APClientLib.dll" },
         { "exists": "${target_mods}/${mod_name}/manifest.json" },
         { "valid_json": "${target_mods}/${mod_name}/manifest.json" },
