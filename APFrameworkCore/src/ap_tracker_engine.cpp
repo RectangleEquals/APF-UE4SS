@@ -5,6 +5,7 @@
 #include "ap_state_manager.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace ap {
 
@@ -353,8 +354,20 @@ void APTrackerEngine::compute_results(
     std::vector<TrackerLocationResult> &loc_results,
     std::vector<TrackerRegionResult> &reg_results) const
 {
+    auto snap_start = std::chrono::steady_clock::now();
+    APLogger::get()->log(LogLevel::Debug, "APTrackerEngine",
+                         "compute_results: " + std::to_string(parsed_regions_.size()) +
+                             " regions, " + std::to_string(parsed_locations_.size()) + " locations");
+
     // First compute region reachability
+    auto t0 = std::chrono::steady_clock::now();
     auto reachable = compute_reachable_regions(parsed_regions_, state);
+    auto t1 = std::chrono::steady_clock::now();
+    APLogger::get()->log(LogLevel::Debug, "APTrackerEngine",
+                         "Reachability done: " + std::to_string(reachable.size()) + "/" +
+                             std::to_string(parsed_regions_.size()) + " reachable in " +
+                             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()) +
+                             "ms");
 
     // Build full state with reachable regions
     TrackerState full_state = state;
@@ -372,10 +385,20 @@ void APTrackerEngine::compute_results(
         reg_results.push_back(std::move(result));
     }
 
+    auto t2 = std::chrono::steady_clock::now();
+    APLogger::get()->log(LogLevel::Debug, "APTrackerEngine",
+                         "Region scoring done in " +
+                             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count()) +
+                             "ms");
+
     // Compute location results
     auto checked = APStateManager::get()->get_checked_locations();
 
     loc_results.clear();
+    int loc_done = 0;
+    int loc_total = static_cast<int>(parsed_locations_.size());
+    auto last_log = std::chrono::steady_clock::now();
+
     for (const auto &loc : parsed_locations_)
     {
         TrackerLocationResult result;
@@ -386,7 +409,34 @@ void APTrackerEngine::compute_results(
         result.scored_tree = evaluate_scored(loc.logic, full_state);
         result.score = result.scored_tree.score;
         loc_results.push_back(std::move(result));
+
+        loc_done++;
+        auto now_t = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now_t - last_log).count() >= 1)
+        {
+            last_log = now_t;
+            auto elapsed_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now_t - t2).count();
+            int pct = loc_total > 0 ? static_cast<int>(100.0 * loc_done / loc_total) : 0;
+            double rate = elapsed_ms > 0 ? (loc_done * 1000.0 / elapsed_ms) : 0.0;
+            int eta_s = (rate > 0.0 && loc_done < loc_total)
+                            ? static_cast<int>((loc_total - loc_done) / rate)
+                            : 0;
+            APLogger::get()->log(LogLevel::Debug, "APTrackerEngine",
+                                 "Location scoring: " + std::to_string(loc_done) + "/" +
+                                     std::to_string(loc_total) + " (" + std::to_string(pct) +
+                                     "%) rate=" + std::to_string(static_cast<int>(rate)) +
+                                     "/s ETA=" + std::to_string(eta_s) + "s");
+        }
     }
+
+    auto t3 = std::chrono::steady_clock::now();
+    APLogger::get()->log(LogLevel::Debug, "APTrackerEngine",
+                         "Location scoring done: " + std::to_string(loc_done) + " in " +
+                             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count()) +
+                             "ms (total: " +
+                             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(t3 - snap_start).count()) +
+                             "ms)");
 }
 
 TrackerSnapshot APTrackerEngine::compute_snapshot()

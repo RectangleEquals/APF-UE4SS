@@ -484,18 +484,34 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
         tracker->add_subscriber(client_id);
         APLogger::get()->log(LogLevel::Info, "APManager", "Tracker subscriber added: " + client_id);
 
-        // Send full snapshot if tracker is initialized
+        // Send full snapshot if tracker is initialized and pre-computation is ready
         if (tracker->is_initialized())
         {
-            auto snapshot = tracker->compute_snapshot();
+            // Retrieve cached JSON from async computation (non-blocking check)
+            if (!snapshot_cache_.has_value() && snapshot_cache_future_.valid() &&
+                snapshot_cache_future_.wait_for(std::chrono::milliseconds(0)) ==
+                    std::future_status::ready)
+            {
+                snapshot_cache_ = snapshot_cache_future_.get();
+            }
 
-            IPCMessage response;
-            response.type = IPCMessageType::TRACKER_SNAPSHOT;
-            response.source = IPCTarget::FRAMEWORK;
-            response.target = client_id;
-            response.payload = snapshot.to_json();
-
-            APIPCServer::get()->send_message(client_id, response);
+            if (snapshot_cache_.has_value())
+            {
+                IPCMessage response;
+                response.type = IPCMessageType::TRACKER_SNAPSHOT;
+                response.source = IPCTarget::FRAMEWORK;
+                response.target = client_id;
+                response.payload = *snapshot_cache_;
+                APIPCServer::get()->send_message(client_id, response);
+                APLogger::get()->log(LogLevel::Info, "APManager",
+                                     "Tracker snapshot sent to " + client_id);
+            }
+            else
+            {
+                APLogger::get()->log(LogLevel::Debug, "APManager",
+                                     "Snapshot still computing — deferring for " + client_id);
+                pending_snapshot_subscribers_.push_back(client_id);
+            }
         }
     }
     else if (msg.type == IPCMessageType::UNSUBSCRIBE_TRACKER)
@@ -910,6 +926,19 @@ void APManager::handle_connecting(int64_t elapsed_ms)
                                  "Tracker engine initialized with " +
                                      std::to_string(slot_info->option_values.size()) +
                                      " option values");
+
+            // Pre-compute snapshot asynchronously — can take many seconds for large games
+            snapshot_cache_future_ = std::async(std::launch::async, []() -> nlohmann::json {
+                APLogger::set_thread_name("Snap-Worker");
+                APLogger::get()->log(LogLevel::Debug, "APManager",
+                                     "Tracker snapshot computation starting");
+                auto result = APTrackerEngine::get()->compute_snapshot().to_json();
+                APLogger::get()->log(LogLevel::Debug, "APManager",
+                                     "Tracker snapshot computation complete");
+                return result;
+            });
+            APLogger::get()->log(LogLevel::Debug, "APManager",
+                                 "Tracker snapshot pre-computation started (async)");
         }
 
         transition_to_unlocked(LifecycleState::SYNCING, "Connected to AP server");
@@ -963,6 +992,33 @@ void APManager::handle_syncing(int64_t elapsed_ms)
 
 void APManager::handle_active()
 {
+    // Deliver deferred tracker snapshots once async pre-computation completes
+    if (!pending_snapshot_subscribers_.empty())
+    {
+        if (!snapshot_cache_.has_value() && snapshot_cache_future_.valid() &&
+            snapshot_cache_future_.wait_for(std::chrono::milliseconds(0)) ==
+                std::future_status::ready)
+        {
+            snapshot_cache_ = snapshot_cache_future_.get();
+        }
+
+        if (snapshot_cache_.has_value())
+        {
+            for (const auto &subscriber : pending_snapshot_subscribers_)
+            {
+                IPCMessage response;
+                response.type = IPCMessageType::TRACKER_SNAPSHOT;
+                response.source = IPCTarget::FRAMEWORK;
+                response.target = subscriber;
+                response.payload = *snapshot_cache_;
+                APIPCServer::get()->send_message(subscriber, response);
+                APLogger::get()->log(LogLevel::Info, "APManager",
+                                     "Tracker snapshot sent to " + subscriber);
+            }
+            pending_snapshot_subscribers_.clear();
+        }
+    }
+
     // Normal operation - events are processed in update()
     // Periodically save state
     static auto last_save = std::chrono::steady_clock::now();

@@ -1,4 +1,5 @@
 #include "ap_logic_evaluator.h"
+#include "ap_logger.h"
 
 #include <algorithm>
 #include <cctype>
@@ -747,9 +748,12 @@ std::set<std::string> compute_reachable_regions(
 
     // Fixed-point iteration
     bool changed = true;
+    int pass = 0;
     while (changed)
     {
         changed = false;
+        pass++;
+        int newly_reachable = 0;
 
         for (const auto &region : regions)
         {
@@ -765,8 +769,15 @@ std::set<std::string> compute_reachable_regions(
             {
                 reachable.insert(region.name);
                 changed = true;
+                newly_reachable++;
             }
         }
+
+        APLogger::get()->log(LogLevel::Debug, "APLogicEval",
+                             "Reachability pass " + std::to_string(pass) +
+                                 ": +" + std::to_string(newly_reachable) +
+                                 " new (" + std::to_string(reachable.size()) +
+                                 "/" + std::to_string(regions.size()) + " total reachable)");
     }
 
     return reachable;

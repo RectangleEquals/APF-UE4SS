@@ -6,9 +6,13 @@
 #include "atomic_state.h"
 #include "message_queues.h"
 
+#include <future>
 #include <memory>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <sol/sol.hpp>
 #include <string>
+#include <vector>
 
 namespace ap
 {
@@ -300,6 +304,11 @@ class AP_API APManager : public IAPManager
     bool state_loaded_ = false;
     bool reconnect_attempted_ = false;
     bool first_update_done_ = false;
+
+    // Async tracker snapshot — computed on background thread, delivered from handle_active()
+    std::future<nlohmann::json> snapshot_cache_future_;
+    std::optional<nlohmann::json> snapshot_cache_;
+    std::vector<std::string> pending_snapshot_subscribers_;
 };
 
 } // namespace ap
