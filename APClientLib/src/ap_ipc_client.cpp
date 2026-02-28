@@ -9,14 +9,8 @@ namespace ap
 {
 
 // =============================================================================
-// Pass-Key + Meyers Singleton
+// Factory
 // =============================================================================
-
-APIPCClient *APIPCClient::get()
-{
-    static std::unique_ptr<APIPCClient> instance = std::make_unique<APIPCClient>(ConstructorKey{});
-    return instance.get();
-}
 
 std::unique_ptr<APIPCClient> APIPCClient::create_instance()
 {

@@ -892,6 +892,26 @@ void APManager::handle_connecting(int64_t elapsed_ms)
     // Check if connected
     if (APArchipelagoClient::get()->is_slot_connected())
     {
+        // Retrieve slot info stored by APArchipelagoClient when slot connected
+        auto slot_info = APArchipelagoClient::get()->get_slot_info();
+        if (slot_info.has_value())
+        {
+            APLogger::get()->log(LogLevel::Info, "APManager",
+                                 "Slot connected: " + slot_info->slot_name);
+
+            // Sync checked locations from server
+            std::set<int64_t> server_checked(slot_info->checked_locations.begin(),
+                                             slot_info->checked_locations.end());
+            APStateManager::get()->set_checked_locations(server_checked);
+
+            // Initialize tracker engine with option values from slot_data
+            APTrackerEngine::get()->initialize(slot_info->option_values);
+            APLogger::get()->log(LogLevel::Info, "APManager",
+                                 "Tracker engine initialized with " +
+                                     std::to_string(slot_info->option_values.size()) +
+                                     " option values");
+        }
+
         transition_to_unlocked(LifecycleState::SYNCING, "Connected to AP server");
         state_entered_at_ = std::chrono::steady_clock::now();
         return;
@@ -995,30 +1015,6 @@ void APManager::start_ap_connection()
         // Connect to slot after room info
         const auto &ap = APConfig::get()->get_ap_server();
         APArchipelagoClient::get()->connect_slot(ap.slot_name, ap.password, 0x7);
-    });
-
-    APArchipelagoClient::get()->set_slot_connected_callback([](const SlotInfo &info) {
-        APLogger::get()->log(LogLevel::Info, "APManager", "Slot connected: " + info.slot_name);
-
-        // Sync checked locations from server
-        std::set<int64_t> server_checked(info.checked_locations.begin(), info.checked_locations.end());
-        APStateManager::get()->set_checked_locations(server_checked);
-
-        // Initialize tracker engine with option values from slot_data
-        if (!info.option_values.empty())
-        {
-            APTrackerEngine::get()->initialize(info.option_values);
-            APLogger::get()->log(LogLevel::Info, "APManager",
-                                 "Tracker engine initialized with " + std::to_string(info.option_values.size()) +
-                                     " option values");
-        }
-        else
-        {
-            // Initialize with empty options (logic will use defaults)
-            APTrackerEngine::get()->initialize({});
-            APLogger::get()->log(LogLevel::Debug, "APManager",
-                                 "Tracker engine initialized with no option values");
-        }
     });
 
     APArchipelagoClient::get()->set_slot_refused_callback([](const std::vector<std::string> &errors) {

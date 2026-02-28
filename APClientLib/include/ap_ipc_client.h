@@ -24,8 +24,9 @@ namespace ap
  * Connects to APFrameworkCore's IPC server to send/receive messages.
  * Uses length-prefixed JSON messages (4-byte LE length + JSON body).
  *
- * Singleton Pattern: Pass-Key + Meyers
- * - get() implementation in .cpp file
+ * Each APClientContext owns its own instance (created via create_instance()).
+ * There is no shared singleton — each instance has its own named pipe connection
+ * so APIPCServer correctly identifies each mod separately.
  */
 class AP_API APIPCClient
 {
@@ -35,7 +36,7 @@ class AP_API APIPCClient
     using DisconnectHandler = std::function<void()>;
 
     // =========================================================================
-    // Pass-Key + Meyers Singleton Pattern
+    // Construction (Pass-Key — use create_instance() to create instances)
     // =========================================================================
 
     struct ConstructorKey
@@ -55,17 +56,11 @@ class AP_API APIPCClient
     APIPCClient &operator=(APIPCClient &&) = delete;
 
     /**
-     * @brief Get the singleton instance.
-     * @return Pointer to the APIPCClient singleton.
-     */
-    static APIPCClient *get();
-
-    /**
-     * @brief Create a new independent IPC client instance (not the singleton).
+     * @brief Create a new IPC client instance.
      * @return Unique pointer to a new APIPCClient instance.
      *
-     * Used by APClientManager to give each APClientContext its own pipe connection,
-     * so the server correctly identifies each mod separately.
+     * Each APClientContext owns its own instance so the server correctly
+     * identifies each mod by its separate pipe connection.
      */
     static std::unique_ptr<APIPCClient> create_instance();
 
