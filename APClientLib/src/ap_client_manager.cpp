@@ -48,14 +48,20 @@ int APClientManager::init(lua_State *L)
     // 2. Register with APManagerAccessor so shared singletons can access Lua
     APManagerAccessor::set(this);
 
-    // Only do full initialization once
+    // 3. Per-require: resolve this mod's identity by inspecting the Lua call stack.
+    //    When multiple mods share one APClientLib.dll (Win64/ placement), each mod's
+    //    require("APClientLib") call must receive a Lua module bound to its own manifest.
+    //    load_current() uses debug.getinfo to find the requiring script's path.
+    APManifest current_manifest;
+    current_manifest.load_current();
+    std::string current_mod_id = current_manifest.get_mod_id();
+    std::string current_version = current_manifest.get_version();
+
+    // 4. One-time setup (logger, config, IPC handlers — runs only on the first require)
     if (!initialized_)
     {
-        // 3. Set prefix tag and load framework config
         APLogger::get()->set_prefix_tag("APClientLib");
         APConfig::get()->load_default();
-
-        // 4. Initialize logger (reads settings from APConfig)
         APLogger::get()->init();
 
         std::ostringstream oss;
@@ -63,34 +69,30 @@ int APClientManager::init(lua_State *L)
             << ")";
         APLogger::get()->log(LogLevel::Trace, "APClientManager", oss.str());
 
-        // 5. Load this mod's manifest using APPathUtil::find_current_mod_folder()
-        APLogger::get()->log(LogLevel::Trace, "APClientManager", "Loading manifest via find_current_mod_folder()...");
-        if (!manifest_.load_current())
-        {
-            APLogger::get()->log(LogLevel::Warn, "APClientManager", "Failed to load manifest - mod identity unknown");
-        }
-        else
-        {
-            APLogger::get()->log(LogLevel::Debug, "APClientManager",
-                                 "Manifest loaded: mod_id=" + manifest_.get_mod_id() + " from " +
-                                     manifest_.get_manifest_path().string());
-        }
+        // Retain the first mod's manifest as a fallback for handle_ipc_message reply sources
+        manifest_ = current_manifest;
 
-        // 6. Set up IPC handlers (delegates to handle_ipc_message)
+        // Set up IPC handlers (registered once — shared across all mods' Lua modules)
         APIPCClient::get()->set_message_handler([this](const ap::ClientIPCMessage &msg) { handle_ipc_message(msg); });
-
         APIPCClient::get()->set_connect_handler([]() { APCallbacks::get()->invoke_connect(); });
-
         APIPCClient::get()->set_disconnect_handler([]() { APCallbacks::get()->invoke_disconnect(); });
 
         initialized_ = true;
-
-        APLogger::get()->log(LogLevel::Info, "APClientManager",
-                             "Initialized successfully for mod: " + manifest_.get_mod_id());
     }
 
-    // 8. Create and return the Lua module
-    return create_lua_module(L);
+    // 5. Log this mod's identity (logger guaranteed initialized at this point)
+    if (current_mod_id.empty())
+    {
+        APLogger::get()->log(LogLevel::Warn, "APClientManager",
+                             "Per-require manifest load failed — mod identity unknown for this require() caller");
+    }
+    else
+    {
+        APLogger::get()->log(LogLevel::Info, "APClientManager", "Module created for mod: " + current_mod_id);
+    }
+
+    // 6. Create and return the Lua module bound to this mod's identity
+    return create_lua_module_impl(L, current_mod_id, current_version);
 }
 
 void APClientManager::update(lua_State *L)
@@ -399,6 +401,14 @@ void APClientManager::handle_ipc_message(const ap::ClientIPCMessage &msg)
 
 int APClientManager::create_lua_module(lua_State *L)
 {
+    // Fallback override — should not normally be called externally.
+    // init() calls create_lua_module_impl() directly with the per-require mod identity.
+    return create_lua_module_impl(L, manifest_.get_mod_id(), manifest_.get_version());
+}
+
+int APClientManager::create_lua_module_impl(lua_State *L, const std::string &current_mod_id,
+                                            const std::string &current_version)
+{
     sol::state_view lua(L);
     sol::table module = lua.create_table();
 
@@ -425,20 +435,18 @@ int APClientManager::create_lua_module(lua_State *L)
     // Registration Functions
     // =========================================================================
 
-    module["register_mod"] = []() -> bool {
+    module["register_mod"] = [current_mod_id, current_version]() -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
-        const auto &manifest = APClientManager::get()->get_manifest();
-        const auto &mod_id = manifest.get_mod_id();
-        if (mod_id.empty())
+        if (current_mod_id.empty())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::REGISTER;
-        msg.source = mod_id;
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
-        msg.payload = {{"mod_id", mod_id}, {"version", manifest.get_version()}};
+        msg.payload = {{"mod_id", current_mod_id}, {"version", current_version}};
 
         return APIPCClient::get()->send_message(msg);
     };
@@ -447,20 +455,20 @@ int APClientManager::create_lua_module(lua_State *L)
     // Location Functions
     // =========================================================================
 
-    module["check_location"] = [](const std::string &location_name, sol::optional<int> instance) -> bool {
+    module["check_location"] = [current_mod_id](const std::string &location_name, sol::optional<int> instance) -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::LOCATION_CHECK;
-        msg.source = APClientManager::get()->get_manifest().get_mod_id();
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"location", location_name}, {"instance", instance.value_or(1)}};
 
         return APIPCClient::get()->send_message(msg);
     };
 
-    module["scout_locations"] = [](sol::table locations) -> bool {
+    module["scout_locations"] = [current_mod_id](sol::table locations) -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
@@ -475,7 +483,7 @@ int APClientManager::create_lua_module(lua_State *L)
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::LOCATION_SCOUT;
-        msg.source = APClientManager::get()->get_manifest().get_mod_id();
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"locations", location_names}};
 
@@ -486,22 +494,22 @@ int APClientManager::create_lua_module(lua_State *L)
     // Logging Functions (delegate to APLogger)
     // =========================================================================
 
-    module["log"] = [](const std::string &level, const std::string &message) {
+    module["log"] = [current_mod_id](const std::string &level, const std::string &message) {
         LogLevel log_level = log_level_from_string(level);
-        APLogger::get()->log(log_level, APClientManager::get()->get_manifest().get_mod_id(), message);
+        APLogger::get()->log(log_level, current_mod_id, message);
     };
 
     // =========================================================================
     // Command Functions (Priority Client Only)
     // =========================================================================
 
-    module["command"] = [](const std::string &command, sol::optional<sol::table> payload) -> bool {
+    module["command"] = [current_mod_id](const std::string &command, sol::optional<sol::table> payload) -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::COMMAND;
-        msg.source = APClientManager::get()->get_manifest().get_mod_id();
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"command", command}};
 
@@ -536,26 +544,26 @@ int APClientManager::create_lua_module(lua_State *L)
     // Tracker Functions
     // =========================================================================
 
-    module["subscribe_tracker"] = []() -> bool {
+    module["subscribe_tracker"] = [current_mod_id]() -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::SUBSCRIBE_TRACKER;
-        msg.source = APClientManager::get()->get_manifest().get_mod_id();
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = nlohmann::json::object();
 
         return APIPCClient::get()->send_message(msg);
     };
 
-    module["unsubscribe_tracker"] = []() -> bool {
+    module["unsubscribe_tracker"] = [current_mod_id]() -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::UNSUBSCRIBE_TRACKER;
-        msg.source = APClientManager::get()->get_manifest().get_mod_id();
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = nlohmann::json::object();
 
@@ -619,33 +627,35 @@ int APClientManager::create_lua_module(lua_State *L)
                              "API registered with " + std::to_string(api_callbacks_.size()) + " functions");
     };
 
-    module["get_api"] = [this](sol::this_state ts, const std::string &target_mod) -> sol::object {
+    module["get_api"] = [this, current_mod_id](sol::this_state ts, const std::string &target_mod) -> sol::object {
         sol::state_view lua(ts);
 
         // Create proxy table with __index metamethod
         sol::table proxy = lua.create_table();
         sol::table mt = lua.create_table();
 
-        mt[sol::meta_function::index] = [target_mod, this](sol::this_state ts2, sol::table /*self*/,
-                                                           const std::string &func_name) -> sol::object {
+        mt[sol::meta_function::index] = [target_mod, this, current_mod_id](
+                                            sol::this_state ts2, sol::table /*self*/,
+                                            const std::string &func_name) -> sol::object {
             sol::state_view lua2(ts2);
 
             // Return a function that sends an API_CALL when invoked
-            return sol::make_object(
-                lua2, [target_mod, func_name, this](sol::variadic_args va) { invoke_api_call(target_mod, func_name, va); });
+            return sol::make_object(lua2, [target_mod, func_name, this, current_mod_id](sol::variadic_args va) {
+                invoke_api_call(current_mod_id, target_mod, func_name, va);
+            });
         };
 
         proxy[sol::metatable_key] = mt;
         return proxy;
     };
 
-    module["send_to"] = [this](const std::string &target_mod, sol::table payload) -> bool {
+    module["send_to"] = [this, current_mod_id](const std::string &target_mod, sol::table payload) -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::COMMAND;
-        msg.source = manifest_.get_mod_id();
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"command", "send_to"}, {"payload", {{"target_mod", target_mod}}}};
 
@@ -662,13 +672,13 @@ int APClientManager::create_lua_module(lua_State *L)
         return APIPCClient::get()->send_message(msg);
     };
 
-    module["broadcast"] = [this](sol::table payload) -> bool {
+    module["broadcast"] = [this, current_mod_id](sol::table payload) -> bool {
         if (!APIPCClient::get()->is_connected())
             return false;
 
         ap::ClientIPCMessage msg;
         msg.type = IPCMessageType::COMMAND;
-        msg.source = manifest_.get_mod_id();
+        msg.source = current_mod_id;
         msg.target = IPCTarget::FRAMEWORK;
         msg.payload = {{"command", "broadcast"}, {"payload", APCallbacks::lua_to_json(payload)}};
 
@@ -710,8 +720,8 @@ int APClientManager::create_lua_module(lua_State *L)
 // Cross-Mod API Helpers
 // =============================================================================
 
-void APClientManager::invoke_api_call(const std::string &target_mod, const std::string &func_name,
-                                      sol::variadic_args va)
+void APClientManager::invoke_api_call(const std::string &mod_id, const std::string &target_mod,
+                                      const std::string &func_name, sol::variadic_args va)
 {
     if (!APIPCClient::get()->is_connected())
         return;
@@ -744,7 +754,7 @@ void APClientManager::invoke_api_call(const std::string &target_mod, const std::
     // Send API_CALL
     ap::ClientIPCMessage msg;
     msg.type = IPCMessageType::API_CALL;
-    msg.source = manifest_.get_mod_id();
+    msg.source = mod_id;
     msg.target = IPCTarget::FRAMEWORK;
     msg.payload = {{"target_mod", target_mod}, {"function", func_name},   {"args", args_json},
                    {"call_id", call_id},       {"wants_result", wants_result}};

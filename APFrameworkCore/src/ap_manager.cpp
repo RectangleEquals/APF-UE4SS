@@ -839,7 +839,19 @@ void APManager::handle_priority_registration(int64_t elapsed_ms)
     // Check timeout
     if (elapsed_ms >= APConfig::get()->get_timeouts().priority_registration_ms)
     {
-        APLogger::get()->log(LogLevel::Warn, "APManager", "Priority registration timeout, continuing anyway");
+        // Log which priority clients are still pending to aid diagnosis
+        std::string pending_ids;
+        for (const auto &mod_id : priority_clients)
+        {
+            if (!APModRegistry::get()->is_registered(mod_id))
+            {
+                if (!pending_ids.empty())
+                    pending_ids += ", ";
+                pending_ids += mod_id;
+            }
+        }
+        APLogger::get()->log(LogLevel::Warn, "APManager",
+                             "Priority registration timeout — pending: [" + pending_ids + "]");
         transition_to_unlocked(LifecycleState::REGISTRATION, "Priority timeout");
         state_entered_at_ = std::chrono::steady_clock::now();
     }
@@ -962,6 +974,9 @@ void APManager::handle_resyncing(int64_t elapsed_ms)
 void APManager::start_ap_connection()
 {
     const auto &ap_config = APConfig::get()->get_ap_server();
+
+    // Record server info in session state so it persists to session_state.json
+    APStateManager::get()->set_server_info(ap_config.host, ap_config.port);
 
     // Generate UUID for this client
     std::string uuid = "APFramework_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());

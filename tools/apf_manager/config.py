@@ -11,6 +11,7 @@ from game_root at startup — never stored in config.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,7 +51,22 @@ class APFConfig:
 
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def normalize_repo_url(url: str) -> str:
+        """Convert a github.com URL to the GitHub API format expected by remote.py.
+
+        Accepts:
+          https://github.com/owner/repo         → https://api.github.com/repos/owner/repo
+          https://api.github.com/repos/owner/repo (already correct, unchanged)
+        """
+        url = url.strip().rstrip("/")
+        m = re.match(r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?$", url)
+        if m:
+            return f"https://api.github.com/repos/{m.group(1)}/{m.group(2)}"
+        return url
+
     def save(self) -> None:
+        self.repo_api_url = self.normalize_repo_url(self.repo_api_url)
         CONFIG_FILE.write_text(json.dumps(self.__dict__, indent=4))
 
     @classmethod

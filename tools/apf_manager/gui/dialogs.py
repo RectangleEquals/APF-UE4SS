@@ -6,10 +6,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from kivy.metrics import dp
+from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton
 from kivymd.uix.label import MDLabel
-from kivy.uix.scrollview import ScrollView
 
 
 def show_step_dialog(step: dict, source_project: str = "") -> None:
@@ -23,19 +24,23 @@ def show_step_dialog(step: dict, source_project: str = "") -> None:
     else:
         text = content_val
 
-    scroll = ScrollView(size_hint=(1, 1))
+    # MDDialog(type="custom") places content_cls inside its own ScrollView,
+    # so content_cls should be an MDBoxLayout with computable height.
+    content = MDBoxLayout(orientation="vertical", size_hint_y=None, padding="4dp")
     label = MDLabel(
         text=text,
         size_hint_y=None,
         markup=False,
+        text_size=(dp(400), None),
     )
-    label.bind(texture_size=label.setter("size"))
-    scroll.add_widget(label)
+    label.bind(texture_size=lambda inst, val: setattr(inst, "height", val[1]))
+    content.add_widget(label)
+    content.bind(minimum_height=content.setter("height"))
 
     dialog = MDDialog(
         title=title,
         type="custom",
-        content_cls=scroll,
+        content_cls=content,
         size_hint=(0.85, 0.75),
         buttons=[
             MDFlatButton(text="Close", on_release=lambda x: dialog.dismiss()),

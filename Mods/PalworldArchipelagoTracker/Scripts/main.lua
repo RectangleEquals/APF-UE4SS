@@ -46,6 +46,7 @@ if not success_json then
 end
 
 print("[APTracker] Libraries loaded successfully\n")
+local obj_WebBrowser    = RH.add_object("/Script/WebBrowserWidget.WebBrowser")
 local obj_PalTimeManager = RH.add_object("/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C")
 
 -- ============================================================================
@@ -103,11 +104,21 @@ end
 -- Hook Registration
 -- ============================================================================
 
+local on_news_tick = function(self, obj, geom, deltaTime)
+    update()
+end
+
+local on_title_tick = function(self, obj, geom, deltaTime)
+    update()
+end
+
 local on_ptm_tick = function(self, PalTimeManagerObj, deltaTime)
     update()
 end
 
-RH.add_function(obj_PalTimeManager, "/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C:Tick_BP", on_ptm_tick)
+RH.add_function(obj_WebBrowser,     "/Game/Pal/Blueprint/UI/Title/WBP_WebBrowser_News.WBP_WebBrowser_News_C:Tick", on_news_tick)
+RH.add_function(obj_WebBrowser,     "/Game/Pal/Blueprint/UI/Title/WBP_TItle.WBP_TItle_C:Tick",                    on_title_tick)
+RH.add_function(obj_PalTimeManager, "/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C:Tick_BP",   on_ptm_tick)
 
 -- ============================================================================
 -- Tracker Data Helpers

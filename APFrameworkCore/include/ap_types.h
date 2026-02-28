@@ -169,7 +169,7 @@ struct ValidationResult {
 // =============================================================================
 
 struct SessionState {
-  std::string version;
+  std::string version = "1.0.0";  // session state schema version
   std::string checksum;
   std::string slot_name;
   std::string game_name;

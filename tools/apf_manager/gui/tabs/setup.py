@@ -95,7 +95,7 @@ class SetupTab(MDFloatLayout, MDTabsBase):
 
         # Repo URL (player mode)
         self._repo_url_field = MDTextField(
-            hint_text="GitHub API URL (e.g. https://api.github.com/repos/owner/repo)",
+            hint_text="GitHub repo URL (e.g. https://github.com/owner/repo)",
             text=self.app.config_data.repo_api_url,
             mode="rectangle",
         )
@@ -223,4 +223,6 @@ class SetupTab(MDFloatLayout, MDTabsBase):
 
     def _save(self, *_):
         self.app.save_config()
+        # Reflect any URL normalization back into the field
+        self._repo_url_field.text = self.app.config_data.repo_api_url
         self._ue4ss_status.text = "Settings saved."

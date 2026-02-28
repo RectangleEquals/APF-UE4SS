@@ -203,7 +203,7 @@ class ModRow(MDCard):
 
     def _show_step_dialog(self, step: dict):
         from ..dialogs import show_step_dialog
-        show_step_dialog(step)
+        show_step_dialog(step, self.app.config_data.source_project)
 
 
 class ModList(MDBoxLayout):
@@ -213,7 +213,9 @@ class ModList(MDBoxLayout):
     """
 
     def __init__(self, app, **kwargs):
-        super().__init__(orientation="vertical", spacing="4dp", padding="8dp", **kwargs)
+        super().__init__(orientation="vertical", spacing="4dp", padding="8dp",
+                         size_hint_y=None, **kwargs)
+        self.bind(minimum_height=self.setter("height"))
         self.app = app
         self._rows: list[ModRow] = []
         self._drag_row: ModRow | None = None
