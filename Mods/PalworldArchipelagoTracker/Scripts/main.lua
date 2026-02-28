@@ -256,8 +256,8 @@ end)
 APClient.on_lifecycle(function(state, message)
     APClient.log("info", "Lifecycle: " .. state .. " - " .. (message or "") .. "\n")
 
-    -- Register during REGISTRATION phase
-    if state == "REGISTRATION" and not is_registered then
+    -- Register during PRIORITY_REGISTRATION phase (tracker matches archipelago.*.* priority regex)
+    if state == "PRIORITY_REGISTRATION" and not is_registered then
         if APClient.register_mod() then
             APClient.log("info", "Registration request sent\n")
         end

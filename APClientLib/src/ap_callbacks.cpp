@@ -1,24 +1,8 @@
 #include "ap_callbacks.h"
-#include "ap_client_manager.h"
 #include "ap_logger.h"
 
 namespace ap::client
 {
-
-// =============================================================================
-// Pass-Key + Meyers Singleton
-// =============================================================================
-
-APCallbacks *APCallbacks::get()
-{
-    static std::unique_ptr<APCallbacks> instance = std::make_unique<APCallbacks>(ConstructorKey{});
-    return instance.get();
-}
-
-APCallbacks::APCallbacks(ConstructorKey)
-{
-    // Default initialization
-}
 
 APCallbacks::~APCallbacks()
 {
@@ -154,14 +138,10 @@ void APCallbacks::invoke_state_error(const std::string &message)
 }
 
 void APCallbacks::invoke_command_response(const std::string &command, bool success, const std::string &error,
-                                          const std::string &data_json)
+                                          const std::string &data_json, sol::state_view &lua)
 {
     invoke_callback(callback_command_response_, "on_command_response", [&](sol::protected_function &cb) {
-        sol::state_view *lua = APClientManager::get()->get_cached_lua();
-        if (!lua)
-            return sol::protected_function_result();
-
-        sol::table result = lua->create_table();
+        sol::table result = lua.create_table();
         result["success"] = success;
         result["error"] = error;
         result["data"] = data_json;
@@ -170,26 +150,18 @@ void APCallbacks::invoke_command_response(const std::string &command, bool succe
     });
 }
 
-void APCallbacks::invoke_tracker_snapshot(const nlohmann::json &payload)
+void APCallbacks::invoke_tracker_snapshot(const nlohmann::json &payload, sol::state_view &lua)
 {
     invoke_callback(callback_tracker_snapshot_, "on_tracker_snapshot", [&](sol::protected_function &cb) {
-        sol::state_view *lua = APClientManager::get()->get_cached_lua();
-        if (!lua)
-            return sol::protected_function_result();
-
-        sol::object lua_table = json_to_lua(*lua, payload);
+        sol::object lua_table = json_to_lua(lua, payload);
         return cb(lua_table);
     });
 }
 
-void APCallbacks::invoke_tracker_update(const nlohmann::json &payload)
+void APCallbacks::invoke_tracker_update(const nlohmann::json &payload, sol::state_view &lua)
 {
     invoke_callback(callback_tracker_update_, "on_tracker_update", [&](sol::protected_function &cb) {
-        sol::state_view *lua = APClientManager::get()->get_cached_lua();
-        if (!lua)
-            return sol::protected_function_result();
-
-        sol::object lua_table = json_to_lua(*lua, payload);
+        sol::object lua_table = json_to_lua(lua, payload);
         return cb(lua_table);
     });
 }

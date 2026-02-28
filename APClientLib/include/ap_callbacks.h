@@ -12,35 +12,23 @@ namespace ap::client
 {
 
 /**
- * @brief Singleton managing Lua callbacks for APClientLib.
+ * @brief Manages Lua callbacks for one APClientLib mod context.
  *
- * The APCallbacks singleton owns all registered Lua callbacks and provides
- * methods to invoke them safely. This separates callback management from
- * the manager's core responsibilities.
+ * Each APClientContext owns one APCallbacks instance. Callbacks are single-slot
+ * (one per event type) since each mod has its own instance — no overwrite conflicts.
  *
- * Singleton Pattern: Pass-Key + Meyers
+ * Previously a singleton; replaced by per-mod instances so each mod's Lua callbacks
+ * are stored and invoked independently. APClientManager owns and dispatches to all
+ * context instances.
  */
 class AP_API APCallbacks
 {
   public:
-    // =========================================================================
-    // Pass-Key + Meyers Singleton Pattern
-    // =========================================================================
-
-    struct ConstructorKey
-    {
-      private:
-        friend class APCallbacks;
-        explicit ConstructorKey() = default;
-    };
-
-    explicit APCallbacks(ConstructorKey);
+    APCallbacks() = default;
     ~APCallbacks();
 
     APCallbacks(const APCallbacks &) = delete;
     APCallbacks &operator=(const APCallbacks &) = delete;
-
-    static APCallbacks *get();
 
     // =========================================================================
     // Callback Registration
@@ -74,10 +62,13 @@ class AP_API APCallbacks
     void invoke_item_received(int64_t item_id, const std::string &item_name, const std::string &sender);
     void invoke_state_active();
     void invoke_state_error(const std::string &message);
+
+    // These three require the calling mod's Lua state for JSON→Lua conversion.
+    // The caller (APClientManager dispatch loop) passes the context's cached_lua.
     void invoke_command_response(const std::string &command, bool success, const std::string &error,
-                                 const std::string &data_json);
-    void invoke_tracker_snapshot(const nlohmann::json &payload);
-    void invoke_tracker_update(const nlohmann::json &payload);
+                                 const std::string &data_json, sol::state_view &lua);
+    void invoke_tracker_snapshot(const nlohmann::json &payload, sol::state_view &lua);
+    void invoke_tracker_update(const nlohmann::json &payload, sol::state_view &lua);
 
     // =========================================================================
     // Clear All Callbacks
@@ -86,11 +77,11 @@ class AP_API APCallbacks
     void clear_all();
 
   private:
-    // Helper to invoke callbacks safely
+    // Helper to invoke a callback safely
     bool invoke_callback(const std::optional<sol::protected_function> &callback, const std::string &callback_name,
                          const std::function<sol::protected_function_result(sol::protected_function &)> &caller);
 
-    // Callback storage
+    // Callback storage (single-slot per event type)
     std::optional<sol::protected_function> callback_lifecycle_;
     std::optional<sol::protected_function> callback_message_;
     std::optional<sol::protected_function> callback_error_;

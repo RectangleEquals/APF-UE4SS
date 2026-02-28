@@ -18,6 +18,11 @@ APIPCClient *APIPCClient::get()
     return instance.get();
 }
 
+std::unique_ptr<APIPCClient> APIPCClient::create_instance()
+{
+    return std::make_unique<APIPCClient>(ConstructorKey{});
+}
+
 APIPCClient::APIPCClient(ConstructorKey)
 #ifdef _WIN32
     : read_buffer_(65536)

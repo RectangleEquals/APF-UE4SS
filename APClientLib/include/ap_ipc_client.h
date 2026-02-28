@@ -60,6 +60,15 @@ class AP_API APIPCClient
      */
     static APIPCClient *get();
 
+    /**
+     * @brief Create a new independent IPC client instance (not the singleton).
+     * @return Unique pointer to a new APIPCClient instance.
+     *
+     * Used by APClientManager to give each APClientContext its own pipe connection,
+     * so the server correctly identifies each mod separately.
+     */
+    static std::unique_ptr<APIPCClient> create_instance();
+
     // =========================================================================
     // Connection
     // =========================================================================

@@ -1,38 +1,32 @@
 #pragma once
 
+#include "ap_client_context.h"
 #include "ap_client_types.h"
 #include "ap_exports.h"
 #include "ap_manager_base.h"
 #include "ap_manifest.h"
 
-#include <chrono>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <sol/sol.hpp>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace ap::client
 {
 
 /**
- * @brief Global singleton managing APClientLib state and components.
+ * @brief Global singleton coordinating APClientLib state across all loaded mods.
  *
- * The APClientManager is the central orchestrator for client mods that:
- * - Manages the cached Lua state (implements IAPManager)
- * - Owns an APManifest instance for this mod's manifest
- * - Tracks lifecycle state from framework messages
+ * APClientManager is the central coordinator for the shared APClientLib.dll. It:
+ * - Owns a vector of APClientContext (one per require("APClientLib") call)
+ * - Handles one-time setup: logger, config, IPC message/connect/disconnect handlers
+ * - Dispatches incoming IPC messages to all relevant contexts
+ * - Implements IAPManager for APManagerAccessor compatibility (APPathUtil, APLogger)
  *
- * Data Ownership:
- * - Lua state: Owned by this manager (implements IAPManager)
- * - Mod identity: Accessed via owned APManifest instance
- * - Config: Accessed via APConfig singleton (NOT owned)
- * - Logging: Delegated to APLogger singleton (NOT owned)
- * - IPC: Delegated to APIPCClient singleton (NOT owned)
- * - Actions: Delegated to APActionExecutor singleton (NOT owned)
+ * Per-mod state (callbacks, lifecycle, API calls) lives in APClientContext — NOT here.
  *
  * Singleton Pattern: Pass-Key + Meyers
- * - get() implementation in .cpp file
  */
 class AP_API APClientManager : public IAPManager
 {
@@ -59,7 +53,6 @@ class AP_API APClientManager : public IAPManager
 
     /**
      * @brief Get the singleton instance.
-     * @return Pointer to the APClientManager singleton.
      */
     static APClientManager *get();
 
@@ -68,27 +61,23 @@ class AP_API APClientManager : public IAPManager
     // =========================================================================
 
     /**
-     * @brief Initialize the manager and create Lua module (called from luaopen_APClientLib).
+     * @brief Initialize for this require() caller and create its Lua module.
      * @param L Lua state from UE4SS.
      * @return Number of return values pushed to Lua stack (1 = the module table).
      *
-     * This method:
-     * - Caches the Lua state
-     * - Registers with APManagerAccessor
-     * - Loads config and manifest via shared singletons
-     * - Initializes components
-     * - Creates and returns the Lua module table
+     * Creates a new APClientContext for the calling mod (identified via debug.getinfo
+     * on the Lua call stack). One-time setup (logger, IPC handlers) runs only on the
+     * first call. Returns a Lua module table bound to this mod's context.
      */
     int init(lua_State *L);
 
     /**
-     * @brief Update the manager (called each tick from Lua).
-     * @param L Lua state.
+     * @brief Poll IPC and clean up stale API calls (called each tick from Lua).
      */
-    void update(lua_State *L);
+    void update();
 
     /**
-     * @brief Shutdown the manager.
+     * @brief Shutdown: disconnect IPC and clear all context callbacks.
      */
     void shutdown();
 
@@ -97,31 +86,23 @@ class AP_API APClientManager : public IAPManager
     // =========================================================================
 
     /**
-     * @brief Get the cached Lua state (implements IAPManager).
-     * @return Pointer to cached sol::state_view, or nullptr if not initialized.
+     * @brief Get a Lua state for shared-singleton use (APPathUtil, APLogger).
+     * @return Pointer to the first context's cached sol::state_view, or nullptr.
+     *
+     * Returns the first-loaded mod's (APFrameworkMod's) Lua state, which is correct
+     * for the path/logger use cases that call this via APManagerAccessor.
      */
     sol::state_view *get_cached_lua() override;
 
     // =========================================================================
-    // Manifest Access (owned instance)
+    // Manifest Access (first mod's manifest — kept for backward compat)
     // =========================================================================
 
-    /**
-     * @brief Get this mod's manifest.
-     * @return Reference to the manifest.
-     */
     const APManifest &get_manifest() const;
-
-    // =========================================================================
-    // Lifecycle State (cached from framework)
-    // =========================================================================
-
-    const std::string &get_current_lifecycle_state() const;
-    void set_current_lifecycle_state(const std::string &state);
 
   protected:
     // =========================================================================
-    // Protected Methods
+    // Protected Methods (IAPManager)
     // =========================================================================
 
     int create_lua_module(lua_State *L) override;
@@ -131,45 +112,41 @@ class AP_API APClientManager : public IAPManager
     // Private Methods
     // =========================================================================
 
-    void update_cached_lua(lua_State *L);
-    void handle_ipc_message(const ap::ClientIPCMessage &msg);
+    // Per-context IPC message dispatch (called from each context's ipc_client handler)
+    void handle_ipc_message_for_context(APClientContext *ctx, const ap::ClientIPCMessage &msg);
 
-    // Per-mod Lua module creation — called from init() with the resolved mod identity
-    int create_lua_module_impl(lua_State *L, const std::string &current_mod_id,
-                               const std::string &current_version);
+    // Find a context by mod_id (returns nullptr if not found)
+    APClientContext *find_context(const std::string &mod_id);
+
+    // Per-mod Lua module creation
+    int create_lua_module_impl(lua_State *L, APClientContext *ctx);
 
     // Cross-mod API helpers
-    void invoke_api_call(const std::string &mod_id, const std::string &target_mod,
+    void invoke_api_call(APClientContext *ctx, const std::string &target_mod,
                          const std::string &func_name, sol::variadic_args va);
-    void send_api_result(const std::string &target_mod, uint64_t call_id, const nlohmann::json &result_json);
-    void send_api_error(const std::string &target_mod, uint64_t call_id, const std::string &error);
-    void cleanup_stale_api_calls();
+    void send_api_result(APClientContext *ctx, const std::string &target_mod,
+                         uint64_t call_id, const nlohmann::json &result_json);
+    void send_api_error(APClientContext *ctx, const std::string &target_mod,
+                        uint64_t call_id, const std::string &error);
+    static void cleanup_stale_api_calls(APClientContext &ctx);
 
     // =========================================================================
-    // Private Member Variables (only data this manager OWNS)
+    // Private Member Variables
     // =========================================================================
 
-    // Lua state (implements IAPManager)
-    std::unique_ptr<sol::state_view> cached_lua_;
+    // One context per require("APClientLib") call — indexed by load order
+    std::vector<std::unique_ptr<APClientContext>> contexts_;
 
-    // Manifest for this mod (each client owns its own)
+    // First mod's manifest (kept for get_manifest() and ACTION_RESULT source fallback)
     APManifest manifest_;
 
-    // Lifecycle state (cached from framework messages)
-    std::string current_lifecycle_state_ = "UNINITIALIZED";
-
-    // Cross-mod API state
-    std::unordered_map<std::string, sol::protected_function> api_callbacks_;   // function_name -> handler
-    struct PendingCall
-    {
-        sol::protected_function callback;
-        std::chrono::steady_clock::time_point created_at;
-    };
-    std::unordered_map<uint64_t, PendingCall> pending_api_calls_; // call_id -> pending callback
-    uint64_t next_call_id_ = 1;
-
-    // State
+    // One-time setup flag
     bool initialized_ = false;
+
+    // Temporary Lua state for get_cached_lua() during init() before the first context
+    // is pushed to contexts_. APPathUtil calls get_cached_lua() via APManagerAccessor
+    // during load_current(), which runs before the context is created.
+    std::unique_ptr<sol::state_view> temp_lua_;
 };
 
 } // namespace ap::client

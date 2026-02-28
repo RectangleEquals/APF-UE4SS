@@ -872,8 +872,15 @@ void APManager::handle_registration(int64_t elapsed_ms)
     if (elapsed_ms >= APConfig::get()->get_timeouts().registration_ms)
     {
         auto pending = APModRegistry::get()->get_pending_registrations();
+        std::string pending_ids;
+        for (const auto &mod_id : pending)
+        {
+            if (!pending_ids.empty())
+                pending_ids += ", ";
+            pending_ids += mod_id;
+        }
         APLogger::get()->log(LogLevel::Warn, "APManager",
-                             "Registration timeout. Pending: " + std::to_string(pending.size()) + " mods");
+                             "Registration timeout — pending: [" + pending_ids + "]");
         transition_to_unlocked(LifecycleState::CONNECTING, "Registration timeout");
         state_entered_at_ = std::chrono::steady_clock::now();
         start_ap_connection();
