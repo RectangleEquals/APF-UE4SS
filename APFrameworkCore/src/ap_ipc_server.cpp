@@ -3,6 +3,7 @@
 #include "ap_logger.h"
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -49,8 +50,9 @@ bool APIPCServer::start(const std::string &game_name)
     running_ = true;
     stop_token_.reset();
 
-    // Start the I/O thread
+    // Start the I/O thread and write thread
     io_thread_ = std::thread(&APIPCServer::io_thread_func, this);
+    write_thread_ = std::thread(&APIPCServer::write_thread_func, this);
 
     APLogger::get()->log(LogLevel::Info, "APIPCServer", "IPC Server started on: " + pipe_name_);
     return true;
@@ -76,6 +78,13 @@ void APIPCServer::stop()
                 SetEvent(conn->overlapped.hEvent);
             }
         }
+    }
+
+    // Wake and join write thread first (releases shared_ptr refs before clients_.clear())
+    write_cv_.notify_all();
+    if (write_thread_.joinable())
+    {
+        write_thread_.join();
     }
 
     // Wait for I/O thread
@@ -288,7 +297,7 @@ void APIPCServer::io_thread_func()
             if (GetOverlappedResult(listen_pipe, &connect_overlapped, &bytes_transferred, FALSE))
             {
                 // Handle new connection inline
-                auto conn = std::make_unique<ClientConnection>();
+                auto conn = std::make_shared<ClientConnection>();
                 conn->pipe = listen_pipe;
 
                 // Generate temporary client ID until registration
@@ -334,6 +343,56 @@ void APIPCServer::io_thread_func()
     CloseHandle(connect_overlapped.hEvent);
 }
 
+void APIPCServer::write_thread_func()
+{
+    APLogger::set_thread_name("IPC-Write");
+
+    while (running_)
+    {
+        {
+            std::unique_lock<std::mutex> lk(write_cv_mutex_);
+            write_cv_.wait_for(lk, std::chrono::milliseconds(10));
+        }
+
+        // Snapshot connections that have pending writes (brief lock — no I/O under lock)
+        std::vector<std::shared_ptr<ClientConnection>> to_drain;
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            for (auto &[id, conn] : clients_)
+            {
+                std::lock_guard<std::mutex> qlock(*conn->send_mutex);
+                if (!conn->send_queue.empty())
+                    to_drain.push_back(conn); // shared_ptr copy keeps conn alive
+            }
+        }
+
+        // Drain each connection without holding clients_mutex_
+        for (auto &conn : to_drain)
+        {
+            while (!conn->pending_disconnect)
+            {
+                std::vector<char> buffer;
+                {
+                    std::lock_guard<std::mutex> qlock(*conn->send_mutex);
+                    if (conn->send_queue.empty())
+                        break;
+                    buffer = std::move(conn->send_queue.front());
+                    conn->send_queue.pop();
+                }
+
+                DWORD written = 0;
+                BOOL ok = WriteFile(conn->pipe, buffer.data(),
+                                    static_cast<DWORD>(buffer.size()), &written, nullptr);
+                if (!ok || written != static_cast<DWORD>(buffer.size()))
+                {
+                    conn->pending_disconnect = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
 void *APIPCServer::create_pipe_instance()
 {
     return CreateNamedPipeA(pipe_name_.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
@@ -362,18 +421,18 @@ bool APIPCServer::queue_write(ClientConnection *conn, const IPCMessage &message)
         memcpy(buffer.data(), &length, 4);
         memcpy(buffer.data() + 4, json_str.data(), length);
 
-        // For simplicity, do synchronous write (could be made async)
-        DWORD bytes_written;
-        BOOL success = WriteFile(conn->pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_written,
-                                 nullptr // Synchronous for now
-        );
-
-        return success && bytes_written == buffer.size();
+        // Enqueue for the write thread — never blocks the calling thread
+        {
+            std::lock_guard<std::mutex> qlock(*conn->send_mutex);
+            conn->send_queue.push(std::move(buffer));
+        }
+        write_cv_.notify_one();
+        return true;
     }
     catch (const std::exception &e)
     {
         APLogger::get()->log(LogLevel::Error, "APIPCServer",
-                             "Failed to send message to " + conn->client_id + ": " + e.what());
+                             "Failed to queue message for " + conn->client_id + ": " + e.what());
         return false;
     }
 }
@@ -489,7 +548,7 @@ void APIPCServer::start_read(ClientConnection *conn)
 
 void APIPCServer::disconnect_client(const std::string &client_id)
 {
-    std::unique_ptr<ClientConnection> conn;
+    std::shared_ptr<ClientConnection> conn;
     {
         std::lock_guard<std::mutex> lock(clients_mutex_);
         auto it = clients_.find(client_id);

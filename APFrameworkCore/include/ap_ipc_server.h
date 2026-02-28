@@ -6,6 +6,7 @@
 #include "thread_safe_queue.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -189,6 +190,7 @@ class AP_API APIPCServer
     // =========================================================================
 #ifdef _WIN32
     void io_thread_func();
+    void write_thread_func();
     void *create_pipe_instance();
     bool queue_write(ClientConnection *conn, const IPCMessage &message);
     void handle_read_complete(ClientConnection *conn, unsigned long bytes_read);
@@ -206,7 +208,11 @@ class AP_API APIPCServer
     std::thread io_thread_;
 
     mutable std::mutex clients_mutex_;
-    std::unordered_map<std::string, std::unique_ptr<ClientConnection>> clients_;
+    std::unordered_map<std::string, std::shared_ptr<ClientConnection>> clients_;
+
+    std::thread write_thread_;
+    std::condition_variable write_cv_;
+    std::mutex write_cv_mutex_;
 
     ThreadSafeQueue<IPCMessage> incoming_queue_;
 

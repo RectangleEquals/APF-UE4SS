@@ -12,6 +12,9 @@
 #include <Windows.h>
 #endif
 
+#include <memory>
+#include <mutex>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -36,6 +39,10 @@ struct ClientConnection
     bool reading = false;
     bool writing = false;
     bool pending_disconnect = false;
+
+    // Outbound write queue — drained by APIPCServer's write thread (not the game thread)
+    std::queue<std::vector<char>> send_queue;
+    std::unique_ptr<std::mutex> send_mutex = std::make_unique<std::mutex>();
 
     ClientConnection() : read_buffer(65536), write_buffer(65536)
     {
@@ -63,7 +70,8 @@ struct ClientConnection
     ClientConnection(ClientConnection &&other) noexcept
         : pipe(other.pipe), overlapped(other.overlapped), client_id(std::move(other.client_id)),
           read_buffer(std::move(other.read_buffer)), write_buffer(std::move(other.write_buffer)),
-          reading(other.reading), writing(other.writing), pending_disconnect(other.pending_disconnect)
+          reading(other.reading), writing(other.writing), pending_disconnect(other.pending_disconnect),
+          send_queue(std::move(other.send_queue)), send_mutex(std::move(other.send_mutex))
     {
         other.pipe = INVALID_HANDLE_VALUE;
         other.overlapped.hEvent = nullptr;
@@ -93,6 +101,8 @@ struct ClientConnection
             reading = other.reading;
             writing = other.writing;
             pending_disconnect = other.pending_disconnect;
+            send_queue = std::move(other.send_queue);
+            send_mutex = std::move(other.send_mutex);
 
             other.pipe = INVALID_HANDLE_VALUE;
             other.overlapped.hEvent = nullptr;
