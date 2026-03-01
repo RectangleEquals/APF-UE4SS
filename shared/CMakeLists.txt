@@ -10,6 +10,7 @@ set(SOURCES
     src/ap_generated_config.cpp
     src/ap_version.cpp
     src/ap_logic_evaluator.cpp
+    src/ap_multipart_message.cpp
 )
 
 set(HEADERS
@@ -34,6 +35,7 @@ set(HEADERS
     include/ap_generated_config.h
     include/ap_version.h
     include/ap_logic_evaluator.h
+    include/ap_multipart_message.h
 )
 
 add_library(APShared STATIC ${SOURCES} ${HEADERS})
@@ -44,6 +46,9 @@ target_include_directories(APShared
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lua-5.4.7/src
     SYSTEM PUBLIC
         ${json_SOURCE_DIR}/single_include
+    SYSTEM PRIVATE
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sol2/include

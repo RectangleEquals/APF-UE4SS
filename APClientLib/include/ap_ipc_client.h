@@ -2,6 +2,7 @@
 
 #include "ap_client_types.h"
 #include "ap_exports.h"
+#include "ap_multipart_message.h"
 
 #include <atomic>
 #include <functional>
@@ -169,8 +170,9 @@ class AP_API APIPCClient
 #ifdef _WIN32
     void start_read();
     void check_read_completion();
-    void process_received_data(DWORD bytes_received);
+    void process_received_data(const char *data, size_t size);
     void handle_disconnect();
+    bool send_raw(const IPCMessage &message);  // low-level single-frame write
 #endif
 
     // =========================================================================
@@ -181,8 +183,11 @@ class AP_API APIPCClient
     HANDLE pipe_ = INVALID_HANDLE_VALUE;
     OVERLAPPED read_overlapped_ = {};
     std::vector<char> read_buffer_;
+    std::vector<char> partial_buffer_;  // accumulation buffer for multi-chunk large messages
     std::atomic<bool> reading_{false};
 #endif
+
+    APMultipartMessage assembler_;  // handles split (send) + reassembly (receive)
 
     std::string pipe_name_;
     std::atomic<bool> connected_{false};

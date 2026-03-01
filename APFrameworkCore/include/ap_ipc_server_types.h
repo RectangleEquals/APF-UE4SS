@@ -12,6 +12,8 @@
 #include <Windows.h>
 #endif
 
+#include "ap_multipart_message.h"
+
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -44,6 +46,9 @@ struct ClientConnection
     std::queue<std::vector<char>> send_queue;
     std::unique_ptr<std::mutex> send_mutex = std::make_unique<std::mutex>();
 
+    // Multipart message assembler — handles both splitting (send path) and reassembly (receive path)
+    APMultipartMessage assembler;
+
     ClientConnection() : read_buffer(65536), write_buffer(65536)
     {
         overlapped.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
@@ -71,7 +76,8 @@ struct ClientConnection
         : pipe(other.pipe), overlapped(other.overlapped), client_id(std::move(other.client_id)),
           read_buffer(std::move(other.read_buffer)), write_buffer(std::move(other.write_buffer)),
           reading(other.reading), writing(other.writing), pending_disconnect(other.pending_disconnect),
-          send_queue(std::move(other.send_queue)), send_mutex(std::move(other.send_mutex))
+          send_queue(std::move(other.send_queue)), send_mutex(std::move(other.send_mutex)),
+          assembler(std::move(other.assembler))
     {
         other.pipe = INVALID_HANDLE_VALUE;
         other.overlapped.hEvent = nullptr;
@@ -103,6 +109,7 @@ struct ClientConnection
             pending_disconnect = other.pending_disconnect;
             send_queue = std::move(other.send_queue);
             send_mutex = std::move(other.send_mutex);
+            assembler  = std::move(other.assembler);
 
             other.pipe = INVALID_HANDLE_VALUE;
             other.overlapped.hEvent = nullptr;

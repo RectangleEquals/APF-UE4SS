@@ -308,6 +308,41 @@ void APIPCServer::io_thread_func()
                 // Start reading from this client
                 start_read(conn.get());
 
+                // Set up multipart assembler callbacks for this connection.
+                // Weak pointer avoids a cycle (conn owns assembler which owns callback).
+                std::weak_ptr<ClientConnection> weak_conn = conn;
+
+                conn->assembler.set_callback([this, weak_conn](std::string json) {
+                    auto locked = weak_conn.lock();
+                    if (!locked)
+                        return;
+                    try
+                    {
+                        IPCMessage assembled = IPCMessage::from_json(nlohmann::json::parse(json));
+                        assembled.source     = locked->client_id;
+                        APLogger::get()->log(LogLevel::Debug, "APIPCServer",
+                                             "Assembly complete from " + locked->client_id + ": " +
+                                             std::to_string(json.size()) + "B");
+                        incoming_queue_.push(std::move(assembled));
+                    }
+                    catch (...)
+                    {
+                        APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                                             "Assembly parse failed from " + locked->client_id);
+                    }
+                });
+
+                conn->assembler.set_progress_callback([weak_conn](
+                    int part, int total, size_t bytes, const std::string &orig_type) {
+                    auto locked = weak_conn.lock();
+                    if (!locked)
+                        return;
+                    APLogger::get()->log(LogLevel::Debug, "APIPCServer",
+                                         "Assembling " + orig_type + " from " + locked->client_id +
+                                         ": part " + std::to_string(part) + "/" + std::to_string(total) +
+                                         " (" + std::to_string(bytes) + "B)");
+                });
+
                 {
                     std::lock_guard<std::mutex> lock(clients_mutex_);
                     clients_[temp_id] = std::move(conn);
@@ -380,11 +415,52 @@ void APIPCServer::write_thread_func()
                     conn->send_queue.pop();
                 }
 
-                DWORD written = 0;
-                BOOL ok = WriteFile(conn->pipe, buffer.data(),
-                                    static_cast<DWORD>(buffer.size()), &written, nullptr);
-                if (!ok || written != static_cast<DWORD>(buffer.size()))
+                // Use overlapped I/O — conn->pipe has FILE_FLAG_OVERLAPPED
+                OVERLAPPED write_ov = {};
+                write_ov.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+                if (write_ov.hEvent == nullptr)
                 {
+                    APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                                         "Failed to create write event for " + conn->client_id);
+                    conn->pending_disconnect = true;
+                    break;
+                }
+
+                BOOL ok = WriteFile(conn->pipe, buffer.data(),
+                                    static_cast<DWORD>(buffer.size()), nullptr, &write_ov);
+                if (!ok)
+                {
+                    DWORD err = GetLastError();
+                    if (err != ERROR_IO_PENDING)
+                    {
+                        APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                                             "WriteFile failed for " + conn->client_id +
+                                             ": error " + std::to_string(err));
+                        CloseHandle(write_ov.hEvent);
+                        conn->pending_disconnect = true;
+                        break;
+                    }
+                }
+
+                DWORD written = 0;
+                if (!GetOverlappedResult(conn->pipe, &write_ov, &written, TRUE))
+                {
+                    DWORD err = GetLastError();
+                    APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                                         "Write completion failed for " + conn->client_id +
+                                         ": error " + std::to_string(err));
+                    CloseHandle(write_ov.hEvent);
+                    conn->pending_disconnect = true;
+                    break;
+                }
+                CloseHandle(write_ov.hEvent);
+
+                if (written != static_cast<DWORD>(buffer.size()))
+                {
+                    APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                                         "Partial write to " + conn->client_id + ": " +
+                                         std::to_string(written) + "/" +
+                                         std::to_string(buffer.size()) + "B");
                     conn->pending_disconnect = true;
                     break;
                 }
@@ -413,18 +489,51 @@ bool APIPCServer::queue_write(ClientConnection *conn, const IPCMessage &message)
 
     try
     {
-        std::string json_str = message.to_json().dump();
+        // Helper: build a length-prefixed frame from a JSON string
+        auto make_frame = [](const std::string &js) {
+            uint32_t len = static_cast<uint32_t>(js.size());
+            std::vector<char> buf(4 + len);
+            memcpy(buf.data(), &len, 4);
+            memcpy(buf.data() + 4, js.data(), len);
+            return buf;
+        };
 
-        // Build length-prefixed message
-        uint32_t length = static_cast<uint32_t>(json_str.size());
-        std::vector<char> buffer(4 + length);
-        memcpy(buffer.data(), &length, 4);
-        memcpy(buffer.data() + 4, json_str.data(), length);
+        std::vector<std::vector<char>> frames;
 
-        // Enqueue for the write thread — never blocks the calling thread
+        if (APMultipartMessage::needs_splitting(message))
+        {
+            // Compress + split into MULTIPART_CHUNK frames
+            auto parts = conn->assembler.prepare(message);
+            if (parts.empty())
+            {
+                APLogger::get()->log(LogLevel::Error, "APIPCServer",
+                                     "prepare() failed for " + conn->client_id + " — message dropped");
+                return false;
+            }
+            APLogger::get()->log(LogLevel::Debug, "APIPCServer",
+                                 "Splitting " + message.type + " for " + conn->client_id +
+                                 " into " + std::to_string(parts.size()) + " chunks");
+            for (auto &p : parts)
+            {
+                frames.push_back(make_frame(p.to_json().dump()));
+            }
+        }
+        else
+        {
+            std::string json_str = message.to_json().dump();
+            APLogger::get()->log(LogLevel::Debug, "APIPCServer",
+                                 "Queuing " + std::to_string(4 + json_str.size()) +
+                                 "B message for " + conn->client_id);
+            frames.push_back(make_frame(json_str));
+        }
+
+        // Enqueue all frames for the write thread — never blocks the calling thread
         {
             std::lock_guard<std::mutex> qlock(*conn->send_mutex);
-            conn->send_queue.push(std::move(buffer));
+            for (auto &f : frames)
+            {
+                conn->send_queue.push(std::move(f));
+            }
         }
         write_cv_.notify_one();
         return true;
@@ -494,7 +603,16 @@ void APIPCServer::handle_read_complete(ClientConnection *conn, unsigned long byt
                         }
 
                         msg.source = conn->client_id;
-                        incoming_queue_.push(std::move(msg));
+
+                        // Route multipart chunks to the assembler; full message delivered via callback
+                        if (msg.type == IPCMessageType::MULTIPART_CHUNK)
+                        {
+                            conn->assembler.receive(msg);
+                        }
+                        else
+                        {
+                            incoming_queue_.push(std::move(msg));
+                        }
                     }
                     catch (const nlohmann::json::exception &e)
                     {

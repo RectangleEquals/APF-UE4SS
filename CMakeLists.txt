@@ -76,6 +76,7 @@ endif()
 include(FetchContent)
 
 # 1. ZLIB
+set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     zlib

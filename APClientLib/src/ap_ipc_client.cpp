@@ -22,7 +22,28 @@ APIPCClient::APIPCClient(ConstructorKey)
     : read_buffer_(65536)
 #endif
 {
-    // Default initialization
+    assembler_.set_callback([this](std::string json) {
+        try
+        {
+            IPCMessage msg = IPCMessage::from_json(nlohmann::json::parse(json));
+            APLogger::get()->log(LogLevel::Debug, "APIPCClient",
+                                 "Assembly complete: " + std::to_string(json.size()) + "B");
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            message_queue_.push(std::move(msg));
+        }
+        catch (...)
+        {
+            APLogger::get()->log(LogLevel::Error, "APIPCClient", "Assembly parse failed");
+        }
+    });
+
+    assembler_.set_progress_callback([](int part, int total, size_t bytes,
+                                        const std::string &orig_type) {
+        APLogger::get()->log(LogLevel::Trace, "APIPCClient",
+                             "Receiving " + orig_type + ": part " +
+                             std::to_string(part) + "/" + std::to_string(total) +
+                             " (" + std::to_string(bytes) + "B)");
+    });
 }
 
 APIPCClient::~APIPCClient()
@@ -145,27 +166,21 @@ bool APIPCClient::is_connected() const
     return connected_;
 }
 
-bool APIPCClient::send_message(const IPCMessage &message)
+bool APIPCClient::send_raw(const IPCMessage &message)
 {
-    if (!connected_)
-    {
-        return false;
-    }
-
     try
     {
         std::string json_str = message.to_json().dump();
 
-        // Build length-prefixed message
+        // Build length-prefixed frame
         uint32_t length = static_cast<uint32_t>(json_str.size());
         std::vector<char> buffer(4 + length);
         memcpy(buffer.data(), &length, 4);
         memcpy(buffer.data() + 4, json_str.data(), length);
 
         DWORD bytes_written;
-        BOOL success = WriteFile(pipe_, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_written,
-                                 nullptr // Synchronous write
-        );
+        BOOL success = WriteFile(pipe_, buffer.data(), static_cast<DWORD>(buffer.size()),
+                                 &bytes_written, nullptr);
 
         if (!success || bytes_written != buffer.size())
         {
@@ -179,6 +194,36 @@ bool APIPCClient::send_message(const IPCMessage &message)
     {
         return false;
     }
+}
+
+bool APIPCClient::send_message(const IPCMessage &message)
+{
+    if (!connected_)
+    {
+        return false;
+    }
+
+    if (APMultipartMessage::needs_splitting(message))
+    {
+        auto parts = assembler_.prepare(message);
+        if (parts.empty())
+        {
+            return false;
+        }
+        APLogger::get()->log(LogLevel::Debug, "APIPCClient",
+                             "Splitting " + message.type + " into " +
+                             std::to_string(parts.size()) + " chunks");
+        for (const auto &p : parts)
+        {
+            if (!send_raw(p))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    return send_raw(message);
 }
 
 void APIPCClient::poll()
@@ -292,8 +337,22 @@ void APIPCClient::check_read_completion()
     {
         DWORD error = GetLastError();
         reading_ = false;
+        if (error == ERROR_MORE_DATA)
+        {
+            // Message larger than read buffer — accumulate this chunk and read the rest
+            partial_buffer_.insert(partial_buffer_.end(),
+                                   read_buffer_.data(),
+                                   read_buffer_.data() + bytes_read);
+            APLogger::get()->log(LogLevel::Debug, "APIPCClient",
+                                 "Large message chunk: " + std::to_string(bytes_read) +
+                                 "B read, " + std::to_string(partial_buffer_.size()) +
+                                 "B accumulated");
+            start_read();
+            return;
+        }
         if (error == ERROR_BROKEN_PIPE || error == ERROR_PIPE_NOT_CONNECTED)
         {
+            partial_buffer_.clear();
             handle_disconnect();
         }
         return;
@@ -303,25 +362,42 @@ void APIPCClient::check_read_completion()
 
     if (bytes_read > 0)
     {
-        process_received_data(bytes_read);
+        if (!partial_buffer_.empty())
+        {
+            // Final chunk of a multi-chunk message — assemble and parse
+            partial_buffer_.insert(partial_buffer_.end(),
+                                   read_buffer_.data(),
+                                   read_buffer_.data() + bytes_read);
+            APLogger::get()->log(LogLevel::Debug, "APIPCClient",
+                                 "Large message assembled: " +
+                                 std::to_string(partial_buffer_.size()) + "B total");
+            process_received_data(partial_buffer_.data(), partial_buffer_.size());
+            partial_buffer_.clear();
+        }
+        else
+        {
+            APLogger::get()->log(LogLevel::Trace, "APIPCClient",
+                                 "Message received: " + std::to_string(bytes_read) + "B");
+            process_received_data(read_buffer_.data(), bytes_read);
+        }
     }
 
     // Start next read
     start_read();
 }
 
-void APIPCClient::process_received_data(DWORD bytes_received)
+void APIPCClient::process_received_data(const char *data, size_t size)
 {
-    if (bytes_received < 4)
+    if (size < 4)
     {
         return; // Need at least length prefix
     }
 
     // Read 4-byte length prefix (little-endian)
     uint32_t msg_length;
-    memcpy(&msg_length, read_buffer_.data(), 4);
+    memcpy(&msg_length, data, 4);
 
-    if (bytes_received < 4 + msg_length)
+    if (size < 4 + msg_length)
     {
         return; // Incomplete message
     }
@@ -329,10 +405,17 @@ void APIPCClient::process_received_data(DWORD bytes_received)
     // Parse JSON message
     try
     {
-        std::string json_str(read_buffer_.data() + 4, read_buffer_.data() + 4 + msg_length);
+        std::string json_str(data + 4, data + 4 + msg_length);
 
         nlohmann::json j = nlohmann::json::parse(json_str);
         IPCMessage msg = IPCMessage::from_json(j);
+
+        // Route multipart chunks to assembler; assembly callback enqueues when complete
+        if (msg.type == IPCMessageType::MULTIPART_CHUNK)
+        {
+            assembler_.receive(msg);
+            return;
+        }
 
         std::lock_guard<std::mutex> lock(queue_mutex_);
         message_queue_.push(std::move(msg));
@@ -353,6 +436,7 @@ void APIPCClient::handle_disconnect()
     APLogger::get()->log(LogLevel::Debug, "APIPCClient", "Pipe disconnected (broken pipe): " + pipe_name_);
     connected_ = false;
     reading_ = false;
+    partial_buffer_.clear();
 
     if (read_overlapped_.hEvent != nullptr)
     {

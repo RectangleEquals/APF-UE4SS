@@ -30,6 +30,9 @@ target_include_directories(APClientLib
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/lua-5.4.7/src
     SYSTEM PUBLIC
         ${json_SOURCE_DIR}/single_include
+    SYSTEM PRIVATE
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sol2/include
@@ -37,7 +40,7 @@ target_include_directories(APClientLib
 
 target_compile_definitions(APClientLib PRIVATE AP_EXPORTS)
 
-target_link_libraries(APClientLib PRIVATE APShared lua_static sqlite3)
+target_link_libraries(APClientLib PRIVATE APShared lua_static sqlite3 zlibstatic)
 
 target_compile_options(APClientLib
     PRIVATE

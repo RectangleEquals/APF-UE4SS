@@ -82,6 +82,9 @@ namespace IPCMessageType {
     constexpr const char* GET_LOGS_RESPONSE         = "get_logs_response";
     constexpr const char* GET_DATA_PACKAGE_RESPONSE = "get_data_package_response";
 
+    // Large message transport
+    constexpr const char* MULTIPART_CHUNK     = "multipart_chunk";
+
     // Tracker Protocol
     constexpr const char* SUBSCRIBE_TRACKER   = "subscribe_tracker";
     constexpr const char* UNSUBSCRIBE_TRACKER = "unsubscribe_tracker";
