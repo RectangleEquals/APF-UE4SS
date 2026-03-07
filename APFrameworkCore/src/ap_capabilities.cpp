@@ -216,8 +216,6 @@ void APCapabilities::add_manifest(const Manifest &manifest)
                     APLogger::get()->log(LogLevel::Info, "APCapabilities",
                                          "Region '" + reg.name + "' logic OR-merged from mod: " + manifest.mod_id);
                 }
-                if (!reg.requires_option.empty())
-                    existing.requires_option = reg.requires_option;
                 merged = true;
                 break;
             }
@@ -237,9 +235,7 @@ void APCapabilities::add_manifest(const Manifest &manifest)
             ownership.mod_id = manifest.mod_id;
             ownership.location_name = loc.name;
             ownership.instance = i;
-            ownership.region = loc.region;
             ownership.logic = loc.logic;
-            ownership.requires_option = loc.requires_option;
             locations_.push_back(ownership);
         }
     }
@@ -254,7 +250,7 @@ void APCapabilities::add_manifest(const Manifest &manifest)
         ownership.action = item.action;
         ownership.args = item.args;
         ownership.max_count = (item.amount < 0) ? -1 : item.amount;
-        ownership.requires_option = item.requires_option;
+        ownership.logic = item.logic;
         items_.push_back(ownership);
     }
 
@@ -296,10 +292,18 @@ void APCapabilities::add_manifest(const Manifest &manifest)
         }
     }
 
-    // Collect item overrides
-    for (const auto &ovr : manifest.item_overrides)
+    // Collect item overrides (source_mod set here since it isn't in the JSON)
+    for (auto ovr : manifest.item_overrides)
     {
+        ovr.source_mod = manifest.mod_id;
         item_overrides_.push_back(ovr);
+    }
+
+    // Collect location overrides (source_mod set here since it isn't in the JSON)
+    for (auto ovr : manifest.location_overrides)
+    {
+        ovr.source_mod = manifest.mod_id;
+        location_overrides_.push_back(ovr);
     }
 
     APLogger::get()->log(LogLevel::Debug, "APCapabilities",
@@ -318,6 +322,7 @@ void APCapabilities::clear()
     mod_options_.clear();
     goals_.clear();
     item_overrides_.clear();
+    location_overrides_.clear();
     region_contributions_.clear();
 }
 
@@ -590,7 +595,6 @@ std::string APCapabilities::compute_checksum() const
         sha.update(manifest.version);
 
         // Include region definitions (sorted by name for determinism)
-        // Note: requires_option is NOT included — it's player-variable
         std::vector<RegionDef> sorted_regions = manifest.regions;
         std::sort(sorted_regions.begin(), sorted_regions.end(),
                   [](const RegionDef &a, const RegionDef &b) { return a.name < b.name; });
@@ -605,7 +609,6 @@ std::string APCapabilities::compute_checksum() const
         {
             sha.update(loc.name);
             sha.update(std::to_string(loc.amount));
-            sha.update(loc.region);
             sha.update(loc.logic);
         }
 
@@ -681,7 +684,6 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         CapabilitiesConfigRegion cfg_reg;
         cfg_reg.name = reg.name;
         cfg_reg.logic = reg.logic;
-        cfg_reg.requires_option = reg.requires_option;
         config.capabilities.regions.push_back(cfg_reg);
     }
 
@@ -693,9 +695,7 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_loc.name = loc.location_name;
         cfg_loc.mod_id = loc.mod_id;
         cfg_loc.instance = loc.instance;
-        cfg_loc.region = loc.region;
         cfg_loc.logic = loc.logic;
-        cfg_loc.requires_option = loc.requires_option;
         config.capabilities.locations.push_back(cfg_loc);
     }
 
@@ -708,7 +708,7 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_item.type = item_type_to_string(item.type);
         cfg_item.mod_id = item.mod_id;
         cfg_item.count = item.max_count;
-        cfg_item.requires_option = item.requires_option;
+        cfg_item.logic = item.logic;
         config.capabilities.items.push_back(cfg_item);
     }
 
@@ -741,19 +741,16 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         }
     }
 
-    // Add item overrides (track source mod_id for attribution)
-    for (const auto &m : manifest_map)
+    // Add item overrides (source_mod already set by add_manifest via item_overrides_)
+    for (const auto &ovr : item_overrides_)
     {
-        for (const auto &ovr : m.item_overrides)
-        {
-            CapabilitiesConfigItemOverride cfg_ovr;
-            cfg_ovr.target_item = ovr.target_item;
-            cfg_ovr.target_mod = ovr.target_mod;
-            cfg_ovr.type = ovr.type;
-            cfg_ovr.requires_option = ovr.requires_option;
-            cfg_ovr.source_mod = m.mod_id;
-            config.capabilities.item_overrides.push_back(cfg_ovr);
-        }
+        CapabilitiesConfigItemOverride cfg_ovr;
+        cfg_ovr.target_item = ovr.target_item;
+        cfg_ovr.target_mod = ovr.target_mod;
+        cfg_ovr.type = ovr.type;
+        cfg_ovr.logic = ovr.logic;
+        cfg_ovr.source_mod = ovr.source_mod;
+        config.capabilities.item_overrides.push_back(cfg_ovr);
     }
 
     APLogger::get()->log(LogLevel::Info, "APCapabilities",
@@ -919,6 +916,49 @@ std::vector<GoalDef> APCapabilities::get_goals() const
 std::vector<ItemOverrideDef> APCapabilities::get_item_overrides() const
 {
     return item_overrides_;
+}
+
+std::vector<LocationOverrideDef> APCapabilities::get_location_overrides() const
+{
+    return location_overrides_;
+}
+
+void APCapabilities::apply_location_overrides()
+{
+    for (const auto &ovr : location_overrides_)
+    {
+        // Find the target location by name + mod_id
+        LocationOwnership *target = nullptr;
+        for (auto &loc : locations_)
+        {
+            if (loc.location_name == ovr.location && loc.mod_id == ovr.target_mod)
+            {
+                target = &loc;
+                break;
+            }
+        }
+
+        if (!target)
+        {
+            APLogger::get()->log(LogLevel::Warn, "APCapabilities",
+                "overrides.locations: location '" + ovr.location +
+                "' not found in mod '" + ovr.target_mod + "' (override from " + ovr.source_mod + ")");
+            continue;
+        }
+
+        // OR-merge logic
+        if (target->logic.empty())
+        {
+            target->logic = ovr.logic;
+        }
+        else
+        {
+            target->logic = "(" + target->logic + ") OR (" + ovr.logic + ")";
+        }
+
+        APLogger::get()->log(LogLevel::Info, "APCapabilities",
+            "Location '" + ovr.location + "' logic OR-merged from mod: " + ovr.source_mod);
+    }
 }
 
 std::vector<APCapabilities::RegionContribution> APCapabilities::get_all_region_contributions() const

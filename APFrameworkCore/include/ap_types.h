@@ -116,9 +116,7 @@ struct LocationOwnership {
   std::string location_name;
   int64_t location_id = 0;
   int instance = 1;
-  std::string region;                                // Region this location belongs to
-  std::string logic;                                 // Logic expression string
-  std::string requires_option;                       // Option conditional
+  std::string logic;                                 // Logic expression string (includes (Can Access: R) for region placement)
 };
 
 struct ItemOwnership {
@@ -129,7 +127,7 @@ struct ItemOwnership {
   std::string action;
   std::vector<ActionArg> args;
   int max_count = 1;
-  std::string requires_option;                       // Option conditional
+  std::string logic;                                 // Option-only logic (e.g. "(Option: enable_traps)")
 };
 
 // =============================================================================
@@ -244,9 +242,7 @@ struct CapabilitiesConfigLocation {
   std::string name;
   std::string mod_id;
   int instance = 1;
-  std::string region;                                // Region name
-  std::string logic;                                 // Logic expression string
-  std::string requires_option;                       // Option conditional
+  std::string logic;                                 // Logic expression string (includes (Can Access: R) for region placement)
 };
 
 struct CapabilitiesConfigItem {
@@ -255,13 +251,12 @@ struct CapabilitiesConfigItem {
   std::string type;
   std::string mod_id;
   int count = 1;
-  std::string requires_option;                       // Option conditional
+  std::string logic;                                 // Option-only logic (e.g. "(Option: enable_traps)")
 };
 
 struct CapabilitiesConfigRegion {
   std::string name;
   std::string logic;                                 // Logic expression string
-  std::string requires_option;                       // Option conditional
 };
 
 struct CapabilitiesConfigGoal {
@@ -276,7 +271,7 @@ struct CapabilitiesConfigItemOverride {
   std::string target_item;                           // Item name to override
   std::string target_mod;                            // Mod that owns the target item
   std::string type;                                  // New item type
-  std::string requires_option;                       // Condition for applying override
+  std::string logic;                                 // Option-only logic condition for applying override
   std::string source_mod;                            // Mod that declared this override
 };
 
@@ -327,8 +322,6 @@ struct CapabilitiesConfig {
       r["name"] = region.name;
       if (!region.logic.empty())
         r["logic"] = region.logic;
-      if (!region.requires_option.empty())
-        r["requires_option"] = region.requires_option;
       regions_arr.push_back(r);
     }
     if (!regions_arr.empty())
@@ -342,12 +335,8 @@ struct CapabilitiesConfig {
       l["name"] = loc.name;
       l["mod_id"] = loc.mod_id;
       l["instance"] = loc.instance;
-      if (!loc.region.empty())
-        l["region"] = loc.region;
       if (!loc.logic.empty())
         l["logic"] = loc.logic;
-      if (!loc.requires_option.empty())
-        l["requires_option"] = loc.requires_option;
       locs_arr.push_back(l);
     }
     caps["locations"] = locs_arr;
@@ -361,8 +350,8 @@ struct CapabilitiesConfig {
       it["type"] = item.type;
       it["mod_id"] = item.mod_id;
       it["count"] = item.count;
-      if (!item.requires_option.empty())
-        it["requires_option"] = item.requires_option;
+      if (!item.logic.empty())
+        it["logic"] = item.logic;
       items_arr.push_back(it);
     }
     caps["items"] = items_arr;
@@ -391,8 +380,8 @@ struct CapabilitiesConfig {
         o["target_item"] = ovr.target_item;
         o["target_mod"] = ovr.target_mod;
         o["type"] = ovr.type;
-        if (!ovr.requires_option.empty())
-          o["requires_option"] = ovr.requires_option;
+        if (!ovr.logic.empty())
+          o["logic"] = ovr.logic;
         o["source_mod"] = ovr.source_mod;
         overrides_arr.push_back(o);
       }

@@ -379,10 +379,10 @@ def generate_manifest(db_path: Path) -> dict:
         })
 
     # Tech Unlock items (one per tech)
-    # Scope filtering uses requires_option with pipe-separated alternatives:
+    # Scope filtering uses option-only logic:
     #   key items: no filter (always included)
-    #   standard items: requires_option="shuffle_scope=standard|full"
-    #   full items: requires_option="shuffle_scope=full"
+    #   standard items: logic="(Option: shuffle_scope == standard) OR (Option: shuffle_scope == full)"
+    #   full items: logic="(Option: shuffle_scope == full)"
     for tech in techs:
         tech_id = tech["tech_id"]
         scope = get_scope(tech_id)
@@ -396,11 +396,11 @@ def generate_manifest(db_path: Path) -> dict:
             "args": [{"name": "tech_id", "type": "string", "value": tech_id}]
         }
 
-        # Add scope filter via requires_option
+        # Add scope filter via logic field
         if scope == "standard":
-            item_entry["requires_option"] = "shuffle_scope=standard|full"
+            item_entry["logic"] = "(Option: shuffle_scope == standard) OR (Option: shuffle_scope == full)"
         elif scope == "full":
-            item_entry["requires_option"] = "shuffle_scope=full"
+            item_entry["logic"] = "(Option: shuffle_scope == full)"
         # key scope: no filter needed
 
         items.append(item_entry)
@@ -434,13 +434,12 @@ def generate_manifest(db_path: Path) -> dict:
         chain_logic = build_chain_logic(tech["parent_tech"])
         full_logic = combine_logic(scope_logic, boss_logic, chain_logic)
 
+        region_logic = f"(Can Access: Tech Tier {tier})"
+        combined_logic = f"{region_logic} AND ({full_logic})" if full_logic else region_logic
         loc_entry = {
             "name": f"Tech: {tech_id}",
-            "region": f"Tech Tier {tier}"
+            "logic": combined_logic
         }
-
-        if full_logic:
-            loc_entry["logic"] = full_logic
 
         locations.append(loc_entry)
 

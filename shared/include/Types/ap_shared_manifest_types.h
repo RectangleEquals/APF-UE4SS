@@ -55,7 +55,6 @@ struct ActionResult {
 struct RegionDef {
     std::string name;
     std::string logic;                       // Logic expression string
-    std::string requires_option;             // Option conditional
 };
 
 // =============================================================================
@@ -65,9 +64,7 @@ struct RegionDef {
 struct LocationDef {
     std::string name;
     int amount = 1;
-    std::string region;                      // Region this location belongs to
-    std::string logic;                       // Logic expression string
-    std::string requires_option;             // Option conditional
+    std::string logic;                       // Logic expression string (includes (Can Access: R) for region placement)
 };
 
 // =============================================================================
@@ -80,7 +77,7 @@ struct ItemDef {
     int amount = 1;
     std::string action;
     std::vector<ActionArg> args;
-    std::string requires_option;             // Option conditional
+    std::string logic;                       // Option-only logic (e.g. "(Option: enable_traps)")
 };
 
 // =============================================================================
@@ -116,7 +113,19 @@ struct ItemOverrideDef {
     std::string target_item;                 // Item name to override
     std::string target_mod;                  // Mod that owns the target item
     std::string type;                        // New item type (e.g., "filler", "progression")
-    std::string requires_option;             // Only apply when this option condition is met
+    std::string logic;                       // Option-only logic condition for applying override
+    std::string source_mod;                  // Mod that declared this override (set by aggregator)
+};
+
+// =============================================================================
+// Location Override Definition (Mod B extends Mod A's location logic)
+// =============================================================================
+
+struct LocationOverrideDef {
+    std::string location;                    // Target location name
+    std::string target_mod;                  // Mod that owns the target location
+    std::string logic;                       // Additional logic (OR-merged with existing)
+    std::string source_mod;                  // Mod that declared this override (set by aggregator)
 };
 
 // NOTE: IncompatibilityRule removed — both `depends` and `incompatible` now use
@@ -146,7 +155,8 @@ struct Manifest {
     std::vector<ItemDef> items;
     std::vector<ManifestOptionDef> options;
     std::vector<GoalDef> goals;              // Completion goals declared by this mod
-    std::vector<ItemOverrideDef> item_overrides; // Cross-mod item type overrides
+    std::vector<ItemOverrideDef> item_overrides;       // Cross-mod item type overrides (capabilities.overrides.items)
+    std::vector<LocationOverrideDef> location_overrides; // Cross-mod location logic extensions (capabilities.overrides.locations)
 };
 
 } // namespace ap

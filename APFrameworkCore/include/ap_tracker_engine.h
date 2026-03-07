@@ -61,10 +61,9 @@ struct EcosystemLocation
 {
     int64_t location_id = 0;
     std::string name;
-    std::string region;
+    std::string display_region;
     std::string mod_id;
     std::string logic;
-    std::string requires_option;
 };
 
 struct EcosystemItem
@@ -74,13 +73,13 @@ struct EcosystemItem
     std::string type;
     std::string original_type;
     std::string mod_id;
-    std::string requires_option;
+    std::string logic;                       // Option-only logic for inclusion
 
     struct OverrideEntry
     {
         std::string source_mod;
         std::string new_type;
-        std::string requires_option;
+        std::string logic;                   // Option-only logic for this override
         bool applied = false;
     };
     std::vector<OverrideEntry> overrides;
@@ -94,7 +93,7 @@ struct TrackerLocationResult
 {
     int64_t location_id = 0;
     std::string name;
-    std::string region;
+    std::string display_region;
     float score = 0.0f;
     bool checked = false;
     ScoredNode scored_tree;
@@ -240,7 +239,7 @@ class AP_API APTrackerEngine
     {
         int64_t location_id = 0;
         std::string name;
-        std::string region;
+        std::string display_region;
         LogicNode logic;
     };
     std::vector<ParsedLocation> parsed_locations_;

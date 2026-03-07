@@ -123,19 +123,19 @@ class APFrameworkWorld(World):
         except Exception as e:
             raise Exception(f"[{self.game}] Failed to decode capabilities_data: {e}")
 
-        # Filter capabilities by requires_option and logic before building tables
-        self._filter_by_requires_option()
+        # Filter capabilities by logic (option-gated entries pruned if always-false)
         self._filter_by_logic()
 
         # Apply item overrides (cross-mod item type changes)
         self._apply_item_overrides()
 
+        # Build region table first so location derivation can use known_regions
+        self.region_table = self._build_region_table()
+
         # Build item and location tables
         self.item_table = build_item_table(self.capabilities)
-        self.location_table = build_location_table(self.capabilities)
-
-        # Build region table from capabilities
-        self.region_table = self._build_region_table()
+        known_regions = set(self.region_table.keys()) if self.region_table else None
+        self.location_table = build_location_table(self.capabilities, known_regions)
 
         # Set topology_present based on logic mode
         if self.options.logic_mode.value == 1 and self.region_table:  # basic
@@ -197,78 +197,13 @@ class APFrameworkWorld(World):
                 raise ValueError(f"Missing required field: {field}")
         return data
 
-    def _filter_by_requires_option(self) -> None:
-        """Filter capabilities entries by requires_option against player's YAML options.
-
-        Removes locations, items, and regions from self.capabilities that have a
-        requires_option condition not satisfied by the player's chosen options.
-
-        Condition formats:
-        - "opt_name"             -> include if option is truthy (non-zero, non-empty, true)
-        - "opt_name=value"       -> include if option equals the specific value
-        - "opt_name=val1|val2"   -> include if option equals any of the alternatives
-        """
-        def _check_condition(condition: str) -> bool:
-            if "=" in condition:
-                opt_name, expected = condition.split("=", 1)
-            else:
-                opt_name = condition
-                expected = None
-
-            # Look up the option value from the player's options
-            opt = getattr(self.options, opt_name, None)
-            if opt is None:
-                # Unknown option — include by default (no filtering)
-                return True
-
-            value = opt.value
-            if expected is not None:
-                # Support pipe-separated alternatives: "opt=val1|val2"
-                alternatives = [a.strip().lower() for a in expected.split("|")]
-                return str(value).lower() in alternatives
-            else:
-                # Truthy check
-                return bool(value)
-
-        def _filter_list(entries: list, kind: str) -> list:
-            result = []
-            for entry in entries:
-                condition = entry.get("requires_option", "")
-                if not condition or _check_condition(condition):
-                    result.append(entry)
-                else:
-                    self.log.debug(
-                        f"Filtered {kind} '{entry.get('name', '?')}' "
-                        f"(requires_option: {condition})",
-                        "Filter",
-                    )
-            return result
-
-        locs_before = len(self.capabilities.get("locations", []))
-        items_before = len(self.capabilities.get("items", []))
-        self.capabilities["locations"] = _filter_list(
-            self.capabilities.get("locations", []), "location")
-        self.capabilities["items"] = _filter_list(
-            self.capabilities.get("items", []), "item")
-        if "regions" in self.capabilities:
-            self.capabilities["regions"] = _filter_list(
-                self.capabilities.get("regions", []), "region")
-        locs_after = len(self.capabilities["locations"])
-        items_after = len(self.capabilities["items"])
-        if locs_before != locs_after or items_before != items_after:
-            self.log.info(
-                f"requires_option: filtered {locs_before - locs_after}/{locs_before} locs, "
-                f"{items_before - items_after}/{items_before} items",
-                "Filter",
-            )
-
     def _filter_by_logic(self) -> None:
         """Filter capabilities entries whose logic evaluates to always-False.
 
-        After requires_option filtering, some entries may still have logic
-        containing (Option: ...) expressions that simplify to False. These
-        entries should be removed from the pool entirely rather than creating
-        locations with never-satisfiable rules.
+        Removes locations, regions, items, and item_overrides from
+        self.capabilities whose logic simplifies to False given the player's
+        current option values. Prevents creating locations/items/overrides with
+        never-satisfiable conditions.
         """
         # Build option values dict for logic evaluation
         option_values = {}
@@ -300,6 +235,13 @@ class APFrameworkWorld(World):
             self.capabilities["regions"] = [
                 e for e in self.capabilities.get("regions", [])
                 if _keep(e, "region")]
+        self.capabilities["items"] = [
+            e for e in self.capabilities.get("items", [])
+            if _keep(e, "item")]
+        if "item_overrides" in self.capabilities:
+            self.capabilities["item_overrides"] = [
+                e for e in self.capabilities.get("item_overrides", [])
+                if _keep(e, "item_override")]
         if removed_count:
             self.log.info(
                 f"logic filter: removed {removed_count} always-false entries",
@@ -310,31 +252,37 @@ class APFrameworkWorld(World):
         """Apply cross-mod item type overrides.
 
         When Mod B declares an item_override targeting Mod A's item, the target
-        item's type is changed if the override's requires_option condition is met.
+        item's type is changed if the override's logic condition is met.
         """
         overrides = self.capabilities.get("item_overrides", [])
         if not overrides:
             return
 
+        # Build option values for logic evaluation
+        option_values = {}
+        for attr_name in dir(self.options):
+            if attr_name.startswith("_"):
+                continue
+            opt = getattr(self.options, attr_name, None)
+            if hasattr(opt, "value"):
+                option_values[attr_name] = opt.value
+
         for ovr in overrides:
             target_item = ovr.get("target_item", "")
             target_mod = ovr.get("target_mod", "")
             new_type = ovr.get("type", "")
-            condition = ovr.get("requires_option", "")
+            logic = ovr.get("logic", "")
 
             if not target_item or not new_type:
                 continue
 
-            # Check if condition is satisfied
-            if condition:
-                opt = getattr(self.options, condition, None)
-                if opt is None or not bool(opt.value):
-                    self.log.debug(
-                        f"Override skipped: '{target_item}' "
-                        f"(requires_option '{condition}' not met)",
-                        "Override",
-                    )
-                    continue  # Condition not met — skip this override
+            # Check if logic condition is satisfied (option-only logic)
+            if logic and is_always_false(logic, option_values):
+                self.log.debug(
+                    f"Override skipped: '{target_item}' (logic not met: {logic})",
+                    "Override",
+                )
+                continue  # Condition not met — skip this override
 
             # Find and modify the target item in capabilities
             found = False
@@ -464,7 +412,6 @@ class APFrameworkWorld(World):
                 instance=data.instance,
                 region=data.region,
                 logic=data.logic,
-                requires_option=data.requires_option,
             )
         self.location_table = new_location_table
 
@@ -478,7 +425,7 @@ class APFrameworkWorld(World):
                 classification=data.classification,
                 mod_id=data.mod_id,
                 count=data.count,
-                requires_option=data.requires_option,
+                logic=data.logic,
             )
         self.item_table = new_item_table
 

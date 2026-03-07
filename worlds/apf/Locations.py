@@ -4,8 +4,27 @@ Location definitions for the AP Framework World.
 Locations are dynamically created from the capabilities config file.
 """
 
+import re
 from typing import Dict, List, NamedTuple, Optional
 from BaseClasses import Location
+
+
+def derive_ap_region(logic: str, name: str, known_regions: set = None) -> str:
+    """Derive the AP region for this location from its logic expression.
+
+    Scans for the first (Can Access: R) pattern — returns R.
+    Falls back to the prefix before ': ' in the name, then 'Main'.
+    """
+    for match in re.finditer(r'\(Can Access:\s*([^)]+)\)', logic):
+        region_name = match.group(1).strip()
+        if known_regions is None or region_name in known_regions:
+            return region_name
+    # Fallback: prefix before ': ' in location name
+    if ': ' in name:
+        prefix = name.split(': ')[0]
+        if known_regions is None or prefix in known_regions:
+            return prefix
+    return "Main"
 
 
 class APFrameworkLocation(Location):
@@ -24,20 +43,22 @@ class LocationData(NamedTuple):
     name: str
     mod_id: str
     instance: int  # Instance number for multi-instance locations
-    region: str  # Region this location belongs to (default: "Main")
-    logic: str = ""              # Logic expression string
-    requires_option: str = ""    # Simple boolean option filter (convenience shorthand)
+    region: str    # Display region derived from logic (e.g. first (Can Access: R) pattern)
+    logic: str = ""  # Logic expression string
 
 
-def build_location_table(capabilities: dict) -> Dict[str, LocationData]:
+def build_location_table(capabilities: dict, known_regions: set = None) -> Dict[str, LocationData]:
     """
     Build the location table from capabilities config.
 
     Uses a two-pass approach to handle multi-instance locations:
     locations with the same name get suffixed with #1, #2, etc.
 
+    Region is derived from the logic expression via (Can Access: R) patterns.
+
     Args:
         capabilities: The loaded capabilities config dict
+        known_regions: Set of known region names for derivation (optional)
 
     Returns:
         Dict mapping location display name to LocationData
@@ -56,15 +77,15 @@ def build_location_table(capabilities: dict) -> Dict[str, LocationData]:
         name = loc_data["name"]
         instance = loc_data.get("instance", 1)
         display_name = f"{name} #{instance}" if name_counts[name] > 1 else name
+        logic = loc_data.get("logic", "")
 
         location_table[display_name] = LocationData(
             code=loc_data["id"],
             name=display_name,
             mod_id=loc_data.get("mod_id", ""),
             instance=instance,
-            region=loc_data.get("region", "Main"),
-            logic=loc_data.get("logic", ""),
-            requires_option=loc_data.get("requires_option", ""),
+            region=derive_ap_region(logic, name, known_regions),
+            logic=logic,
         )
 
     return location_table

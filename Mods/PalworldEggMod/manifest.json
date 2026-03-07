@@ -21,20 +21,22 @@
     ],
     "capabilities": {
         "include": ["techshuffle/regions.json"],
-        "item_overrides": [
-            {
-                "target_item": "Tech Unlock: Special_PalSphere_Grade_01",
-                "target_mod": "spectrecular.palworld.techshuffle",
-                "type": "filler",
-                "requires_option": "egg_mode"
-            }
-        ],
+        "overrides": {
+            "items": [
+                {
+                    "target_item": "Tech Unlock: Special_PalSphere_Grade_01",
+                    "target_mod": "spectrecular.palworld.techshuffle",
+                    "type": "filler",
+                    "logic": "(Option: egg_mode)"
+                }
+            ]
+        },
         "items": [
             {
                 "name": "Pal Breeding License",
                 "type": "progression",
                 "amount": 1,
-                "requires_option": "egg_mode",
+                "logic": "(Option: egg_mode)",
                 "action": "EggMod.GrantBreedingLicense",
                 "args": []
             },
@@ -42,25 +44,23 @@
                 "name": "Paldex Entry",
                 "type": "progression",
                 "amount": 137,
-                "requires_option": "egg_mode"
+                "logic": "(Option: egg_mode)"
             },
             {
                 "name": "Mystery Egg",
                 "type": "filler",
                 "amount": -1,
-                "requires_option": "egg_mode"
+                "logic": "(Option: egg_mode)"
             }
         ],
         "locations": [
             {
                 "name": "Hatch: Cattiva Egg",
-                "region": "Tech Tier 1",
-                "logic": "(Option: egg_mode) AND (Item: Pal Breeding License)"
+                "logic": "(Can Access: Tech Tier 1) AND (Option: egg_mode) AND (Item: Pal Breeding License)"
             },
             {
                 "name": "Hatch: Grizzbolt Egg",
-                "region": "Post-Grass Boss",
-                "logic": "(Option: egg_mode) AND (Item: Pal Breeding License)"
+                "logic": "(Can Access: Post-Grass Boss) AND (Option: egg_mode) AND (Item: Pal Breeding License)"
             }
         ]
     }

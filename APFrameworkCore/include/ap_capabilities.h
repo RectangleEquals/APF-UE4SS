@@ -254,6 +254,20 @@ class AP_API APCapabilities
      */
     std::vector<ItemOverrideDef> get_item_overrides() const;
 
+    /**
+     * @brief Get collected location overrides from all manifests.
+     * @return Vector of location override definitions.
+     */
+    [[nodiscard]] std::vector<LocationOverrideDef> get_location_overrides() const;
+
+    /**
+     * @brief Apply location overrides — OR-merge cross-mod location logic into target locations.
+     *
+     * Must be called after all add_manifest() calls complete and before tracker engine initializes.
+     * Each override's source_mod is set to the mod that declared the override.
+     */
+    void apply_location_overrides();
+
     // ==========================================================================
     // Region Contribution Tracking (for tracker ecosystem metadata)
     // ==========================================================================
@@ -290,7 +304,8 @@ class AP_API APCapabilities
     std::vector<RegionDef> regions_;                    // Merged regions from all manifests
     std::vector<ManifestOptionDef> mod_options_;        // Collected options from all manifests
     std::vector<GoalDef> goals_;                        // Aggregated goals from all manifests
-    std::vector<ItemOverrideDef> item_overrides_;       // Collected item overrides from all manifests
+    std::vector<ItemOverrideDef> item_overrides_;         // Collected item overrides from all manifests
+    std::vector<LocationOverrideDef> location_overrides_; // Collected location overrides from all manifests
     std::vector<RegionContribution> region_contributions_; // Per-mod region logic before OR-merge
 };
 

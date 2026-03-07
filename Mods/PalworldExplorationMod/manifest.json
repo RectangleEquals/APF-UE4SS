@@ -12,9 +12,10 @@
             { "name": "Compass", "type": "useful", "amount": 1 }
         ],
         "locations": [
-            { "name": "Discovery: Hidden Grassland Cave", "region": "Post-Grass Boss" },
-            { "name": "Discovery: Ancient Ruins", "region": "Post-Grass Boss",
-              "logic": "(Item: Explorer's Pass : 2)" }
+            { "name": "Discovery: Hidden Grassland Cave",
+              "logic": "(Can Access: Post-Grass Boss)" },
+            { "name": "Discovery: Ancient Ruins",
+              "logic": "(Can Access: Post-Grass Boss) AND (Item: Explorer's Pass : 2)" }
         ]
     }
 }

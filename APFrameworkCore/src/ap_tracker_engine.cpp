@@ -75,7 +75,7 @@ nlohmann::json TrackerUpdate::to_json() const
         nlohmann::json l;
         l["id"] = loc.location_id;
         l["name"] = loc.name;
-        l["region"] = loc.region;
+        l["display_region"] = loc.display_region;
         l["score"] = loc.score;
         l["checked"] = loc.checked;
         l["scored_tree"] = scored_node_to_json(loc.scored_tree);
@@ -151,10 +151,9 @@ nlohmann::json TrackerSnapshot::to_json() const
     {
         locs_meta.push_back({{"id", loc.location_id},
                              {"name", loc.name},
-                             {"region", loc.region},
+                             {"display_region", loc.display_region},
                              {"mod_id", loc.mod_id},
-                             {"logic", loc.logic},
-                             {"requires_option", loc.requires_option}});
+                             {"logic", loc.logic}});
     }
     j["locations_meta"] = locs_meta;
 
@@ -167,7 +166,7 @@ nlohmann::json TrackerSnapshot::to_json() const
         {
             overrides.push_back({{"source_mod", ovr.source_mod},
                                  {"new_type", ovr.new_type},
-                                 {"requires_option", ovr.requires_option},
+                                 {"logic", ovr.logic},
                                  {"applied", ovr.applied}});
         }
         items_meta_arr.push_back({{"id", item.item_id},
@@ -175,7 +174,7 @@ nlohmann::json TrackerSnapshot::to_json() const
                                   {"type", item.type},
                                   {"original_type", item.original_type},
                                   {"mod_id", item.mod_id},
-                                  {"requires_option", item.requires_option},
+                                  {"logic", item.logic},
                                   {"overrides", overrides}});
     }
     j["items_meta"] = items_meta_arr;
@@ -190,7 +189,7 @@ nlohmann::json TrackerSnapshot::to_json() const
         nlohmann::json l;
         l["id"] = loc.location_id;
         l["name"] = loc.name;
-        l["region"] = loc.region;
+        l["display_region"] = loc.display_region;
         l["score"] = loc.score;
         l["checked"] = loc.checked;
         l["scored_tree"] = scored_node_to_json(loc.scored_tree);
@@ -240,6 +239,35 @@ APTrackerEngine::APTrackerEngine(ConstructorKey)
 APTrackerEngine::~APTrackerEngine() = default;
 
 // =============================================================================
+// Initialization Helpers
+// =============================================================================
+
+namespace {
+
+/// Derive a display region name for grouping in the tracker UI.
+/// Scans the logic string for the first "(Can Access: R)" pattern — returns R.
+/// Falls back to the prefix before ": " in the location name, then "Main".
+std::string derive_display_region(const std::string &logic, const std::string &name)
+{
+    static const std::string prefix = "(Can Access: ";
+    size_t pos = logic.find(prefix);
+    if (pos != std::string::npos)
+    {
+        size_t start = pos + prefix.size();
+        size_t end = logic.find(')', start);
+        if (end != std::string::npos)
+            return logic.substr(start, end - start);
+    }
+    // Fallback: prefix before ": " in name (e.g. "Tech: Workbench" → "Tech")
+    size_t colon = name.find(": ");
+    if (colon != std::string::npos)
+        return name.substr(0, colon);
+    return "Main";
+}
+
+} // anonymous namespace
+
+// =============================================================================
 // Initialization
 // =============================================================================
 
@@ -266,7 +294,7 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
         ParsedLocation parsed;
         parsed.location_id = loc.location_id;
         parsed.name = loc.location_name;
-        parsed.region = loc.region;
+        parsed.display_region = derive_display_region(loc.logic, loc.location_name);
 
         try
         {
@@ -404,7 +432,7 @@ void APTrackerEngine::compute_results(
         TrackerLocationResult result;
         result.location_id = loc.location_id;
         result.name = loc.name;
-        result.region = loc.region;
+        result.display_region = loc.display_region;
         result.checked = checked.count(loc.location_id) > 0;
         result.scored_tree = evaluate_scored(loc.logic, full_state);
         result.score = result.scored_tree.score;
@@ -561,10 +589,9 @@ void APTrackerEngine::build_ecosystem_metadata()
         EcosystemLocation eco_loc;
         eco_loc.location_id = loc.location_id;
         eco_loc.name = loc.location_name;
-        eco_loc.region = loc.region;
+        eco_loc.display_region = derive_display_region(loc.logic, loc.location_name);
         eco_loc.mod_id = loc.mod_id;
         eco_loc.logic = loc.logic;
-        eco_loc.requires_option = loc.requires_option;
         ecosystem_locations_.push_back(std::move(eco_loc));
     }
 
@@ -581,7 +608,7 @@ void APTrackerEngine::build_ecosystem_metadata()
         eco_item.type = item_type_to_string(item.type);
         eco_item.original_type = item_type_to_string(item.type); // Will be updated below
         eco_item.mod_id = item.mod_id;
-        eco_item.requires_option = item.requires_option;
+        eco_item.logic = item.logic;
 
         // Find overrides targeting this item
         for (const auto &ovr : all_overrides)
@@ -591,20 +618,29 @@ void APTrackerEngine::build_ecosystem_metadata()
             if (name_match && mod_match)
             {
                 EcosystemItem::OverrideEntry entry;
-                entry.source_mod = ovr.requires_option; // Track where the override came from
+                entry.source_mod = ovr.source_mod;
                 entry.new_type = ovr.type;
-                entry.requires_option = ovr.requires_option;
+                entry.logic = ovr.logic;
 
-                // Check if the condition is met using stored option values
-                if (ovr.requires_option.empty())
+                // Check if the override's option-only logic evaluates to true
+                if (ovr.logic.empty())
                 {
                     entry.applied = true;
                 }
                 else
                 {
-                    auto it = option_values_.find(ovr.requires_option);
-                    entry.applied = (it != option_values_.end() && !it->second.empty() &&
-                                     it->second != "0" && it->second != "false");
+                    try
+                    {
+                        auto ast = parse_logic(ovr.logic);
+                        ast = evaluate_options(ast, option_values_);
+                        ast = simplify(ast);
+                        // A const-true node means the option condition is satisfied
+                        entry.applied = (ast.type == LogicNodeType::Const && ast.const_value);
+                    }
+                    catch (...)
+                    {
+                        entry.applied = false;
+                    }
                 }
 
                 eco_item.overrides.push_back(std::move(entry));

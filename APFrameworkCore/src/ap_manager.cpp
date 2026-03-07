@@ -106,6 +106,9 @@ int APManager::init(lua_State *L)
         APCapabilities::get()->add_manifest(manifest);
     }
 
+    // Apply location overrides (OR-merge cross-mod location logic) — must run after all add_manifest calls
+    APCapabilities::get()->apply_location_overrides();
+
     // Transition to VALIDATION
     transition_to_unlocked(LifecycleState::VALIDATION, "Validating capabilities");
 

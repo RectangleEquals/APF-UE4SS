@@ -377,24 +377,6 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
         {
             const auto &caps = j["capabilities"];
 
-            // Parse item_overrides (cross-mod item type overrides)
-            if (caps.contains("item_overrides") && caps["item_overrides"].is_array())
-            {
-                for (const auto &ovr : caps["item_overrides"])
-                {
-                    ItemOverrideDef def;
-                    def.target_item = ovr.value("target_item", "");
-                    def.target_mod = ovr.value("target_mod", "");
-                    def.type = ovr.value("type", "");
-                    def.requires_option = ovr.value("requires_option", "");
-
-                    if (!def.target_item.empty() && !def.type.empty())
-                    {
-                        manifest.item_overrides.push_back(def);
-                    }
-                }
-            }
-
             // Parse regions
             if (caps.contains("regions") && caps["regions"].is_array())
             {
@@ -403,7 +385,6 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     RegionDef def;
                     def.name = reg.value("name", "");
                     def.logic = reg.value("logic", "");
-                    def.requires_option = reg.value("requires_option", "");
 
                     if (!def.name.empty())
                     {
@@ -420,9 +401,7 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     LocationDef def;
                     def.name = loc.value("name", "");
                     def.amount = loc.value("amount", 1);
-                    def.region = loc.value("region", "");
                     def.logic = loc.value("logic", "");
-                    def.requires_option = loc.value("requires_option", "");
 
                     if (!def.name.empty())
                     {
@@ -441,7 +420,7 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.type = item_type_from_string(item.value("type", "filler"));
                     def.amount = item.value("amount", 1);
                     def.action = item.value("action", "");
-                    def.requires_option = item.value("requires_option", "");
+                    def.logic = item.value("logic", "");
 
                     // Parse action args
                     if (item.contains("args") && item["args"].is_array())
@@ -465,6 +444,50 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     }
                 }
             }
+
+            // Parse overrides block (capabilities.overrides.locations + capabilities.overrides.items)
+            // Note: the old top-level "item_overrides" field is no longer supported; use "overrides.items"
+            if (caps.contains("overrides") && caps["overrides"].is_object())
+            {
+                const auto &overrides = caps["overrides"];
+
+                // Location overrides (OR-merge cross-mod location logic)
+                if (overrides.contains("locations") && overrides["locations"].is_array())
+                {
+                    for (const auto &ovr : overrides["locations"])
+                    {
+                        LocationOverrideDef def;
+                        def.location   = ovr.value("name", "");
+                        def.target_mod = ovr.value("target_mod", "");
+                        def.logic      = ovr.value("logic", "");
+                        // source_mod set by capabilities aggregator (not in JSON)
+
+                        if (!def.location.empty() && !def.target_mod.empty() && !def.logic.empty())
+                        {
+                            manifest.location_overrides.push_back(def);
+                        }
+                    }
+                }
+
+                // Item overrides (cross-mod item type changes)
+                if (overrides.contains("items") && overrides["items"].is_array())
+                {
+                    for (const auto &ovr : overrides["items"])
+                    {
+                        ItemOverrideDef def;
+                        def.target_item = ovr.value("target_item", "");
+                        def.target_mod  = ovr.value("target_mod", "");
+                        def.type        = ovr.value("type", "");
+                        def.logic       = ovr.value("logic", "");
+                        // source_mod set by capabilities aggregator (not in JSON)
+
+                        if (!def.target_item.empty() && !def.target_mod.empty() && !def.type.empty())
+                        {
+                            manifest.item_overrides.push_back(def);
+                        }
+                    }
+                }
+            }
         }
 
         APLogger::get()->log(LogLevel::Debug, "APModRegistry",
@@ -473,7 +496,8 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                                  std::to_string(manifest.locations.size()) + " locs, " +
                                  std::to_string(manifest.regions.size()) + " regions, " +
                                  std::to_string(manifest.goals.size()) + " goals, " +
-                                 std::to_string(manifest.item_overrides.size()) + " overrides");
+                                 std::to_string(manifest.item_overrides.size()) + " item_overrides, " +
+                                 std::to_string(manifest.location_overrides.size()) + " loc_overrides");
 
         return manifest;
     }
