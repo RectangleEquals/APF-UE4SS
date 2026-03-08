@@ -115,10 +115,11 @@ class ConfigTab(MDFloatLayout, MDTabsBase):
             return
         try:
             cfg = json.loads(path.read_text(encoding="utf-8"))
-            self._host_field.text = str(cfg.get("host", ""))
-            self._port_field.text = str(cfg.get("port", "38281"))
-            self._slot_field.text = str(cfg.get("slot_name", ""))
-            self._password_field.text = str(cfg.get("password", ""))
+            ap = cfg.get("ap_server", {})
+            self._host_field.text = str(ap.get("host", ""))
+            self._port_field.text = str(ap.get("port", "38281"))
+            self._slot_field.text = str(ap.get("slot_name", ""))
+            self._password_field.text = str(ap.get("password", ""))
             self._status.text = f"Loaded from {path}"
         except Exception as exc:
             self._status.text = f"Error reading config: {exc}"
@@ -137,13 +138,14 @@ class ConfigTab(MDFloatLayout, MDTabsBase):
                 except Exception:
                     pass
 
-            existing["host"] = self._host_field.text
+            ap = existing.setdefault("ap_server", {})
+            ap["host"] = self._host_field.text
             try:
-                existing["port"] = int(self._port_field.text)
+                ap["port"] = int(self._port_field.text)
             except ValueError:
-                existing["port"] = 38281
-            existing["slot_name"] = self._slot_field.text
-            existing["password"] = self._password_field.text
+                ap["port"] = 38281
+            ap["slot_name"] = self._slot_field.text
+            ap["password"] = self._password_field.text
 
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(existing, indent=4), encoding="utf-8")

@@ -23,6 +23,7 @@ Option expressions are evaluated at generation time (static). Item and region
 expressions compile to CollectionState lambdas for runtime AP logic.
 """
 
+import logging
 import re
 from typing import List, Tuple, Optional, Callable, Dict, Any, Union
 from dataclasses import dataclass
@@ -311,6 +312,7 @@ def evaluate_options(node, options: Dict[str, Any]):
         value = options.get(node.name)
         if value is None:
             # Unknown option — include by default (permissive)
+            logging.warning(f"[APF] Unknown option '{node.name}' in logic — treating as true (permissive)")
             return ConstNode(value=True)
 
         if node.op is None:

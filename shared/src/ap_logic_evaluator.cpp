@@ -453,6 +453,8 @@ LogicNode evaluate_options(const LogicNode &node, const std::map<std::string, st
         if (it == options.end())
         {
             // Unknown option — include by default (permissive)
+            APLogger::get()->log(LogLevel::Warn, "APLogicEval",
+                "Unknown option '" + node.option_name + "' in logic — defaulting to true (permissive)");
             return LogicNode::make_const(true);
         }
 
