@@ -1,16 +1,18 @@
 --[[
-    PalworldArchipelagoTracker - Main Script
+    PalworldArchipelagoTracker - Main Script (Task 10 redesign)
 
-    In-game location accessibility tracker for Archipelago.
-    Subscribes to the framework's tracker engine and receives:
-    - TRACKER_SNAPSHOT: Full ecosystem metadata + current state (on subscribe)
-    - TRACKER_UPDATE: Delta updates (on item received / location checked)
+    Subscribes to the AP Framework tracker engine.
+    Owns merge logic (converting IPC array format to map format) and
+    delegates all UI to tracker_ui.lua.
 
-    Each location has a score (0.0-1.0) and a scored logic tree for
-    per-expression UI coloring:
-    - Green  (1.0): fully accessible
-    - Yellow (0-1): partially accessible
-    - Red    (0.0): inaccessible
+    tracker_data structure (maps, not arrays):
+        tracker_data.locations = { [id] = {name, region, score, checked, logic_tree} }
+        tracker_data.regions   = { [name] = {score, reachable, logic_tree, total, checked} }
+        tracker_data.received_items = { [name] = count }
+        tracker_data.checked_locations = { [id] = true }
+
+    checked_set: local offline checks { [id] = true } — overlays server-side checked field
+    so UI reflects checks immediately before the server confirms via TRACKER_UPDATE.
 ]]
 
 -- ============================================================================
@@ -24,29 +26,27 @@ if not success_client then
     return
 end
 
--- Load registry helper for game-specific hooks
 local success_rh, RH = pcall(require, "registry_helper")
 if not success_rh then
     print("[APTracker] CRITICAL: registry_helper.lua not found\n")
     return
 end
 
--- Load UI bridge module
-local success_ui, TrackerUI = pcall(require, "tracker_ui")
+local success_ui, tracker_ui = pcall(require, "tracker_ui")
 if not success_ui then
     print("[APTracker] WARNING: Failed to load tracker_ui.lua\n")
-    print("[APTracker] Error: " .. tostring(TrackerUI) .. "\n")
-    TrackerUI = nil
+    print("[APTracker] Error: " .. tostring(tracker_ui) .. "\n")
+    tracker_ui = nil
 end
 
--- Load JSON parser for config file
 local success_json, lunajson = pcall(require, "lunajson")
 if not success_json then
     lunajson = nil
 end
 
 print("[APTracker] Libraries loaded successfully\n")
-local obj_WebBrowser    = RH.add_object("/Script/WebBrowserWidget.WebBrowser")
+
+local obj_WebBrowser     = RH.add_object("/Script/WebBrowserWidget.WebBrowser")
 local obj_PalTimeManager = RH.add_object("/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C")
 
 -- ============================================================================
@@ -78,84 +78,166 @@ tracker_config = load_config()
 -- ============================================================================
 
 local is_registered = false
-local tracker_subscribed = false
-local tracker_data = nil  -- Full snapshot data (ecosystem + dynamic state)
+local tracker_data  = nil   -- map-format tracker data (see module header)
+local checked_set      = {}    -- local offline checks {[id]=true}
 
 -- ============================================================================
 -- Update Loop
 -- ============================================================================
 
 local tick_time_last = os.clock()
-local TICK_UPDATE_INTERVAL = 0.5  -- Faster polling for tracker responsiveness
+local TICK_UPDATE_INTERVAL = 0.5  -- seconds between APClient.update() calls
 
-local update = function()
+local function update()
     if not APClient then return end
-
     local now = os.clock()
-    if now - tick_time_last < TICK_UPDATE_INTERVAL then
-        return
-    end
+    if now - tick_time_last < TICK_UPDATE_INTERVAL then return end
     tick_time_last = now
-
     APClient.update()
 end
 
 -- ============================================================================
--- Hook Registration
+-- Hook Registration (3 ticks: title news, title screen, in-world)
 -- ============================================================================
 
-local on_news_tick = function(self, obj, geom, deltaTime)
-    update()
-end
+local function on_tick() update() end
 
-local on_title_tick = function(self, obj, geom, deltaTime)
-    update()
-end
-
-local on_ptm_tick = function(self, PalTimeManagerObj, deltaTime)
-    update()
-end
-
-RH.add_function(obj_WebBrowser,     "/Game/Pal/Blueprint/UI/Title/WBP_WebBrowser_News.WBP_WebBrowser_News_C:Tick", on_news_tick)
-RH.add_function(obj_WebBrowser,     "/Game/Pal/Blueprint/UI/Title/WBP_TItle.WBP_TItle_C:Tick",                    on_title_tick)
-RH.add_function(obj_PalTimeManager, "/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C:Tick_BP",   on_ptm_tick)
+RH.add_function(obj_WebBrowser,     "/Game/Pal/Blueprint/UI/Title/WBP_WebBrowser_News.WBP_WebBrowser_News_C:Tick", on_tick)
+RH.add_function(obj_WebBrowser,     "/Game/Pal/Blueprint/UI/Title/WBP_TItle.WBP_TItle_C:Tick",                    on_tick)
+RH.add_function(obj_PalTimeManager, "/Game/Pal/Blueprint/System/BP_PalTimeManager.BP_PalTimeManager_C:Tick_BP",   on_tick)
 
 -- ============================================================================
--- Tracker Data Helpers
+-- Tracker Data Merge Helpers
 -- ============================================================================
 
-local function count_by_score(locations)
-    if not locations then return 0, 0, 0 end
-    local green, yellow, red = 0, 0, 0
-    for _, loc in ipairs(locations) do
-        if loc.checked then
-            -- Skip checked locations from counts
-        elseif loc.score >= 1.0 then
+--- Recompute total/checked location counts for all regions from the locations map.
+local function recompute_region_counts(td)
+    for _, rdata in pairs(td.regions) do
+        rdata.total   = 0
+        rdata.checked = 0
+    end
+    for _, ldata in pairs(td.locations) do
+        local rdata = td.regions[ldata.region]
+        if rdata then
+            rdata.total = rdata.total + 1
+            if ldata.checked then rdata.checked = rdata.checked + 1 end
+        end
+    end
+end
+
+--- Convert a full IPC tracker snapshot (array format) to map-format tracker_data.
+--- @param payload table  Raw IPC TRACKER_SNAPSHOT payload
+--- @return table         tracker_data in map format
+local function merge_snapshot(payload)
+    local td = {
+        locations         = {},
+        regions           = {},
+        received_items    = payload.received_items or {},
+        checked_locations = {},
+    }
+
+    -- Index regions by name
+    for _, reg in ipairs(payload.regions or {}) do
+        td.regions[reg.name] = {
+            score      = reg.score,
+            reachable  = reg.reachable,
+            logic_tree = reg.logic_tree,
+            total      = 0,
+            checked    = 0,
+        }
+    end
+
+    -- Index locations by id
+    for _, loc in ipairs(payload.locations or {}) do
+        td.locations[loc.id] = {
+            name       = loc.name,
+            region     = loc.display_region or "Main",
+            score      = loc.score,
+            checked    = loc.checked or false,
+            logic_tree = loc.logic_tree,
+        }
+    end
+
+    -- Build checked_locations set from snapshot array
+    for _, id in ipairs(payload.checked_locations or {}) do
+        td.checked_locations[id] = true
+    end
+
+    recompute_region_counts(td)
+    return td
+end
+
+--- Merge a TRACKER_UPDATE delta into existing map-format tracker_data.
+--- @param td    table  Existing tracker_data (map format)
+--- @param delta table  Raw IPC TRACKER_UPDATE payload
+--- @return table       Updated tracker_data
+local function merge_update(td, delta)
+    if not td then return merge_snapshot(delta) end
+
+    -- Update changed locations
+    for _, loc in ipairs(delta.locations or {}) do
+        td.locations[loc.id] = {
+            name       = loc.name,
+            region     = loc.display_region or "Main",
+            score      = loc.score,
+            checked    = loc.checked or false,
+            logic_tree = loc.logic_tree,
+        }
+    end
+
+    -- Update changed regions (preserve existing total/checked; recompute below)
+    for _, reg in ipairs(delta.regions or {}) do
+        local rdata = td.regions[reg.name]
+        if rdata then
+            rdata.score      = reg.score
+            rdata.reachable  = reg.reachable
+            rdata.logic_tree = reg.logic_tree
+        else
+            td.regions[reg.name] = {
+                score      = reg.score,
+                reachable  = reg.reachable,
+                logic_tree = reg.logic_tree,
+                total      = 0,
+                checked    = 0,
+            }
+        end
+    end
+
+    -- Update received_items if present in delta
+    if delta.received_items then
+        td.received_items = delta.received_items
+    end
+
+    -- Update checked_locations set from delta array (newly checked this update)
+    for _, id in ipairs(delta.checked_locations or {}) do
+        td.checked_locations[id] = true
+    end
+
+    recompute_region_counts(td)
+    return td
+end
+
+-- ============================================================================
+-- Logging Helper
+-- ============================================================================
+
+local function log_tracker_summary()
+    if not tracker_data or not tracker_data.locations then return end
+    local green, yellow, red, checked_count = 0, 0, 0, 0
+    for _, ldata in pairs(tracker_data.locations) do
+        if ldata.checked then
+            checked_count = checked_count + 1
+        elseif ldata.score >= 1.0 then
             green = green + 1
-        elseif loc.score > 0.0 then
+        elseif ldata.score > 0.0 then
             yellow = yellow + 1
         else
             red = red + 1
         end
     end
-    return green, yellow, red
-end
-
-local function log_tracker_summary()
-    if not tracker_data or not tracker_data.locations then return end
-
-    local green, yellow, red = count_by_score(tracker_data.locations)
-    local checked = 0
-    if tracker_data.checked_locations then
-        for _ in pairs(tracker_data.checked_locations) do
-            checked = checked + 1
-        end
-    end
-
     APClient.log("info", string.format(
         "Tracker: %d accessible, %d partial, %d blocked, %d checked",
-        green, yellow, red, checked
-    ))
+        green, yellow, red, checked_count))
 end
 
 -- ============================================================================
@@ -164,79 +246,21 @@ end
 
 APClient.on_tracker_snapshot(function(snapshot)
     APClient.log("info", "Tracker snapshot received\n")
-
-    -- Tag each location with its original index for "Default" sort restoration
-    if snapshot.locations then
-        for i, loc in ipairs(snapshot.locations) do
-            loc._sort_index = i
-        end
-    end
-
-    tracker_data = snapshot
+    tracker_data = merge_snapshot(snapshot)
     log_tracker_summary()
-
-    if TrackerUI then
-        TrackerUI.set_data_ref(tracker_data)
-        TrackerUI.push_full_snapshot(tracker_data)
-    end
+    if tracker_ui then tracker_ui.push_all_data(tracker_data, checked_set) end
 end)
 
 APClient.on_tracker_update(function(delta)
     APClient.log("trace", "Tracker update received\n")
-
     if not tracker_data then
-        -- No snapshot yet, request one
+        -- No snapshot yet — request one
         APClient.subscribe_tracker()
         return
     end
-
-    -- Merge delta into tracker_data
-    if delta.locations then
-        -- Build lookup by location_id for fast merge
-        local loc_by_id = {}
-        if tracker_data.locations then
-            for i, loc in ipairs(tracker_data.locations) do
-                loc_by_id[loc.id] = i
-            end
-        end
-
-        for _, updated_loc in ipairs(delta.locations) do
-            local idx = loc_by_id[updated_loc.id]
-            if idx then
-                tracker_data.locations[idx] = updated_loc
-            end
-        end
-    end
-
-    if delta.regions then
-        local reg_by_name = {}
-        if tracker_data.regions then
-            for i, reg in ipairs(tracker_data.regions) do
-                reg_by_name[reg.name] = i
-            end
-        end
-
-        for _, updated_reg in ipairs(delta.regions) do
-            local idx = reg_by_name[updated_reg.name]
-            if idx then
-                tracker_data.regions[idx] = updated_reg
-            end
-        end
-    end
-
-    if delta.received_items then
-        tracker_data.received_items = delta.received_items
-    end
-
-    if delta.checked_locations then
-        tracker_data.checked_locations = delta.checked_locations
-    end
-
+    tracker_data = merge_update(tracker_data, delta)
     log_tracker_summary()
-
-    if TrackerUI then
-        TrackerUI.push_delta_update(tracker_data, delta)
-    end
+    if tracker_ui then tracker_ui.push_all_data(tracker_data, checked_set) end
 end)
 
 -- ============================================================================
@@ -250,13 +274,12 @@ end)
 APClient.on_disconnect(function()
     APClient.log("warn", "Disconnected from framework IPC\n")
     is_registered = false
-    tracker_subscribed = false
 end)
 
 APClient.on_lifecycle(function(state, message)
     APClient.log("info", "Lifecycle: " .. state .. " - " .. (message or "") .. "\n")
 
-    -- Register during PRIORITY_REGISTRATION phase (tracker matches archipelago.*.* priority regex)
+    -- Tracker matches the archipelago.*.* priority regex → register during PRIORITY_REGISTRATION
     if state == "PRIORITY_REGISTRATION" and not is_registered then
         if APClient.register_mod() then
             APClient.log("info", "Registration request sent\n")
@@ -274,14 +297,11 @@ APClient.on_registration_rejected(function(reason)
 end)
 
 APClient.on_state_active(function()
-    APClient.log("info", "Framework ACTIVE - subscribing to tracker\n")
-    if not tracker_subscribed then
-        if APClient.subscribe_tracker() then
-            tracker_subscribed = true
-            APClient.log("info", "Tracker subscription sent\n")
-        else
-            APClient.log("warn", "Failed to subscribe to tracker\n")
-        end
+    APClient.log("info", "Framework ACTIVE — subscribing to tracker\n")
+    if APClient.subscribe_tracker() then
+        APClient.log("info", "Tracker subscription sent\n")
+    else
+        APClient.log("warn", "Failed to subscribe to tracker\n")
     end
 end)
 
@@ -294,21 +314,49 @@ APClient.on_error(function(code, message)
 end)
 
 -- ============================================================================
--- UI Initialization
+-- Keybinds
 -- ============================================================================
 
-if TrackerUI then
-    TrackerUI.init(APClient)
-    TrackerUI.register_keybinds(tracker_config)
-    APClient.log("info", "TrackerUI module initialized\n")
+local DEFAULT_KEYBINDS = {
+    toggle_panel = "F1",
+    force_repush = "F5",
+}
+
+local function register_keybinds(config)
+    local kb = config and config.keybinds or DEFAULT_KEYBINDS
+
+    local toggle_key = Key[kb.toggle_panel] or Key.F1
+    RegisterKeyBind(toggle_key, function()
+        ExecuteInGameThread(function()
+            if tracker_ui then tracker_ui.toggle_visible() end
+        end)
+    end)
+
+    local repush_key = Key[kb.force_repush] or Key.F5
+    RegisterKeyBind(repush_key, function()
+        ExecuteInGameThread(function()
+            if tracker_ui then tracker_ui.repush() end
+        end)
+    end)
 end
 
 -- ============================================================================
--- IPC Initialization
+-- Actor Bridge — receives ModActor from BP InitLuaInterop custom event
 -- ============================================================================
+
+RegisterCustomEvent("APTracker_ToLua_InitUI", function(actor)
+    if tracker_ui then tracker_ui.init(actor) end
+end)
+
+-- ============================================================================
+-- Initialization
+-- ============================================================================
+
+register_keybinds(tracker_config)
+APClient.log("info", "Tracker keybinds registered\n")
 
 if APClient.connect() then
     APClient.log("info", "IPC connection initiated\n")
 else
-    APClient.log("warn", "IPC connection failed - framework may not be ready yet\n")
+    APClient.log("warn", "IPC connection failed — framework may not be ready yet\n")
 end

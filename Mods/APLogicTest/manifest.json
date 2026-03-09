@@ -1,0 +1,100 @@
+{
+    "mod_id": "spectrecular.palworld.logic_test",
+    "name": "AP Logic Test",
+    "version": "1.0.0",
+    "description": "Minimal test game for AP framework logic validation",
+    "enabled": true,
+    "depends": ["archipelago.palworld.framework"],
+
+    "options": {
+        "test_scope": {
+            "type": "text_choice",
+            "default": "standard",
+            "choices": ["simple", "standard", "complex"],
+            "description": "Which location set to include (affects generation)"
+        },
+        "enable_traps": {
+            "type": "toggle",
+            "default": false,
+            "description": "Include Glitch Bomb trap items in the item pool"
+        },
+        "extra_filler": {
+            "type": "range",
+            "default": 3,
+            "range_start": 0,
+            "range_end": 10,
+            "description": "Number of extra Data Shard filler items"
+        }
+    },
+
+    "goals": [
+        {
+            "name": "any_key",
+            "display": "Acquire Any Key",
+            "description": "Collect at least one Key item",
+            "logic": "(Item: Key A) OR (Item: Key B) OR (Item: Key C)"
+        },
+        {
+            "name": "all_keys",
+            "display": "Acquire All Keys",
+            "description": "Collect all three Key items",
+            "logic": "(Item: Key A) AND (Item: Key B) AND (Item: Key C)"
+        },
+        {
+            "name": "completion",
+            "display": "Full Completion",
+            "description": "Collect all keys and Power Cell",
+            "logic": "(Item: Key A) AND (Item: Key B) AND (Item: Key C) AND (Item: Power Cell)"
+        }
+    ],
+
+    "capabilities": {
+        "regions": [
+            { "name": "Zone Alpha" },
+            { "name": "Zone Beta",  "logic": "(Item: Key A)" },
+            { "name": "Zone Gamma", "logic": "(Item: Key A) AND (Item: Key B)" },
+            { "name": "Zone Delta", "logic": "(Item: Key A) AND ((Item: Key B) OR (Item: Key C))" },
+            { "name": "Zone Omega", "logic": "(Item: Key B) AND (Item: Key C)" }
+        ],
+
+        "items": [
+            { "name": "Key A",       "type": "progression", "amount": 1 },
+            { "name": "Key B",       "type": "progression", "amount": 1 },
+            { "name": "Key C",       "type": "progression", "amount": 1 },
+            { "name": "Power Cell",  "type": "useful",      "amount": 1 },
+            { "name": "Data Shard",  "type": "filler",      "amount": 5 },
+            { "name": "Glitch Bomb", "type": "trap",        "amount": 2,
+              "logic": "(Option: enable_traps)" }
+        ],
+
+        "locations": [
+            { "name": "Alpha: Free Chest" },
+            { "name": "Alpha: Key Cache",
+              "logic": "(Item: Key A)" },
+
+            { "name": "Beta: Supply Crate",
+              "logic": "(Can Access: Zone Beta)" },
+            { "name": "Beta: AND Vault",
+              "logic": "(Can Access: Zone Beta) AND (Item: Key B)" },
+            { "name": "Beta: OR Cache",
+              "logic": "(Can Access: Zone Beta) AND ((Item: Key A) OR (Item: Key C))" },
+            { "name": "Beta: Cross-Region",
+              "logic": "(Can Access: Zone Beta) AND (Can Access: Zone Omega)" },
+
+            { "name": "Gamma: Power Vault",
+              "logic": "(Can Access: Zone Gamma) AND (Item: Power Cell)" },
+            { "name": "Gamma: Nested Logic",
+              "logic": "(Can Access: Zone Gamma) AND ((Item: Key B) OR (Item: Key C))" },
+
+            { "name": "Delta: Archive",
+              "logic": "(Can Access: Zone Delta)" },
+            { "name": "Delta: Mode Bonus",
+              "logic": "(Can Access: Zone Delta) AND ((Option: test_scope == standard) OR (Option: test_scope == complex))" },
+
+            { "name": "Omega: Terminal",
+              "logic": "(Can Access: Zone Omega)" },
+            { "name": "Omega: Core",
+              "logic": "(Can Access: Zone Omega) AND (Option: test_scope == complex) AND (Item: Key A) AND (Item: Key B) AND (Item: Key C)" }
+        ]
+    }
+}

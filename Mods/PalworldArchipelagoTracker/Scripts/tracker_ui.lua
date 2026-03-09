@@ -1,32 +1,35 @@
 --[[
-    tracker_ui.lua — UI Bridge Module for APTracker
+    tracker_ui.lua — UI Bridge Module for APTracker (Task 10 redesign)
 
-    Handles all communication between Lua and the Blueprint ModActor:
-    - ModActor discovery with race condition handling
-    - Rich text formatting for scored logic trees
-    - Snapshot/delta push to Blueprint widgets
-    - Configurable keybind registration
+    Owns sort/filter/search state and all communication with WBP_TrackerUI widget.
+    Lua drives sort, filter, and search; BP stores and displays whatever Lua pushes.
 
-    Separated from main.lua to keep IPC/callback logic clean.
+    Architecture:
+    - push_all_data(td, checked_set): call after snapshot/update; stores refs + calls repush()
+    - repush(): applies current sort/filter/search state, pushes to BP widget via structs
+    - BP fires custom events when buttons/search change → Lua updates state + repush()
 ]]
 
-local TrackerUI = {}
+local M = {}
 
 -- ============================================================================
 -- Private State
 -- ============================================================================
 
-local APClient = nil
-local tracker_actor = nil
-local actor_ready = false
-local pending_snapshot = nil -- Buffered snapshot if data arrives before ModActor
-local tracker_data_ref = nil -- Reference to main.lua's tracker_data (set via set_data_ref)
+local tracker_widget   = nil  -- WBP_TrackerUI (from actor:GetTrackerUI())
+local tracker_data_ref = nil  -- tracker_data table (set via push_all_data)
+local checked_set_ref  = nil  -- local offline check set {[id]=true} (set via push_all_data)
+
+-- Sort/filter/search state (owned by Lua)
+local sort_mode   = 0   -- 0=Default, 1=Alphabetical, 2=Score descending
+local filter_mode = 0   -- 0=All, 1=Unchecked, 2=InLogic (score > 0)
+local search_text = ""  -- current case-insensitive filter string
 
 -- ============================================================================
--- Rich Text Formatting
+-- Rich Text Formatters (preserved logic from previous tracker_ui.lua)
 -- ============================================================================
 
---- Map a score (0.0-1.0) to a DT_TrackerStyles row name.
+--- Map a 0.0–1.0 score to a DT_TrackerStyles row name.
 local function score_to_style(score)
     if score >= 1.0 then
         return "Green"
@@ -37,17 +40,16 @@ local function score_to_style(score)
     end
 end
 
---- Format a scored logic tree as single-line rich text.
---- Used for compact status/summary display.
+--- Format a scored logic tree as single-line rich text (for LogicRichText field).
 --- @param node table|nil  Scored tree node {type, score, display, children}
---- @param depth number    Current recursion depth (default 0)
+--- @param depth number    Current recursion depth (start at 0)
 --- @return string         Rich text markup
-function TrackerUI.format_scored_tree(node, depth)
+local function format_scored_tree(node, depth)
     depth = depth or 0
     if not node then return "" end
     local children = node.children
 
-    -- Leaf node: colored by its individual score
+    -- Leaf node: color by individual score
     if not children or #children == 0 then
         local style = score_to_style(node.score or 0)
         return "<" .. style .. ">" .. (node.display or "") .. "</>"
@@ -57,7 +59,7 @@ function TrackerUI.format_scored_tree(node, depth)
     local op = " <Operator>" .. (node.type == "and" and "AND" or "OR") .. "</> "
     local parts = {}
     for _, child in ipairs(children) do
-        local t = TrackerUI.format_scored_tree(child, depth + 1)
+        local t = format_scored_tree(child, depth + 1)
         if t ~= "" then table.insert(parts, t) end
     end
     if #parts == 0 then return "" end
@@ -71,384 +73,189 @@ function TrackerUI.format_scored_tree(node, depth)
     return joined
 end
 
---- Format a scored logic tree as multiline indented rich text.
---- Used for expandable logic detail panels.
+--- Format a scored logic tree as plain text (for search matching and debug tooltips).
 --- @param node table|nil  Scored tree node
---- @param indent number   Current indentation level (default 0)
---- @return string         Rich text markup with newlines
-function TrackerUI.format_scored_tree_multiline(node, indent)
-    indent = indent or 0
-    if not node then return "" end
-    local prefix = string.rep("  ", indent)
-    local children = node.children
-
-    -- Leaf node
-    if not children or #children == 0 then
-        local style = score_to_style(node.score or 0)
-        return prefix .. "<" .. style .. ">" .. (node.display or "") .. "</>"
-    end
-
-    -- Compound node: header line + indented children
-    local label = (node.type == "and") and "ALL of:" or "ANY of:"
-    local style = score_to_style(node.score or 0)
-    local lines = { prefix .. "<" .. style .. ">" .. label .. "</>" }
-    for _, child in ipairs(children) do
-        table.insert(lines, TrackerUI.format_scored_tree_multiline(child, indent + 1))
-    end
-    return table.concat(lines, "\n")
-end
-
---- Format a scored logic tree as plain text (no rich text tags).
---- Used for search matching against logic content.
---- @param node table|nil  Scored tree node
---- @param indent number   Current indentation level (default 0)
+--- @param indent number   Current indentation level (start at 0)
 --- @return string         Plain text
-function TrackerUI.format_scored_tree_plain(node, indent)
+local function format_scored_tree_plain(node, indent)
     indent = indent or 0
     if not node then return "" end
     local prefix = string.rep("  ", indent)
     local children = node.children
 
-    -- Leaf node
     if not children or #children == 0 then
         return prefix .. (node.display or "")
     end
 
-    -- Compound node
     local label = (node.type == "and") and "ALL of:" or "ANY of:"
     local lines = { prefix .. label }
     for _, child in ipairs(children) do
-        table.insert(lines, TrackerUI.format_scored_tree_plain(child, indent + 1))
+        table.insert(lines, format_scored_tree_plain(child, indent + 1))
     end
     return table.concat(lines, "\n")
 end
 
 -- ============================================================================
--- Score Counting Helper
+-- Debug Mode Helper
 -- ============================================================================
 
---- Count locations by accessibility score (excludes checked).
---- @param locations table  Array of location data
---- @return number, number, number  green, yellow, red counts
-local function count_by_score(locations)
-    if not locations then return 0, 0, 0 end
-    local green, yellow, red = 0, 0, 0
-    for _, loc in ipairs(locations) do
-        if loc.checked then
-            -- Skip checked locations
-        elseif loc.score >= 1.0 then
-            green = green + 1
-        elseif loc.score > 0.0 then
-            yellow = yellow + 1
+--- Returns true if the widget's debug checkbox is checked.
+--- Protected call — safe if GetDebugMode() hasn't been added to BP yet.
+local function debug_mode_enabled()
+    if not tracker_widget then return false end
+    local ok, val = pcall(function() return tracker_widget:GetDebugMode() end)
+    return ok and val
+end
+
+-- ============================================================================
+-- Filter / Search
+-- ============================================================================
+
+local function location_passes_filter(loc_id, ldata)
+    local is_checked = (checked_set_ref and checked_set_ref[loc_id]) or ldata.checked or false
+
+    if filter_mode == 1 and is_checked then return false end                       -- Unchecked: skip checked
+    if filter_mode == 2 and (ldata.score or 0) <= 0 then return false end          -- InLogic: score > 0
+
+    if search_text ~= "" then
+        local name_lower = (ldata.name or ""):lower()
+        local colon_idx  = search_text:find(":")
+        if colon_idx and debug_mode_enabled() then
+            -- "prefix:term" → search logic plain text (debug mode only)
+            local term       = search_text:sub(colon_idx + 1)
+            local logic_plain = format_scored_tree_plain(ldata.logic_tree or {}):lower()
+            if not logic_plain:find(term, 1, true) then return false end
         else
-            red = red + 1
+            if not name_lower:find(search_text, 1, true) then return false end
         end
     end
-    return green, yellow, red
+
+    return true
+end
+
+--- Build sorted + filtered list of {id, data} pairs for Repopulate.
+local function build_display_list()
+    local list = {}
+    for loc_id, ldata in pairs((tracker_data_ref and tracker_data_ref.locations) or {}) do
+        if location_passes_filter(loc_id, ldata) then
+            list[#list + 1] = { id = loc_id, data = ldata }
+        end
+    end
+
+    if sort_mode == 1 then
+        -- Alphabetical by name
+        table.sort(list, function(a, b) return (a.data.name or "") < (b.data.name or "") end)
+    elseif sort_mode == 2 then
+        -- Score descending
+        table.sort(list, function(a, b) return (a.data.score or 0) > (b.data.score or 0) end)
+    end
+    -- sort_mode == 0: Default (iteration order; grouped by region in repush push order)
+
+    return list
 end
 
 -- ============================================================================
--- ModActor Discovery
+-- Init — Actor Discovery and Event Wiring
 -- ============================================================================
 
---- Initialize the UI module.
---- Sets up ModActor discovery via hooking InitLuaInterop in the ModActor BP.
---- @param client table  APClient reference (from APClientLib)
-function TrackerUI.init(client)
-    APClient = client
-    
-    RegisterHook("/Script/Engine.PlayerController:ClientRestart", function (Context)
-        if player_controller == nil or not player_controller:IsValid() then
-            player_controller = Context:get()
-            
-            RegisterHook("/Game/Mods/APTracker/ModActor.ModActor_C:InitLuaInterop", function (actorContext)
-                tracker_actor = actorContext:get()
-                actor_ready = tracker_actor:IsValid()
-                if actor_ready then
-                    APClient.log("info", "Found existing Tracker ModActor\n")
-                    
-                    -- If we already have tracker data buffered, push it now
-                    if pending_snapshot then
-                        TrackerUI.push_full_snapshot(pending_snapshot)
-                        pending_snapshot = nil
-                    end
-                end
-            end)
-        end
+--- Initialize the UI module from the ModActor.
+--- Called from main.lua when APTracker_ToLua_InitUI custom event fires.
+--- @param actor userdata  ModActor BP reference
+function M.init(actor)
+    if not actor then return end
+    local ok, widget = pcall(function() return actor:GetTrackerUI() end)
+    if not ok or not widget then return end
+    tracker_widget = widget
+
+    -- Hook: BP sort button clicked → ETrackerSortMode ordinal
+    RegisterCustomEvent("APTrackerUI_ToLua_OnSortModeChanged", function(mode)
+        sort_mode = tonumber(mode) or 0
+        M.repush()
     end)
 
-    -- Register for sort mode changes from Blueprint
-    RegisterCustomEvent("APTracker_ToLua_OnSortModeChanged", function(_widget, mode)
-        TrackerUI.apply_sort(mode:get())
-    end)
-end
-
---- Set the tracker data reference (called from main.lua after snapshot).
---- @param data table  Reference to the main tracker_data table
-function TrackerUI.set_data_ref(data)
-    tracker_data_ref = data
-end
-
--- ============================================================================
--- Blueprint Push Functions
--- ============================================================================
-
---- Push a full tracker snapshot to the Blueprint ModActor.
---- Groups locations by region and creates all entries via ModActor functions.
---- If ModActor isn't ready yet, buffers the data for later.
---- @param data table  Full tracker snapshot {locations, regions, ...}
-function TrackerUI.push_full_snapshot(data)
-    if not actor_ready or not tracker_actor or not tracker_actor:IsValid() then
-        pending_snapshot = data
-        return
-    end
-    if not data or not data.locations then return end
-
-    tracker_actor:BatchBegin()
-    tracker_actor:ClearAll()
-
-    -- Group locations by region, preserving order
-    local regions_locs = {}
-    local region_order = {}
-    for _, loc in ipairs(data.locations) do
-        local r = loc.region or "Unknown"
-        if not regions_locs[r] then
-            regions_locs[r] = {}
-            table.insert(region_order, r)
-        end
-        table.insert(regions_locs[r], loc)
-    end
-
-    -- Build region metadata lookup
-    local region_data = {}
-    if data.regions then
-        for _, reg in ipairs(data.regions) do
-            region_data[reg.name] = reg
-        end
-    end
-
-    -- Add regions and their locations
-    for _, rname in ipairs(region_order) do
-        local reg = region_data[rname]
-        local locs = regions_locs[rname]
-
-        -- Count checked locations in this region
-        local checked = 0
-        for _, l in ipairs(locs) do
-            if l.checked then checked = checked + 1 end
-        end
-
-        -- Format region logic tree
-        local reg_rt = ""
-        if reg and reg.scored_tree then
-            reg_rt = TrackerUI.format_scored_tree_multiline(reg.scored_tree)
-        end
-
-        tracker_actor:AddRegion(
-            FText(rname),
-            reg and reg.score or 0,
-            reg and reg.reachable or false,
-            FText(reg_rt),
-            #locs,
-            checked)
-
-        -- Add each location under this region
-        for _, loc in ipairs(locs) do
-            local loc_rt = ""
-            local loc_plain = ""
-            if loc.scored_tree then
-                loc_rt = TrackerUI.format_scored_tree_multiline(loc.scored_tree)
-                loc_plain = TrackerUI.format_scored_tree_plain(loc.scored_tree)
-            end
-
-            tracker_actor:AddLocation(
-                FText(rname),
-                loc.id,
-                FText(loc.name),
-                loc.score,
-                loc.checked or false,
-                FText(loc_rt),
-                FText(loc_plain))
-        end
-    end
-
-    tracker_actor:BatchEnd()
-    TrackerUI.update_status_text(data)
-end
-
---- Push a delta update to the Blueprint ModActor.
---- Updates existing regions and locations in-place (no widget recreation).
---- @param data table   Full merged tracker data (for region checked counts)
---- @param delta table  Delta update {regions, locations, ...}
-function TrackerUI.push_delta_update(data, delta)
-    if not actor_ready or not tracker_actor or not tracker_actor:IsValid() then
-        return
-    end
-
-    -- Update changed regions
-    if delta.regions then
-        for _, reg in ipairs(delta.regions) do
-            -- Recount checked/total from merged data
-            local checked, total = 0, 0
-            if data and data.locations then
-                for _, l in ipairs(data.locations) do
-                    if l.region == reg.name then
-                        total = total + 1
-                        if l.checked then checked = checked + 1 end
-                    end
-                end
-            end
-
-            local rt = ""
-            if reg.scored_tree then
-                rt = TrackerUI.format_scored_tree_multiline(reg.scored_tree)
-            end
-
-            tracker_actor:UpdateRegion(
-                FText(reg.name),
-                reg.score,
-                reg.reachable,
-                FText(rt),
-                total,
-                checked)
-        end
-    end
-
-    -- Update changed locations
-    if delta.locations then
-        for _, loc in ipairs(delta.locations) do
-            local rt = ""
-            local plain = ""
-            if loc.scored_tree then
-                rt = TrackerUI.format_scored_tree_multiline(loc.scored_tree)
-                plain = TrackerUI.format_scored_tree_plain(loc.scored_tree)
-            end
-
-            tracker_actor:UpdateLocation(
-                loc.id,
-                loc.score,
-                loc.checked or false,
-                FText(rt),
-                FText(plain))
-        end
-    end
-
-    TrackerUI.update_status_text(data)
-end
-
---- Update the status text summary line with color-coded accessibility counts.
---- @param data table  Full tracker data with locations
-function TrackerUI.update_status_text(data)
-    if not actor_ready or not tracker_actor or not tracker_actor:IsValid() then
-        return
-    end
-    if not data or not data.locations then return end
-
-    local green, yellow, red = count_by_score(data.locations)
-    local total_checked = 0
-    for _, loc in ipairs(data.locations) do
-        if loc.checked then total_checked = total_checked + 1 end
-    end
-
-    local status = string.format(
-        "<Green>%d accessible</> | <Yellow>%d partial</> | <Red>%d blocked</> | <Checked>%d checked</>",
-        green, yellow, red, total_checked)
-    tracker_actor:SetStatusText(FText(status))
-end
-
--- ============================================================================
--- Keybind Registration
--- ============================================================================
-
-local DEFAULT_KEYBINDS = {
-    toggle_panel = "F1",
-    cycle_filter = "F2"
-}
-
-function _toggle_panel()
-    if not actor_ready or not tracker_actor or not tracker_actor:IsValid() then
-        return
-    end
-
-    APClient.log("info", "Toggling UI Panel...\n")
-    tracker_actor:TogglePanel()
-end
-
-local current_filter = 0
-function _cycle_filter()
-    if not actor_ready or not tracker_actor or not tracker_actor:IsValid() then
-        return
-    end
-    
-    current_filter = (current_filter + 1) % 3
-    APClient.log("info", "Cycling Filter Mode (".. current_filter .. ")\n")
-    tracker_actor:SetFilterMode(current_filter)
-end
-
---- Register keyboard shortcuts for tracker UI control.
---- Reads keybind config, falls back to defaults.
---- @param config table|nil  Parsed config.json content
-function TrackerUI.register_keybinds(config)
-    local kb = config and config.keybinds or DEFAULT_KEYBINDS
-
-    -- Toggle tracker panel visibility
-    local toggle_key = Key[kb.toggle_panel] or Key.F1
-    RegisterKeyBind(toggle_key, function()
-        ExecuteInGameThread(_toggle_panel)
+    -- Hook: BP filter button clicked → ETrackerFilterMode ordinal
+    RegisterCustomEvent("APTrackerUI_ToLua_OnFilterModeChanged", function(mode)
+        filter_mode = tonumber(mode) or 0
+        M.repush()
     end)
 
-    -- Cycle filter mode: All → Unchecked → In Logic → All ...
-    local filter_key = Key[kb.cycle_filter] or Key.F2
-    RegisterKeyBind(filter_key, function()
-        ExecuteInGameThread(_cycle_filter)
+    -- Hook: WBP_SearchBoxPanel text committed
+    RegisterCustomEvent("APTrackerUI_ToLua_OnTextCommitted", function(text)
+        search_text = tostring(text or ""):lower()
+        M.repush()
     end)
+
+    -- Flush any tracker data that arrived before the widget was ready
+    if tracker_data_ref then M.repush() end
 end
 
 -- ============================================================================
--- Sort Implementation
+-- Visibility
 -- ============================================================================
 
---- Re-sort tracker data and push a full snapshot.
---- Called via RegisterCustomEvent when BP sort button is pressed.
---- @param mode number  Sort mode: 0=Default, 1=Alphabetical, 2=ByScore
-function TrackerUI.apply_sort(mode)
-    if not tracker_data_ref or not tracker_data_ref.locations then return end
+function M.toggle_visible()
+    if tracker_widget then tracker_widget:ToggleVisible() end
+end
 
-    if mode == 0 then
-        -- Default: restore original order (by region order, then original index)
-        table.sort(tracker_data_ref.locations, function(a, b)
-            if a.region ~= b.region then return a.region < b.region end
-            return (a._sort_index or 0) < (b._sort_index or 0)
-        end)
-    elseif mode == 1 then
-        -- Alphabetical within each region
-        table.sort(tracker_data_ref.locations, function(a, b)
-            if a.region ~= b.region then return a.region < b.region end
-            return a.name < b.name
-        end)
-    elseif mode == 2 then
-        -- By score descending within each region
-        table.sort(tracker_data_ref.locations, function(a, b)
-            if a.region ~= b.region then return a.region < b.region end
-            return (a.score or 0) > (b.score or 0)
-        end)
+function M.set_visible(visible)
+    if tracker_widget then tracker_widget:SetVisible(visible) end
+end
+
+-- ============================================================================
+-- repush — Clear BP data and repopulate from current state
+-- ============================================================================
+
+--- Clear BP widget data and push current tracker state with sort/filter/search applied.
+--- Called after every data update or state change (sort/filter/search/F5).
+function M.repush()
+    if not tracker_widget or not tracker_data_ref then return end
+
+    tracker_widget:ClearData()
+
+    -- Push all regions (Repopulate inserts region headers only for regions with visible locations)
+    for region_name, rdata in pairs((tracker_data_ref.regions) or {}) do
+        -- Lua strings auto-convert to FString; named table fields auto-convert to BP struct
+        tracker_widget:AddRegion({
+            RegionName    = region_name,
+            Score         = rdata.score    or 0.0,
+            bReachable    = rdata.reachable or false,
+            LogicRichText = format_scored_tree(rdata.logic_tree or {}, 0),
+            TotalCount    = rdata.total    or 0,
+            CheckedCount  = rdata.checked  or 0,
+        })
     end
 
-    TrackerUI.push_full_snapshot(tracker_data_ref)
+    -- Push locations in sorted + filtered order
+    local display_list = build_display_list()
+    for _, entry in ipairs(display_list) do
+        local loc_id = entry.id
+        local ldata  = entry.data
+        local is_checked = (checked_set_ref and checked_set_ref[loc_id]) or ldata.checked or false
+        tracker_widget:AddLocation({
+            LocationId     = loc_id,
+            RegionName     = ldata.region  or "",
+            DisplayName    = ldata.name    or tostring(loc_id),
+            Score          = ldata.score   or 0.0,
+            bChecked       = is_checked,
+            LogicRichText  = format_scored_tree(ldata.logic_tree or {}, 0),
+            LogicPlainText = format_scored_tree_plain(ldata.logic_tree or {}),
+        })
+    end
+
+    tracker_widget:Refresh(true)
 end
 
 -- ============================================================================
--- Utility: Check if ModActor is available
+-- push_all_data — Called by main.lua after snapshot/update merge
 -- ============================================================================
 
---- Returns true if the Blueprint ModActor is discovered and valid.
-function TrackerUI.is_ready()
-    return actor_ready and tracker_actor ~= nil and tracker_actor:IsValid()
+--- Store tracker data refs and trigger repush with current sort/filter/search.
+--- @param td          table  tracker_data (map-format: locations by id, regions by name)
+--- @param checked_set table  local offline checks {[id]=true}
+function M.push_all_data(td, checked_set)
+    tracker_data_ref = td
+    checked_set_ref  = checked_set
+    M.repush()
 end
 
---- Returns the raw ModActor reference (for direct calls if needed).
-function TrackerUI.get_actor()
-    return tracker_actor
-end
-
-return TrackerUI
+return M
