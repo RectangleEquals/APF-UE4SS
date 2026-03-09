@@ -62,7 +62,7 @@
             { "name": "Key B",       "type": "progression", "amount": 1 },
             { "name": "Key C",       "type": "progression", "amount": 1 },
             { "name": "Power Cell",  "type": "useful",      "amount": 1 },
-            { "name": "Data Shard",  "type": "filler",      "amount": 5 },
+            { "name": "Data Shard",  "type": "filler",      "amount": -1 },
             { "name": "Glitch Bomb", "type": "trap",        "amount": 2,
               "logic": "(Option: enable_traps)" }
         ],

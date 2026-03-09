@@ -214,6 +214,21 @@ class APFrameworkWorld(World):
             if hasattr(opt, "value"):
                 option_values[attr_name] = opt.value
 
+        # Supplement with mod-defined option defaults (not accessible via ClassVar options)
+        for key, defn in self.capabilities.get("option_defaults", {}).items():
+            if key not in option_values:
+                typ = defn.get("type", "toggle")
+                raw = defn.get("default", "")
+                if typ == "toggle":
+                    option_values[key] = raw == "true"
+                elif typ == "range":
+                    try:
+                        option_values[key] = int(raw)
+                    except (ValueError, TypeError):
+                        option_values[key] = 0
+                else:  # text_choice
+                    option_values[key] = str(raw)
+
         removed_count = 0
 
         def _keep(entry: dict, kind: str) -> bool:
@@ -650,6 +665,15 @@ class APFrameworkWorld(World):
             opt = getattr(self.options, attr_name, None)
             if hasattr(opt, "value"):
                 options_dict[attr_name] = str(opt.value)
+
+        # Supplement with mod-defined option defaults for C++ runtime evaluation
+        for key, defn in self.capabilities.get("option_defaults", {}).items():
+            if key not in options_dict:
+                typ = defn.get("type", "toggle")
+                raw = str(defn.get("default", ""))
+                options_dict[key] = "1" if (typ == "toggle" and raw == "true") else (
+                    "0" if typ == "toggle" else raw)
+
         slot_data["option_values"] = options_dict
 
         self.log.debug(

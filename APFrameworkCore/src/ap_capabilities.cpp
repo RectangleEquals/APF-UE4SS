@@ -676,6 +676,15 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         info.name = manifest.name;
         info.version = manifest.version;
         config.mods.push_back(info);
+
+        // Collect mod-defined option defaults (first-writer wins across mods)
+        for (const auto &opt : manifest.options)
+        {
+            if (config.option_defaults.find(opt.key) == config.option_defaults.end())
+            {
+                config.option_defaults[opt.key] = {opt.type, opt.default_value};
+            }
+        }
     }
 
     // Add regions

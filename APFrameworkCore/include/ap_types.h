@@ -283,6 +283,14 @@ struct CapabilitiesData {
   std::vector<CapabilitiesConfigItemOverride> item_overrides;
 };
 
+// Mod-defined option default (type + default value as string).
+// Embedded in capabilities JSON so the Python apworld can evaluate option-gated
+// logic without requiring Archipelago ClassVar options.
+struct CapabilitiesConfigOptionDefault {
+  std::string type;          // "toggle", "range", "text_choice"
+  std::string default_value; // encoded as string (toggle: "true"/"false", range: "3", text_choice: "standard")
+};
+
 struct CapabilitiesConfig {
   std::string version;
   std::string game;
@@ -292,6 +300,7 @@ struct CapabilitiesConfig {
   std::string checksum;
   std::vector<ModInfo> mods;
   CapabilitiesData capabilities;
+  std::map<std::string, CapabilitiesConfigOptionDefault> option_defaults; // mod-defined options with their defaults
 
   nlohmann::ordered_json to_json() const {
     nlohmann::ordered_json j;
@@ -389,6 +398,19 @@ struct CapabilitiesConfig {
     }
 
     j["capabilities"] = caps;
+
+    // Emit mod-defined option defaults at top level (parallel to capabilities).
+    // Python _filter_by_logic() reads these to evaluate option-gated item/location logic.
+    if (!option_defaults.empty()) {
+      nlohmann::ordered_json od = nlohmann::ordered_json::object();
+      for (const auto &[key, def] : option_defaults) {
+        nlohmann::ordered_json o;
+        o["type"] = def.type;
+        o["default"] = def.default_value;
+        od[key] = o;
+      }
+      j["option_defaults"] = od;
+    }
 
     return j;
   }
