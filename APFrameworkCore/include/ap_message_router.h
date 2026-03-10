@@ -116,6 +116,14 @@ class AP_API APMessageRouter
     int64_t route_location_check(const std::string &mod_id, const std::string &location_name, int instance = 1);
 
     /**
+     * @brief Route a location check by integer ID (from polymorphic check_location(integer)).
+     * @param mod_id Source mod ID — verified against location ownership.
+     * @param location_id Archipelago location ID.
+     * @return location_id if check was processed, 0 if unknown/already checked/ownership mismatch.
+     */
+    int64_t route_location_check_by_id(const std::string &mod_id, int64_t location_id);
+
+    /**
      * @brief Route multiple location checks at once.
      * @param location_ids Vector of location IDs to check.
      */

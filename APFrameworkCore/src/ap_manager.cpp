@@ -15,6 +15,7 @@
 #include <chrono>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 
 namespace ap
 {
@@ -298,12 +299,46 @@ bool APManager::register_mod(const std::string &mod_id, const std::string &versi
 
     APLogger::get()->log(LogLevel::Info, "APManager", "Mod registered: " + mod_id + " v" + version);
 
+    // Build enriched registration response: include all locations + items for this mod so the
+    // client can populate bidirectional lookup maps (get_location / get_item / check_location by ID).
+    auto all_locs  = APCapabilities::get()->get_locations_for_mod(mod_id);
+    auto all_items = APCapabilities::get()->get_items_for_mod(mod_id);
+
+    // Compute instance count per location name
+    std::unordered_map<std::string, int> instance_counts;
+    for (const auto &loc : all_locs)
+        instance_counts[loc.location_name]++;
+
+    nlohmann::json locations_json = nlohmann::json::array();
+    for (const auto &loc : all_locs)
+    {
+        locations_json.push_back({{"id",             loc.location_id},
+                                  {"name",           loc.location_name},
+                                  {"instance",       loc.instance},
+                                  {"instance_count", instance_counts[loc.location_name]}});
+    }
+
+    nlohmann::json items_json = nlohmann::json::array();
+    for (const auto &item : all_items)
+    {
+        items_json.push_back({{"id",   item.item_id},
+                              {"name", item.item_name},
+                              {"type", item_type_to_string(item.type)}});
+    }
+
+    APLogger::get()->log(LogLevel::Debug, "APManager",
+                         "Registration response: " + std::to_string(all_locs.size()) +
+                         " locations, " + std::to_string(all_items.size()) + " items for " + mod_id);
+
     // Send registration response
     IPCMessage response;
     response.type = IPCMessageType::REGISTRATION_RESPONSE;
     response.source = IPCTarget::FRAMEWORK;
     response.target = mod_id;
-    response.payload = {{"success", true}, {"mod_id", mod_id}};
+    response.payload = {{"success",   true},
+                        {"mod_id",    mod_id},
+                        {"locations", std::move(locations_json)},
+                        {"items",     std::move(items_json)}};
     APIPCServer::get()->send_message(mod_id, response);
 
     return true;
@@ -419,9 +454,25 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
     }
     else if (msg.type == IPCMessageType::LOCATION_CHECK)
     {
-        std::string location_name = msg.payload.value("location", "");
-        int instance = msg.payload.value("instance", 1);
-        APMessageRouter::get()->route_location_check(client_id, location_name, instance);
+        if (msg.payload.contains("location_id"))
+        {
+            // Integer ID path — from polymorphic check_location(integer)
+            int64_t loc_id = msg.payload.value("location_id", int64_t(0));
+            APLogger::get()->log(LogLevel::Debug, "APManager",
+                                 "check_location_by_id: " + std::to_string(loc_id) +
+                                 " from " + client_id);
+            APMessageRouter::get()->route_location_check_by_id(client_id, loc_id);
+        }
+        else
+        {
+            // Name string path — from check_location(name, instance?)
+            std::string location_name = msg.payload.value("location", "");
+            int instance = msg.payload.value("instance", 1);
+            APLogger::get()->log(LogLevel::Debug, "APManager",
+                                 "check_location: '" + location_name + "' #" +
+                                 std::to_string(instance) + " from " + client_id);
+            APMessageRouter::get()->route_location_check(client_id, location_name, instance);
+        }
     }
     else if (msg.type == IPCMessageType::LOCATION_SCOUT)
     {

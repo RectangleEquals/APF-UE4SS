@@ -278,7 +278,43 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
         std::string reason = msg.payload.value("reason", "");
 
         if (success)
+        {
+            // Populate bidirectional lookup maps from registration response.
+            // location_by_id covers all instances; location_by_name maps to instance=1 ID.
+            for (const auto &loc : msg.payload.value("locations", nlohmann::json::array()))
+            {
+                APClientContext::LocationEntry entry;
+                entry.id             = loc.value("id",             int64_t(0));
+                entry.name           = loc.value("name",           std::string{});
+                entry.instance       = loc.value("instance",       1);
+                entry.instance_count = loc.value("instance_count", 1);
+
+                if (entry.id != 0 && !entry.name.empty())
+                {
+                    ctx->location_by_id[entry.id] = entry;
+                    if (entry.instance == 1)
+                        ctx->location_by_name[entry.name] = entry.id;
+                }
+            }
+            for (const auto &item : msg.payload.value("items", nlohmann::json::array()))
+            {
+                APClientContext::ItemEntry entry;
+                entry.id   = item.value("id",   int64_t(0));
+                entry.name = item.value("name", std::string{});
+                entry.type = item.value("type", std::string{"filler"});
+
+                if (entry.id != 0 && !entry.name.empty())
+                {
+                    ctx->item_by_id[entry.id]     = entry;
+                    ctx->item_by_name[entry.name] = entry.id;
+                }
+            }
+            APLogger::get()->log(LogLevel::Debug, "APClientManager",
+                                 "Lookup maps populated: " +
+                                 std::to_string(ctx->location_by_id.size()) + " locations, " +
+                                 std::to_string(ctx->item_by_id.size()) + " items");
             ctx->callbacks.invoke_registration_success();
+        }
         else
             ctx->callbacks.invoke_registration_rejected(reason);
     }
@@ -467,7 +503,11 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
     // Location Functions
     // =========================================================================
 
-    module["check_location"] = [ctx](const std::string &location_name, sol::optional<int> instance) -> bool {
+    // check_location(name_or_id, instance?)
+    // - Integer: check_location(6942067)             → routes by ID; instance ignored (IDs globally unique)
+    // - String:  check_location("Alpha: Free Chest") → routes by name; instance defaults to 1
+    // - String:  check_location("Chest", 2)          → routes by name, instance 2 (for amount>1 manifests)
+    module["check_location"] = [ctx](sol::object arg, sol::optional<int> instance) -> bool {
         if (!ctx->ipc_client->is_connected())
             return false;
 
@@ -475,9 +515,105 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
         msg.type = IPCMessageType::LOCATION_CHECK;
         msg.source = ctx->mod_id;
         msg.target = IPCTarget::FRAMEWORK;
-        msg.payload = {{"location", location_name}, {"instance", instance.value_or(1)}};
+
+        if (arg.get_type() == sol::type::number)
+        {
+            // Integer ID path — instance is irrelevant (ID is globally unique)
+            int64_t location_id = arg.as<int64_t>();
+            msg.payload = {{"location_id", location_id}};
+        }
+        else if (arg.get_type() == sol::type::string)
+        {
+            // Name string path — existing behavior preserved; instance defaults to 1
+            std::string location_name = arg.as<std::string>();
+            msg.payload = {{"location", location_name}, {"instance", instance.value_or(1)}};
+        }
+        else
+        {
+            APLogger::get()->log(LogLevel::Warn, "APClientManager",
+                                 "check_location: expected string or integer, got Lua type " +
+                                 std::to_string(static_cast<int>(arg.get_type())));
+            return false;
+        }
 
         return ctx->ipc_client->send_message(msg);
+    };
+
+    // get_location(id_or_name)
+    //   Integer → table for that exact location ID (any instance)
+    //   String  → table for the instance=1 entry for that name
+    //   Returns nil if not found.
+    // Returned table fields: id (integer), name (string), instance (integer), instance_count (integer)
+    module["get_location"] = [ctx](sol::object arg, sol::this_state L) -> sol::object {
+        sol::state_view lua(L);
+        const APClientContext::LocationEntry *entry = nullptr;
+
+        if (arg.get_type() == sol::type::number)
+        {
+            int64_t id = arg.as<int64_t>();
+            auto it = ctx->location_by_id.find(id);
+            if (it != ctx->location_by_id.end())
+                entry = &it->second;
+        }
+        else if (arg.get_type() == sol::type::string)
+        {
+            const std::string &name = arg.as<std::string>();
+            auto nit = ctx->location_by_name.find(name);
+            if (nit != ctx->location_by_name.end())
+            {
+                auto it = ctx->location_by_id.find(nit->second);
+                if (it != ctx->location_by_id.end())
+                    entry = &it->second;
+            }
+        }
+
+        if (!entry)
+            return sol::nil;
+
+        return lua.create_table_with(
+            "id",             entry->id,
+            "name",           entry->name,
+            "instance",       entry->instance,
+            "instance_count", entry->instance_count
+        );
+    };
+
+    // get_item(id_or_name)
+    //   Integer → table for that item ID
+    //   String  → table for that item name
+    //   Returns nil if not found.
+    // Returned table fields: id (integer), name (string), type (string: "progression"/"useful"/"filler"/"trap")
+    module["get_item"] = [ctx](sol::object arg, sol::this_state L) -> sol::object {
+        sol::state_view lua(L);
+        const APClientContext::ItemEntry *entry = nullptr;
+
+        if (arg.get_type() == sol::type::number)
+        {
+            int64_t id = arg.as<int64_t>();
+            auto it = ctx->item_by_id.find(id);
+            if (it != ctx->item_by_id.end())
+                entry = &it->second;
+        }
+        else if (arg.get_type() == sol::type::string)
+        {
+            const std::string &name = arg.as<std::string>();
+            auto nit = ctx->item_by_name.find(name);
+            if (nit != ctx->item_by_name.end())
+            {
+                auto it = ctx->item_by_id.find(nit->second);
+                if (it != ctx->item_by_id.end())
+                    entry = &it->second;
+            }
+        }
+
+        if (!entry)
+            return sol::nil;
+
+        return lua.create_table_with(
+            "id",   entry->id,
+            "name", entry->name,
+            "type", entry->type
+        );
     };
 
     module["scout_locations"] = [ctx](sol::table locations) -> bool {

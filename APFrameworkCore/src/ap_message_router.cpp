@@ -146,8 +146,14 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
     int64_t location_id = APCapabilities::get()->get_location_id(mod_id, location_name, instance);
     if (location_id == 0)
     {
+        bool looks_like_id = !location_name.empty() &&
+                             location_name.find_first_not_of("0123456789") == std::string::npos;
+        std::string hint = looks_like_id
+                               ? " (looks like a location ID — pass integer directly to check_location)"
+                               : "";
         APLogger::get()->log(LogLevel::Warn, "APMessageRouter",
-                             "Unknown location: " + mod_id + "/" + location_name + " #" + std::to_string(instance));
+                             "Unknown location: " + mod_id + "/" + location_name + " #" +
+                             std::to_string(instance) + hint);
         return 0;
     }
 
@@ -173,6 +179,44 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
     // Recompute tracker after location checked
     broadcast_tracker_update();
 
+    return location_id;
+}
+
+int64_t APMessageRouter::route_location_check_by_id(const std::string &mod_id, int64_t location_id)
+{
+    auto loc = APCapabilities::get()->get_location_by_id(location_id);
+    if (!loc.has_value())
+    {
+        APLogger::get()->log(LogLevel::Warn, "APMessageRouter",
+                             "check_location_by_id: unknown ID " + std::to_string(location_id) +
+                             " from " + mod_id);
+        return 0;
+    }
+
+    if (loc->mod_id != mod_id)
+    {
+        APLogger::get()->log(LogLevel::Warn, "APMessageRouter",
+                             "check_location_by_id: ID " + std::to_string(location_id) +
+                             " belongs to " + loc->mod_id + ", not " + mod_id);
+        return 0;
+    }
+
+    if (APStateManager::get()->is_location_checked(location_id))
+    {
+        APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
+                             "Location already checked: " + loc->location_name);
+        return 0;
+    }
+
+    APStateManager::get()->add_checked_location(location_id);
+    APArchipelagoClient::get()->send_location_checks({location_id});
+    APStateManager::get()->save_state();
+
+    APLogger::get()->log(LogLevel::Info, "APMessageRouter",
+                         "Location checked: " + loc->location_name +
+                         " (ID: " + std::to_string(location_id) + ")");
+
+    broadcast_tracker_update();
     return location_id;
 }
 
