@@ -49,7 +49,19 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
     // Check if item has an action to execute
     if (item.action.empty())
     {
-        APLogger::get()->log(LogLevel::Debug, "APMessageRouter", "Item has no action: " + item_name);
+        APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
+                             "Item received (no action, counting at receipt): " + item_name);
+
+        // Count immediately — no action means nothing to confirm later
+        APStateManager::get()->increment_item_progression_count(item_id);
+        APStateManager::get()->save_state();
+
+        // Notify owning mod (+ opt-in subscribers) so Lua on_item_received fires
+        send_item_received(item_id, item_name, sender_name);
+
+        // Recompute tracker so (Item: X) logic nodes reflect the newly received item
+        broadcast_tracker_update();
+
         return std::nullopt;
     }
 
@@ -405,6 +417,89 @@ void APMessageRouter::broadcast_tracker_update()
 
     APLogger::get()->log(LogLevel::Trace, "APMessageRouter",
                          "Tracker update broadcast to " + std::to_string(subscribers.size()) + " subscriber(s)");
+}
+
+// =============================================================================
+// Item Notification & Subscription
+// =============================================================================
+
+void APMessageRouter::send_item_received(int64_t item_id, const std::string &item_name,
+                                         const std::string &sender)
+{
+    std::unordered_set<std::string> recipients;
+
+    // Always: owning mod
+    auto ownership = APCapabilities::get()->get_item_by_id(item_id);
+    if (ownership.has_value())
+        recipients.insert(ownership->mod_id);
+
+    // Opt-in: all-items subscribers + specific item subscribers
+    {
+        std::lock_guard<std::mutex> lock(item_subscription_mutex_);
+        for (const auto &sub : all_item_subscribers_)
+            recipients.insert(sub);
+        auto it = item_id_subscribers_.find(item_id);
+        if (it != item_id_subscribers_.end())
+            for (const auto &sub : it->second)
+                recipients.insert(sub);
+    }
+
+    IPCMessage msg;
+    msg.type    = IPCMessageType::ITEM_RECEIVED;
+    msg.source  = IPCTarget::FRAMEWORK;
+    msg.payload = {{"item_id", item_id}, {"item_name", item_name}, {"sender", sender}};
+
+    for (const auto &recipient : recipients)
+    {
+        msg.target = recipient;
+        APIPCServer::get()->send_message(recipient, msg);
+    }
+
+    APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
+                         "ITEM_RECEIVED sent for '" + item_name + "' to " +
+                         std::to_string(recipients.size()) + " recipient(s)");
+}
+
+void APMessageRouter::subscribe_items(const std::string &mod_id,
+                                      const std::vector<int64_t> &item_ids)
+{
+    std::lock_guard<std::mutex> lock(item_subscription_mutex_);
+    for (int64_t id : item_ids)
+    {
+        // Guard: skip own-mod items (always delivered automatically)
+        auto ownership = APCapabilities::get()->get_item_by_id(id);
+        if (ownership.has_value() && ownership->mod_id == mod_id)
+            continue;
+        item_id_subscribers_[id].insert(mod_id);
+    }
+    APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
+                         mod_id + " subscribed to " + std::to_string(item_ids.size()) + " item(s)");
+}
+
+void APMessageRouter::subscribe_all_items(const std::string &mod_id)
+{
+    std::lock_guard<std::mutex> lock(item_subscription_mutex_);
+    all_item_subscribers_.insert(mod_id);
+    APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
+                         mod_id + " subscribed to all items");
+}
+
+void APMessageRouter::unsubscribe_items(const std::string &mod_id,
+                                        const std::vector<int64_t> &item_ids)
+{
+    std::lock_guard<std::mutex> lock(item_subscription_mutex_);
+    for (int64_t id : item_ids)
+    {
+        auto it = item_id_subscribers_.find(id);
+        if (it != item_id_subscribers_.end())
+            it->second.erase(mod_id);
+    }
+}
+
+void APMessageRouter::unsubscribe_all_items(const std::string &mod_id)
+{
+    std::lock_guard<std::mutex> lock(item_subscription_mutex_);
+    all_item_subscribers_.erase(mod_id);
 }
 
 } // namespace ap

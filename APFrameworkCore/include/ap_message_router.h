@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ap
@@ -202,12 +203,59 @@ class AP_API APMessageRouter
      */
     void broadcast_tracker_update();
 
+    // ==========================================================================
+    // Item Notification & Subscription
+    // ==========================================================================
+
+    /**
+     * @brief Send ITEM_RECEIVED to the owning mod + any opt-in subscribers.
+     * @param item_id   Item ID.
+     * @param item_name Item name.
+     * @param sender    Name of the player who sent the item.
+     *
+     * Default recipients: the mod whose manifest declares this item.
+     * Additional recipients: mods subscribed via subscribe_items() / subscribe_all_items().
+     * Mods cannot opt out of their own items; own-mod IDs are silently skipped in subscribe_items().
+     */
+    void send_item_received(int64_t item_id, const std::string &item_name,
+                            const std::string &sender);
+
+    /**
+     * @brief Subscribe a mod to ITEM_RECEIVED for specific foreign item IDs.
+     * @param mod_id   Subscribing mod.
+     * @param item_ids Item IDs to subscribe to (own-mod items silently skipped).
+     */
+    void subscribe_items(const std::string &mod_id, const std::vector<int64_t> &item_ids);
+
+    /**
+     * @brief Subscribe a mod to ALL item notifications regardless of ownership.
+     * @param mod_id Subscribing mod.
+     */
+    void subscribe_all_items(const std::string &mod_id);
+
+    /**
+     * @brief Unsubscribe a mod from specific item IDs.
+     * @param mod_id   Subscribing mod.
+     * @param item_ids Item IDs to unsubscribe from.
+     */
+    void unsubscribe_items(const std::string &mod_id, const std::vector<int64_t> &item_ids);
+
+    /**
+     * @brief Cancel an all-items subscription.
+     * @param mod_id Mod to unsubscribe.
+     */
+    void unsubscribe_all_items(const std::string &mod_id);
+
   private:
     // =========================================================================
     // Private Member Variables
     // =========================================================================
     std::mutex scout_mutex_;
     std::unordered_map<int64_t, std::string> pending_scouts_; // location_id -> mod_id
+
+    std::mutex                                                   item_subscription_mutex_;
+    std::unordered_set<std::string>                              all_item_subscribers_;
+    std::unordered_map<int64_t, std::unordered_set<std::string>> item_id_subscribers_; // item_id -> mod_ids
 };
 
 } // namespace ap

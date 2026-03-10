@@ -258,6 +258,15 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
 
         ctx->callbacks.invoke_item_received(item_id, item_name, sender);
     }
+    else if (msg.type == IPCMessageType::ITEM_RECEIVED)
+    {
+        // Framework sends this to the owning mod (and any opt-in subscribers) for no-action items.
+        // Items with actions fire on_item_received from inside the EXECUTE_ACTION handler above.
+        int64_t item_id       = msg.payload.value("item_id",   int64_t(0));
+        std::string item_name = msg.payload.value("item_name", "");
+        std::string sender    = msg.payload.value("sender",    "");
+        ctx->callbacks.invoke_item_received(item_id, item_name, sender);
+    }
     else if (msg.type == IPCMessageType::LIFECYCLE)
     {
         std::string state = msg.payload.value("state", "");
@@ -716,6 +725,78 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
         msg.payload = nlohmann::json::object();
 
         return ctx->ipc_client->send_message(msg);
+    };
+
+    // subscribe_to_items({id_or_name, ...})
+    // Subscribe to ITEM_RECEIVED for specific items from other mods.
+    // Accepts a Lua table of item IDs (integer) or names (string), or a mix.
+    // Own-mod items are silently skipped by the framework (always received automatically).
+    // Names for foreign items are resolved server-side via APCapabilities.
+    module["subscribe_to_items"] = [ctx](sol::table items) -> void
+    {
+        if (!ctx->ipc_client->is_connected()) return;
+        std::vector<int64_t>     ids;
+        std::vector<std::string> names;
+        for (auto &[k, v] : items)
+        {
+            if (v.get_type() == sol::type::number)
+                ids.push_back(v.as<int64_t>());
+            else if (v.get_type() == sol::type::string)
+                names.push_back(v.as<std::string>());
+        }
+        if (ids.empty() && names.empty()) return;
+        ap::ClientIPCMessage msg;
+        msg.type    = IPCMessageType::SUBSCRIBE_ITEMS;
+        msg.source  = ctx->mod_id;
+        msg.target  = IPCTarget::FRAMEWORK;
+        msg.payload = {{"all", false}, {"item_ids", ids}, {"item_names", names}};
+        ctx->ipc_client->send_message(msg);
+    };
+
+    // subscribe_all_items()
+    // Receive ALL ITEM_RECEIVED notifications regardless of item ownership.
+    module["subscribe_all_items"] = [ctx]() -> void
+    {
+        if (!ctx->ipc_client->is_connected()) return;
+        ap::ClientIPCMessage msg;
+        msg.type    = IPCMessageType::SUBSCRIBE_ITEMS;
+        msg.source  = ctx->mod_id;
+        msg.target  = IPCTarget::FRAMEWORK;
+        msg.payload = {{"all", true},
+                       {"item_ids",   nlohmann::json::array()},
+                       {"item_names", nlohmann::json::array()}};
+        ctx->ipc_client->send_message(msg);
+    };
+
+    // unsubscribe_to_items({id, ...})
+    // Remove a subscribe_to_items() subscription. Pass integer item IDs.
+    module["unsubscribe_to_items"] = [ctx](sol::table items) -> void
+    {
+        if (!ctx->ipc_client->is_connected()) return;
+        std::vector<int64_t> ids;
+        for (auto &[k, v] : items)
+            if (v.get_type() == sol::type::number)
+                ids.push_back(v.as<int64_t>());
+        if (ids.empty()) return;
+        ap::ClientIPCMessage msg;
+        msg.type    = IPCMessageType::UNSUBSCRIBE_ITEMS;
+        msg.source  = ctx->mod_id;
+        msg.target  = IPCTarget::FRAMEWORK;
+        msg.payload = {{"all", false}, {"item_ids", ids}};
+        ctx->ipc_client->send_message(msg);
+    };
+
+    // unsubscribe_all_items()
+    // Cancel a subscribe_all_items() subscription.
+    module["unsubscribe_all_items"] = [ctx]() -> void
+    {
+        if (!ctx->ipc_client->is_connected()) return;
+        ap::ClientIPCMessage msg;
+        msg.type    = IPCMessageType::UNSUBSCRIBE_ITEMS;
+        msg.source  = ctx->mod_id;
+        msg.target  = IPCTarget::FRAMEWORK;
+        msg.payload = {{"all", true}, {"item_ids", nlohmann::json::array()}};
+        ctx->ipc_client->send_message(msg);
     };
 
     // =========================================================================

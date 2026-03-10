@@ -573,6 +573,43 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
         APTrackerEngine::get()->remove_subscriber(client_id);
         APLogger::get()->log(LogLevel::Info, "APManager", "Tracker subscriber removed: " + client_id);
     }
+    // Item subscription protocol
+    else if (msg.type == IPCMessageType::SUBSCRIBE_ITEMS)
+    {
+        bool all = msg.payload.value("all", false);
+        if (all)
+        {
+            APMessageRouter::get()->subscribe_all_items(client_id);
+        }
+        else
+        {
+            std::vector<int64_t> ids = msg.payload.value("item_ids", std::vector<int64_t>{});
+
+            // Resolve names to IDs (for foreign items the client can't resolve locally)
+            for (const auto &name_val : msg.payload.value("item_names", nlohmann::json::array()))
+            {
+                const std::string name = name_val.get<std::string>();
+                for (const auto &item : APCapabilities::get()->get_all_items())
+                {
+                    if (item.item_name == name) { ids.push_back(item.item_id); break; }
+                }
+            }
+            APMessageRouter::get()->subscribe_items(client_id, ids);
+        }
+    }
+    else if (msg.type == IPCMessageType::UNSUBSCRIBE_ITEMS)
+    {
+        bool all = msg.payload.value("all", false);
+        if (all)
+        {
+            APMessageRouter::get()->unsubscribe_all_items(client_id);
+        }
+        else
+        {
+            std::vector<int64_t> ids = msg.payload.value("item_ids", std::vector<int64_t>{});
+            APMessageRouter::get()->unsubscribe_items(client_id, ids);
+        }
+    }
     // Generic command system
     else if (msg.type == IPCMessageType::COMMAND)
     {

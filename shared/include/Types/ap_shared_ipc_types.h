@@ -91,6 +91,11 @@ namespace IPCMessageType {
     constexpr const char* TRACKER_SNAPSHOT    = "tracker_snapshot";
     constexpr const char* TRACKER_UPDATE      = "tracker_update";
 
+    // Item Notification Protocol
+    constexpr const char* ITEM_RECEIVED      = "item_received";       // Framework -> owning mod + opt-in subscribers
+    constexpr const char* SUBSCRIBE_ITEMS   = "subscribe_items";      // Client -> Framework
+    constexpr const char* UNSUBSCRIBE_ITEMS = "unsubscribe_items";    // Client -> Framework
+
     // Cross-Mod API Protocol
     constexpr const char* API_CALL   = "api_call";     // Client -> Framework -> Client
     constexpr const char* API_RESULT = "api_result";   // Client -> Framework -> Client
