@@ -103,6 +103,9 @@ struct GoalDef {
     std::string display;                     // Display name (e.g., "Defeat All Tower Bosses")
     std::string description;                 // Description shown to player
     std::string logic;                       // Logic expression for completion condition
+    // Populated by capabilities aggregator when multiple mods declare the same goal name:
+    std::vector<std::string> combined_logics; // extra logic contributions from other mods
+    std::vector<std::string> source_mods;     // all mod IDs that contributed to this goal
 };
 
 // =============================================================================

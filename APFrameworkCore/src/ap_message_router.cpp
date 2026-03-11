@@ -3,6 +3,7 @@
 #include "ap_client.h"
 #include "ap_ipc_server.h"
 #include "ap_logger.h"
+#include "ap_logic_evaluator.h"
 #include "ap_state_manager.h"
 #include "ap_tracker_engine.h"
 
@@ -395,28 +396,106 @@ void APMessageRouter::broadcast_ap_message(const std::string &type, const std::s
 void APMessageRouter::broadcast_tracker_update()
 {
     auto *tracker = APTrackerEngine::get();
-    if (!tracker->is_initialized() || !tracker->has_subscribers())
-    {
+    if (!tracker->is_initialized())
         return;
-    }
 
-    auto update = tracker->compute_update();
-    auto update_json = update.to_json();
-
-    auto subscribers = tracker->get_subscribers();
-    for (const auto &mod_id : subscribers)
+    if (tracker->has_subscribers())
     {
-        IPCMessage msg;
-        msg.type = IPCMessageType::TRACKER_UPDATE;
-        msg.source = IPCTarget::FRAMEWORK;
-        msg.target = mod_id;
-        msg.payload = update_json;
+        auto update = tracker->compute_update();
+        auto update_json = update.to_json();
 
-        APIPCServer::get()->send_message(mod_id, msg);
+        auto subscribers = tracker->get_subscribers();
+        for (const auto &mod_id : subscribers)
+        {
+            IPCMessage msg;
+            msg.type = IPCMessageType::TRACKER_UPDATE;
+            msg.source = IPCTarget::FRAMEWORK;
+            msg.target = mod_id;
+            msg.payload = update_json;
+
+            APIPCServer::get()->send_message(mod_id, msg);
+        }
+
+        APLogger::get()->log(LogLevel::Trace, "APMessageRouter",
+                             "Tracker update broadcast to " + std::to_string(subscribers.size()) + " subscriber(s)");
     }
 
-    APLogger::get()->log(LogLevel::Trace, "APMessageRouter",
-                         "Tracker update broadcast to " + std::to_string(subscribers.size()) + " subscriber(s)");
+    check_and_send_goal_completion();
+}
+
+void APMessageRouter::check_and_send_goal_completion()
+{
+    if (goal_sent_.load())
+        return;
+
+    auto *tracker = APTrackerEngine::get();
+    if (!tracker->is_initialized())
+        return;
+    bool goal_achieved = false;
+
+    if (tracker->is_no_goal_mode())
+    {
+        // Completion = all in-logic locations checked
+        auto ool_ids = tracker->get_out_of_logic_location_ids();
+        const auto checked = APStateManager::get()->get_checked_locations();
+        bool all_checked = true;
+        for (const auto &loc : APCapabilities::get()->get_all_locations())
+        {
+            if (ool_ids.count(loc.location_id))
+                continue; // skip out-of-logic (pruned at generation)
+            if (!checked.count(loc.location_id))
+            {
+                all_checked = false;
+                break;
+            }
+        }
+        goal_achieved = all_checked;
+    }
+    else
+    {
+        auto active_goal = tracker->get_active_goal();
+        if (!active_goal.has_value() || active_goal->logic.empty())
+            return;
+
+        // Parse and evaluate goal logic against current item state (item-only logic)
+        auto node = parse_logic(active_goal->logic);
+        node = evaluate_options(node, {}); // goals have no (Option:) nodes — pass empty map
+        node = simplify(node);
+
+        TrackerState eval_state;
+        auto counts = APStateManager::get()->get_all_item_progression_counts();
+        auto *caps = APCapabilities::get();
+        for (const auto &[id, count] : counts)
+        {
+            // Convert item ID -> name for evaluate_bool (TrackerState uses names)
+            auto item_opt = caps->get_item_by_id(id);
+            if (item_opt)
+                eval_state.received_items[item_opt->item_name] = count;
+        }
+
+        goal_achieved = evaluate_bool(node, eval_state);
+    }
+
+    if (!goal_achieved)
+        return;
+
+    // Atomic race guard — only one thread sends the goal status
+    if (goal_sent_.exchange(true))
+        return;
+
+    APArchipelagoClient::get()->send_status_update(ClientStatus::Goal);
+
+    auto active_goal = tracker->get_active_goal();
+    std::string label = active_goal.has_value()
+                            ? "'" + active_goal->name + "' — " + active_goal->display
+                            : "all-locations (no goals defined)";
+    APLogger::get()->log(LogLevel::Info, "APMessageRouter",
+                         "Goal achieved: " + label + " — status update sent to AP server");
+}
+
+void APMessageRouter::reset_goal_sent()
+{
+    goal_sent_.store(false);
 }
 
 // =============================================================================

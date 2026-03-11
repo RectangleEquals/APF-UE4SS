@@ -5,6 +5,7 @@
 #include "ap_logger.h"
 #include "ap_path_util.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -447,6 +448,83 @@ nlohmann::json APGeneratedConfig::get_slot_data() const
 }
 
 // =============================================================================
+// YAML Goal Comment Block Helper
+// =============================================================================
+
+// Builds a formatted comment block describing available goals to insert above the
+// 'goal:' key in the generated YAML.  Returns "" if goals_arr is empty.
+static std::string build_goal_comment_block(const nlohmann::json &goals_arr)
+{
+    if (goals_arr.empty())
+        return "";
+
+    const std::string indent = "  "; // matches YAML indentation of the game section
+    const std::string prefix = indent + "# ";
+
+    const std::string hdr_name = "Name";
+    const std::string hdr_disp = "Display";
+    const std::string hdr_desc = "Description";
+    const std::string hdr_src  = "Source Mod";
+
+    // Compute max column widths
+    size_t col_name = hdr_name.size();
+    size_t col_disp = hdr_disp.size();
+    size_t col_desc = hdr_desc.size();
+    size_t col_src  = hdr_src.size();
+
+    for (const auto &g : goals_arr)
+    {
+        col_name = std::max(col_name, g.value("name",        "").size());
+        col_disp = std::max(col_disp, g.value("display",     "").size());
+        col_desc = std::max(col_desc, g.value("description", "").size());
+        col_src  = std::max(col_src,  g.value("mod_id",      "").size());
+    }
+
+    // Pad string to fixed width
+    auto pad = [](const std::string &s, size_t w) -> std::string {
+        if (s.size() >= w) return s;
+        return s + std::string(w - s.size(), ' ');
+    };
+
+    // Separator row: +---+---+...+
+    auto sep = [&]() -> std::string {
+        return indent + "# +" + std::string(col_name + 2, '-')
+                              + "+" + std::string(col_disp + 2, '-')
+                              + "+" + std::string(col_desc + 2, '-')
+                              + "+" + std::string(col_src  + 2, '-') + "+\n";
+    };
+
+    // Data row: | val | val | ... |
+    auto row = [&](const std::string &n, const std::string &d,
+                   const std::string &e, const std::string &s) -> std::string {
+        return indent + "# | " + pad(n, col_name) + " | " + pad(d, col_disp)
+                              + " | " + pad(e, col_desc) + " | " + pad(s, col_src) + " |\n";
+    };
+
+    std::string out;
+    out += indent + "# " + std::string(70, '-') + "\n";
+    out += prefix + "Goals - choose one to set your completion condition (optional)\n";
+    out += prefix + "If not set, the first goal below is used by default.\n";
+    out += indent + "#\n";
+    out += sep();
+    out += row(hdr_name, hdr_disp, hdr_desc, hdr_src);
+    out += sep();
+    for (const auto &g : goals_arr)
+    {
+        out += row(g.value("name",        ""),
+                   g.value("display",     ""),
+                   g.value("description", ""),
+                   g.value("mod_id",      ""));
+    }
+    out += sep();
+    out += indent + "#\n";
+    out += prefix + "To set a goal: uncomment the line below and set the goal name.\n";
+    out += prefix + "goal: " + goals_arr[0].value("name", "") + "\n";
+    out += indent + "#\n";
+    return out;
+}
+
+// =============================================================================
 // YAML Serialization (using rapidyaml)
 // =============================================================================
 
@@ -514,6 +592,46 @@ std::string APGeneratedConfig::serialize_to_yaml() const
         }
     }
 
+    // Decode capabilities JSON to extract goals for the comment block.
+    // Goals are nested at ["capabilities"]["goals"] in the compiled JSON
+    // (CapabilitiesData is serialized under the "capabilities" key in CapabilitiesConfig::to_json()).
+    // NOTE: first_goal_for_yaml must remain alive until after ryml::emitrs_yaml below.
+    std::string    first_goal_for_yaml = "default";
+    nlohmann::json goals_for_comment   = nlohmann::json::array();
+    if (!capabilities_base64_.empty())
+    {
+        try
+        {
+            auto tmp_caps  = nlohmann::json::parse(base64_decode(capabilities_base64_));
+            auto caps_node = tmp_caps.find("capabilities");
+            if (caps_node != tmp_caps.end())
+            {
+                auto git = caps_node->find("goals");
+                if (git != caps_node->end() && git->is_array() && !git->empty())
+                {
+                    goals_for_comment   = *git;
+                    first_goal_for_yaml = (*git)[0].value("name", "default");
+                }
+            }
+        }
+        catch (...) {}
+    }
+
+    // Always ensure a 'goal:' key exists in the ryml tree so the comment injection below
+    // has a marker to anchor to. Skip if it was already emitted by the options loop
+    // (happens when goals_.size() > 1 auto-generates a 'goal' text_choice option).
+    bool goal_key_in_options = false;
+    for (const auto &def : option_definitions_)
+    {
+        if (def.key == "goal")
+        {
+            goal_key_in_options = true;
+            break;
+        }
+    }
+    if (!goal_key_in_options)
+        game_node["goal"] << first_goal_for_yaml;
+
     // Emit YAML to string
     std::string output;
     output.reserve(capabilities_base64_.size() + 512);
@@ -524,6 +642,37 @@ std::string APGeneratedConfig::serialize_to_yaml() const
 
     // Emit the tree
     ryml::emitrs_yaml(tree, &output, /* append */ true);
+
+    // Inject goal comment block before the '  goal:' key.
+    // The marker always exists now because we added game_node["goal"] above.
+    {
+        const std::string marker = "\n  goal:";
+        const size_t      pos    = output.find(marker);
+        if (pos != std::string::npos)
+        {
+            std::string goal_comment;
+            if (!goals_for_comment.empty())
+            {
+                // Goals are defined — inject ASCII table of available goals
+                goal_comment = build_goal_comment_block(goals_for_comment);
+            }
+            else
+            {
+                // No goals defined — explain the default "all locations" completion
+                const std::string indent = "  ";
+                const std::string prefix = indent + "# ";
+                goal_comment += indent + "# " + std::string(70, '-') + "\n";
+                goal_comment += prefix + "Goal Completion\n";
+                goal_comment += prefix + "No goals are defined for this session.\n";
+                goal_comment += prefix + "Completion condition: all accessible in-logic locations\n";
+                goal_comment += prefix + "must be checked.\n";
+                goal_comment += indent + "# " + std::string(70, '-') + "\n";
+                goal_comment += indent + "#\n";
+            }
+            if (!goal_comment.empty())
+                output.insert(pos + 1, goal_comment); // pos+1 to skip the leading '\n'
+        }
+    }
 
     return output;
 }

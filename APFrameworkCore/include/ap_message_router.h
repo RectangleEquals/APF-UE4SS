@@ -3,6 +3,7 @@
 #include "ap_exports.h"
 #include "ap_types.h"
 
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -203,6 +204,11 @@ class AP_API APMessageRouter
      */
     void broadcast_tracker_update();
 
+    /**
+     * @brief Reset the goal-sent flag (call on reconnect/resync so goal can re-trigger).
+     */
+    void reset_goal_sent();
+
     // ==========================================================================
     // Item Notification & Subscription
     // ==========================================================================
@@ -256,6 +262,10 @@ class AP_API APMessageRouter
     std::mutex                                                   item_subscription_mutex_;
     std::unordered_set<std::string>                              all_item_subscribers_;
     std::unordered_map<int64_t, std::unordered_set<std::string>> item_id_subscribers_; // item_id -> mod_ids
+
+    std::atomic<bool> goal_sent_{false};
+
+    void check_and_send_goal_completion();
 };
 
 } // namespace ap

@@ -359,6 +359,8 @@ void APManager::cmd_restart()
 {
     APLogger::get()->log(LogLevel::Info, "APManager", "Restart command received");
 
+    APMessageRouter::get()->reset_goal_sent();
+
     // Reset state and restart
     APModRegistry::get()->reset_registrations();
     transition_to_unlocked(LifecycleState::DISCOVERY, "Restarting");
@@ -374,6 +376,8 @@ void APManager::cmd_resync()
 void APManager::cmd_reconnect()
 {
     APLogger::get()->log(LogLevel::Info, "APManager", "Reconnect command received");
+
+    APMessageRouter::get()->reset_goal_sent();
 
     APArchipelagoClient::get()->disconnect();
     transition_to_unlocked(LifecycleState::CONNECTING, "Reconnecting to AP server");

@@ -263,8 +263,10 @@ struct CapabilitiesConfigGoal {
   std::string name;                                  // Unique identifier
   std::string display;                               // Display name for player
   std::string description;                           // Description shown to player
-  std::string logic;                                 // Logic expression for completion
-  std::string mod_id;                                // Mod that declared this goal
+  std::string logic;                                 // Logic expression for completion (first/primary mod)
+  std::string mod_id;                                // First mod that declared this goal
+  std::vector<std::string> combined_logics;          // Extra logic contributions from other mods
+  std::vector<std::string> source_mods;              // All mod IDs that contributed to this goal
 };
 
 struct CapabilitiesConfigItemOverride {
@@ -376,6 +378,10 @@ struct CapabilitiesConfig {
           g["description"] = goal.description;
         g["logic"] = goal.logic;
         g["mod_id"] = goal.mod_id;
+        if (!goal.combined_logics.empty())
+          g["combined_logics"] = goal.combined_logics;
+        if (!goal.source_mods.empty())
+          g["source_mods"] = goal.source_mods;
         goals_arr.push_back(g);
       }
       caps["goals"] = goals_arr;

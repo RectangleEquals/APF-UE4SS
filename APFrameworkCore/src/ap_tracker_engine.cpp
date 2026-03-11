@@ -78,6 +78,7 @@ nlohmann::json TrackerUpdate::to_json() const
         l["display_region"] = loc.display_region;
         l["score"] = loc.score;
         l["checked"] = loc.checked;
+        l["out_of_logic"] = loc.out_of_logic;
         l["scored_tree"] = scored_node_to_json(loc.scored_tree);
         locs.push_back(l);
     }
@@ -192,6 +193,7 @@ nlohmann::json TrackerSnapshot::to_json() const
         l["display_region"] = loc.display_region;
         l["score"] = loc.score;
         l["checked"] = loc.checked;
+        l["out_of_logic"] = loc.out_of_logic;
         l["scored_tree"] = scored_node_to_json(loc.scored_tree);
         locs.push_back(l);
     }
@@ -301,6 +303,7 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
             auto ast = parse_logic(loc.logic);
             ast = evaluate_options(ast, option_values);
             ast = simplify(ast);
+            parsed.out_of_logic = (ast.type == LogicNodeType::Const && !ast.const_value);
             parsed.logic = std::move(ast);
         }
         catch (const std::exception &e)
@@ -312,6 +315,51 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
         }
 
         parsed_locations_.push_back(std::move(parsed));
+    }
+
+    // Log out-of-logic count
+    {
+        int ool_count = 0;
+        for (const auto &p : parsed_locations_)
+            if (p.out_of_logic) ++ool_count;
+        if (ool_count > 0)
+            APLogger::get()->log(LogLevel::Info, "APTrackerEngine",
+                                 std::to_string(ool_count) +
+                                     " out-of-logic location(s) excluded from this multiworld "
+                                     "(option-pruned at generation; shown in tracker as unavailable)");
+    }
+
+    // Resolve active goal
+    auto goals = APCapabilities::get()->get_goals();
+    if (goals.empty())
+    {
+        no_goal_mode_ = true;
+        APLogger::get()->log(LogLevel::Info, "APTrackerEngine",
+                             "No goals defined — completion mode: all in-logic locations checked");
+    }
+    else
+    {
+        no_goal_mode_ = false;
+        std::string selected_name;
+        auto it = option_values.find("goal");
+        if (it != option_values.end() && !it->second.empty())
+            selected_name = it->second;
+        else
+            selected_name = goals[0].name;
+
+        for (const auto &g : goals)
+        {
+            if (g.name == selected_name)
+            {
+                active_goal_ = g;
+                break;
+            }
+        }
+        if (!active_goal_.has_value())
+            active_goal_ = goals[0]; // fallback if name not matched
+
+        APLogger::get()->log(LogLevel::Info, "APTrackerEngine",
+                             "Active goal: '" + active_goal_->name + "' — " + active_goal_->display);
     }
 
     // Pre-parse region logic
@@ -434,6 +482,7 @@ void APTrackerEngine::compute_results(
         result.name = loc.name;
         result.display_region = loc.display_region;
         result.checked = checked.count(loc.location_id) > 0;
+        result.out_of_logic = loc.out_of_logic;
         result.scored_tree = evaluate_scored(loc.logic, full_state);
         result.score = result.scored_tree.score;
         loc_results.push_back(std::move(result));
@@ -531,6 +580,25 @@ std::set<std::string> APTrackerEngine::get_subscribers() const
 {
     std::lock_guard<std::mutex> lock(subscriber_mutex_);
     return subscribers_;
+}
+
+std::optional<GoalDef> APTrackerEngine::get_active_goal() const
+{
+    return active_goal_;
+}
+
+bool APTrackerEngine::is_no_goal_mode() const
+{
+    return no_goal_mode_;
+}
+
+std::unordered_set<int64_t> APTrackerEngine::get_out_of_logic_location_ids() const
+{
+    std::unordered_set<int64_t> result;
+    for (const auto &loc : parsed_locations_)
+        if (loc.out_of_logic)
+            result.insert(loc.location_id);
+    return result;
 }
 
 // =============================================================================

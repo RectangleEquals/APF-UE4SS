@@ -273,22 +273,37 @@ void APCapabilities::add_manifest(const Manifest &manifest)
         }
     }
 
-    // Collect goals (deduplicated by name, last-wins)
+    // Collect goals: first declaration wins for display/description; logic conflicts OR-merged.
     for (const auto &goal : manifest.goals)
     {
-        bool replaced = false;
+        bool found = false;
         for (auto &existing : goals_)
         {
             if (existing.name == goal.name)
             {
-                existing = goal;
-                replaced = true;
+                found = true;
+                // Display/description conflict: keep first declaration, log a warning.
+                if (existing.display != goal.display || existing.description != goal.description)
+                {
+                    APLogger::get()->log(
+                        LogLevel::Warn, "APCapabilities",
+                        "Goal '" + goal.name + "' declared by multiple mods with conflicting "
+                        "display/description — using first declaration from " +
+                        (existing.source_mods.empty() ? "unknown" : existing.source_mods.front()));
+                }
+                // Logic conflict: accumulate in combined_logics if different.
+                if (!goal.logic.empty() && goal.logic != existing.logic)
+                    existing.combined_logics.push_back(goal.logic);
+                // Track all contributing mods.
+                existing.source_mods.push_back(manifest.mod_id);
                 break;
             }
         }
-        if (!replaced)
+        if (!found)
         {
-            goals_.push_back(goal);
+            GoalDef g = goal;
+            g.source_mods.push_back(manifest.mod_id);
+            goals_.push_back(std::move(g));
         }
     }
 
@@ -721,33 +736,19 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         config.capabilities.items.push_back(cfg_item);
     }
 
-    // Add goals (track source mod_id for attribution)
-    auto manifest_map = APModRegistry::get()->get_enabled_manifests();
-    for (const auto &m : manifest_map)
+    // Add goals — use aggregated goals_ directly (already conflict-resolved by add_manifest).
+    // source_mods[0] is the first (primary) declaring mod; combined_logics holds extras.
+    for (const auto &goal : goals_)
     {
-        for (const auto &goal : m.goals)
-        {
-            // Only add if this goal is in our collected goals_ (deduplication already happened)
-            bool found = false;
-            for (const auto &g : goals_)
-            {
-                if (g.name == goal.name)
-                {
-                    found = true;
-                    break;
-                }
-            }
-            if (found)
-            {
-                CapabilitiesConfigGoal cfg_goal;
-                cfg_goal.name = goal.name;
-                cfg_goal.display = goal.display;
-                cfg_goal.description = goal.description;
-                cfg_goal.logic = goal.logic;
-                cfg_goal.mod_id = m.mod_id;
-                config.capabilities.goals.push_back(cfg_goal);
-            }
-        }
+        CapabilitiesConfigGoal cfg_goal;
+        cfg_goal.name           = goal.name;
+        cfg_goal.display        = goal.display;
+        cfg_goal.description    = goal.description;
+        cfg_goal.logic          = goal.logic;
+        cfg_goal.mod_id         = goal.source_mods.empty() ? "" : goal.source_mods.front();
+        cfg_goal.combined_logics = goal.combined_logics;
+        cfg_goal.source_mods    = goal.source_mods;
+        config.capabilities.goals.push_back(std::move(cfg_goal));
     }
 
     // Add item overrides (source_mod already set by add_manifest via item_overrides_)

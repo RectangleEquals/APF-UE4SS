@@ -15,13 +15,16 @@
 
 #include "ap_exports.h"
 #include "ap_logic_evaluator.h"
+#include "Types/ap_shared_manifest_types.h"
 
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -96,6 +99,7 @@ struct TrackerLocationResult
     std::string display_region;
     float score = 0.0f;
     bool checked = false;
+    bool out_of_logic = false; ///< Logic simplified to ConstFalse after option evaluation — location pruned at generation
     ScoredNode scored_tree;
 };
 
@@ -185,6 +189,21 @@ class AP_API APTrackerEngine
      */
     bool is_initialized() const;
 
+    /**
+     * @brief Return the goal selected for this session, or nullopt if no goals are defined.
+     */
+    std::optional<GoalDef> get_active_goal() const;
+
+    /**
+     * @brief True when no goals are defined — completion = all in-logic locations checked.
+     */
+    bool is_no_goal_mode() const;
+
+    /**
+     * @brief Returns the set of location IDs whose logic simplified to ConstFalse (pruned at generation).
+     */
+    std::unordered_set<int64_t> get_out_of_logic_location_ids() const;
+
     // =========================================================================
     // Computation
     // =========================================================================
@@ -234,6 +253,10 @@ class AP_API APTrackerEngine
 
     bool initialized_ = false;
 
+    // Goal tracking
+    std::optional<GoalDef> active_goal_; ///< Selected goal for this session (nullopt = no goals defined)
+    bool no_goal_mode_ = false;           ///< True when no goals — completion = all in-logic locations checked
+
     // Pre-parsed location logic (index matches locations_meta_)
     struct ParsedLocation
     {
@@ -241,6 +264,7 @@ class AP_API APTrackerEngine
         std::string name;
         std::string display_region;
         LogicNode logic;
+        bool out_of_logic = false; ///< Logic simplified to ConstFalse — location pruned at generation
     };
     std::vector<ParsedLocation> parsed_locations_;
 

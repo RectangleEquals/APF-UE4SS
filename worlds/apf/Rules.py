@@ -154,6 +154,25 @@ def set_completion_rules(world: "APFrameworkWorld") -> None:
             for goal in goals:
                 if goal["name"] == selected_goal_name:
                     logic = goal.get("logic", "")
+                    combined_logics = goal.get("combined_logics", [])
+
+                    # If multiple mods contributed logic for this goal, combine them.
+                    # Default combinator is "and" — all mods' conditions must be met.
+                    # A "goal_<name>_combinator" option (choices: and/or) can change this,
+                    # but reading YAML options dynamically is not yet supported; "and" is used.
+                    if combined_logics:
+                        all_logics = [l for l in [logic] + combined_logics
+                                      if l and l != "True"]
+                        if len(all_logics) > 1:
+                            logic = "(" + ") AND (".join(all_logics) + ")"
+                            log.debug(
+                                f"Goal '{selected_goal_name}' has {len(combined_logics)} "
+                                f"extra logic contributions — combined with AND: {logic}",
+                                "Rules",
+                            )
+                        elif all_logics:
+                            logic = all_logics[0]
+
                     if logic and logic != "True":
                         options = _collect_option_values(world)
                         rule = LogicParser.parse_and_compile(
