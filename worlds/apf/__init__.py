@@ -197,6 +197,44 @@ class APFrameworkWorld(World):
                 raise ValueError(f"Missing required field: {field}")
         return data
 
+    def _build_option_values(self) -> dict:
+        """Build option values dict from all registered options + option_defaults fallback.
+
+        Pass 1: Reads all options from self.options (includes both static ClassVar options
+        and any dynamic mod options registered by _register_dynamic_options() at import time).
+        Values are native Python types: Toggle → int 0/1, TextChoice → str, Range → int.
+
+        Pass 2: Fallback to option_defaults from capabilities_data for any options not in
+        self.options (e.g., _register_dynamic_options() skipped due to missing Players dir,
+        or a new option was added to the manifest after the APWorld was last imported).
+        """
+        option_values: dict = {}
+
+        # Pass 1 — all registered options (static + dynamic)
+        for attr_name in dir(self.options):
+            if attr_name.startswith("_"):
+                continue
+            opt = getattr(self.options, attr_name, None)
+            if hasattr(opt, "value"):
+                option_values[attr_name] = opt.value  # native type
+
+        # Pass 2 — fallback to manifest defaults for unregistered options
+        for key, defn in self.capabilities.get("option_defaults", {}).items():
+            if key not in option_values:
+                typ = defn.get("type", "toggle")
+                raw = defn.get("default", "")
+                if typ == "toggle":
+                    option_values[key] = 1 if str(raw).lower() in ("true", "1", "yes") else 0
+                elif typ == "range":
+                    try:
+                        option_values[key] = int(raw)
+                    except (ValueError, TypeError):
+                        option_values[key] = 0
+                else:  # text_choice
+                    option_values[key] = str(raw)
+
+        return option_values
+
     def _filter_by_logic(self) -> None:
         """Filter capabilities entries whose logic evaluates to always-False.
 
@@ -205,29 +243,7 @@ class APFrameworkWorld(World):
         current option values. Prevents creating locations/items/overrides with
         never-satisfiable conditions.
         """
-        # Build option values dict for logic evaluation
-        option_values = {}
-        for attr_name in dir(self.options):
-            if attr_name.startswith("_"):
-                continue
-            opt = getattr(self.options, attr_name, None)
-            if hasattr(opt, "value"):
-                option_values[attr_name] = opt.value
-
-        # Supplement with mod-defined option defaults (not accessible via ClassVar options)
-        for key, defn in self.capabilities.get("option_defaults", {}).items():
-            if key not in option_values:
-                typ = defn.get("type", "toggle")
-                raw = defn.get("default", "")
-                if typ == "toggle":
-                    option_values[key] = raw == "true"
-                elif typ == "range":
-                    try:
-                        option_values[key] = int(raw)
-                    except (ValueError, TypeError):
-                        option_values[key] = 0
-                else:  # text_choice
-                    option_values[key] = str(raw)
+        option_values = self._build_option_values()
 
         removed_count = 0
 
@@ -273,14 +289,7 @@ class APFrameworkWorld(World):
         if not overrides:
             return
 
-        # Build option values for logic evaluation
-        option_values = {}
-        for attr_name in dir(self.options):
-            if attr_name.startswith("_"):
-                continue
-            opt = getattr(self.options, attr_name, None)
-            if hasattr(opt, "value"):
-                option_values[attr_name] = opt.value
+        option_values = self._build_option_values()
 
         for ovr in overrides:
             target_item = ovr.get("target_item", "")
@@ -657,23 +666,10 @@ class APFrameworkWorld(World):
         """
         slot_data = {"id_remapping": self.id_remapping}
 
-        # Serialize option values for C++ logic evaluation
-        options_dict: Dict[str, str] = {}
-        for attr_name in dir(self.options):
-            if attr_name.startswith("_"):
-                continue
-            opt = getattr(self.options, attr_name, None)
-            if hasattr(opt, "value"):
-                options_dict[attr_name] = str(opt.value)
-
-        # Supplement with mod-defined option defaults for C++ runtime evaluation
-        for key, defn in self.capabilities.get("option_defaults", {}).items():
-            if key not in options_dict:
-                typ = defn.get("type", "toggle")
-                raw = str(defn.get("default", ""))
-                options_dict[key] = "1" if (typ == "toggle" and raw == "true") else (
-                    "0" if typ == "toggle" else raw)
-
+        # Serialize option values for C++ logic evaluation (all values as strings)
+        options_dict: Dict[str, str] = {
+            k: str(v) for k, v in self._build_option_values().items()
+        }
         slot_data["option_values"] = options_dict
 
         self.log.debug(
@@ -695,3 +691,123 @@ class APFrameworkWorld(World):
         if self.item_table:
             return next(iter(self.item_table.keys()))
         return "Nothing"
+
+
+# =============================================================================
+# Dynamic Mod Option Registration
+# Runs at APWorld import time — before Archipelago parses any player YAMLs.
+# =============================================================================
+
+def _make_option_class_from_defn(key: str, defn: dict):
+    """Return a Toggle / TextChoice / Range subclass for a mod-defined option, or None."""
+    from Options import Toggle, TextChoice, Range
+    typ = defn.get("type", "toggle")
+    description = defn.get("description", key.replace("_", " ").title())
+    default = defn.get("default", "")
+
+    if typ == "toggle":
+        default_val = 1 if str(default).lower() in ("true", "1", "yes") else 0
+        return type(f"ModOption_{key}", (Toggle,), {
+            "display_name": description,
+            "default": default_val,
+        })
+    elif typ == "text_choice":
+        return type(f"ModOption_{key}", (TextChoice,), {
+            "display_name": description,
+            "default": str(default),
+        })
+    elif typ == "range":
+        range_start = int(defn.get("range_start", 0))
+        range_end = int(defn.get("range_end", 100))
+        try:
+            default_val = int(default)
+        except (ValueError, TypeError):
+            default_val = range_start
+        return type(f"ModOption_{key}", (Range,), {
+            "display_name": description,
+            "range_start": range_start,
+            "range_end": range_end,
+            "default": default_val,
+        })
+    return None
+
+
+def _register_dynamic_options() -> None:
+    """Dynamically add mod-defined options to APFrameworkWorld.options_dataclass.
+
+    Scans all *.yaml files in the Archipelago Players directory at APWorld import time.
+    For each APFramework player YAML found, decodes capabilities_data and registers each
+    mod-defined option (from option_defaults) as a proper Archipelago Option subclass.
+    Uses dataclasses.make_dataclass to create a subclass of APFrameworkOptions with the
+    new fields, then sets APFrameworkWorld.options_dataclass to the subclass.
+
+    Graceful fallback: if Players directory doesn't exist, player YAMLs have no APFramework
+    sections, or decoding fails — does nothing, options_dataclass remains APFrameworkOptions.
+    _build_option_values() Pass 2 still provides manifest defaults as a fallback.
+    """
+    import os
+    import glob
+    import dataclasses
+
+    try:
+        import yaml
+        from Utils import user_path
+    except ImportError:
+        return  # Not running inside Archipelago (e.g. unit tests)
+
+    players_dir = user_path("Players")
+    if not os.path.exists(players_dir):
+        return
+
+    # Collect unique mod option definitions across all APFramework player YAMLs.
+    # First definition seen wins — all mods using this APWorld should have consistent defaults.
+    all_option_defs: dict = {}
+
+    for yaml_path in glob.glob(os.path.join(players_dir, "**", "*.yaml"), recursive=True):
+        try:
+            with open(yaml_path, encoding="utf-8") as f:
+                content = yaml.safe_load(f)
+            if not isinstance(content, dict):
+                continue
+            apf_section = content.get("APFramework", {})
+            if not apf_section:
+                continue
+            caps_str = apf_section.get("capabilities_data", "")
+            if not caps_str:
+                continue
+            caps_json = json.loads(base64.b64decode(caps_str).decode("utf-8"))
+            for key, defn in caps_json.get("option_defaults", {}).items():
+                # Skip options already declared as static ClassVar fields
+                if key in APFrameworkOptions.__dataclass_fields__:
+                    continue
+                if key not in all_option_defs:
+                    all_option_defs[key] = defn
+        except Exception:
+            pass  # Gracefully skip unparseable or unexpected YAMLs
+
+    if not all_option_defs:
+        return
+
+    # Build extra dataclass fields for make_dataclass
+    extra_fields = []
+    for key, defn in all_option_defs.items():
+        OptionClass = _make_option_class_from_defn(key, defn)
+        if OptionClass is not None:
+            extra_fields.append(
+                (key, OptionClass, dataclasses.field(default_factory=OptionClass))
+            )
+
+    if not extra_fields:
+        return
+
+    # Create a new options class as a subclass of APFrameworkOptions with the dynamic fields.
+    # Its __dataclass_fields__ includes all parent fields + new mod-defined option fields.
+    NewOptionsClass = dataclasses.make_dataclass(
+        "APFrameworkOptions",
+        extra_fields,
+        bases=(APFrameworkOptions,),
+    )
+    APFrameworkWorld.options_dataclass = NewOptionsClass
+
+
+_register_dynamic_options()

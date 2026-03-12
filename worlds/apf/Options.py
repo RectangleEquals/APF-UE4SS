@@ -79,6 +79,19 @@ class APFLogFile(TextChoice):
     default = ""
 
 
+class GoalOption(TextChoice):
+    """
+    Active goal for this session. Set to a goal name declared in the mod manifest.
+
+    The available goal names and their descriptions are shown in the generated YAML
+    comment block above this option. Leave empty to use the first declared goal as
+    the default. If no goals are defined, completion requires all accessible
+    in-logic locations to be checked.
+    """
+    display_name = "Goal"
+    default = ""
+
+
 @dataclass
 class APFrameworkOptions(PerGameCommonOptions):
     """Options dataclass for AP Framework worlds."""
@@ -88,3 +101,4 @@ class APFrameworkOptions(PerGameCommonOptions):
     trap_item_chance: TrapItemChance
     apf_log: APFLogLevel
     apf_logfile: APFLogFile
+    goal: GoalOption
