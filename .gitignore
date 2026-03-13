@@ -148,4 +148,7 @@ compile_commands.json
 # Git patches
 *.patch
 *.diff
+
+# Tool artifacts
 tools/apf_manager/.apf_manager_config.json
+tools/apf_manifesto/build_cache/
