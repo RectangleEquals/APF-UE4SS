@@ -1,5 +1,5 @@
 {
-    "mod_id": "spectrecular.palworld.logic_test",
+    "mod_id": "spectrecular.palworld.logictest",
     "name": "AP Logic Test",
     "version": "1.0.0",
     "description": "Minimal test game for AP framework logic validation",
@@ -61,7 +61,7 @@
             { "name": "Key A",       "type": "progression", "amount": 1 },
             { "name": "Key B",       "type": "progression", "amount": 1 },
             { "name": "Key C",       "type": "progression", "amount": 1 },
-            { "name": "Power Cell",  "type": "useful",      "amount": 1 },
+            { "name": "Power Cell",  "type": "progression", "amount": 1 },
             { "name": "Data Shard",  "type": "filler",      "amount": -1 },
             { "name": "Glitch Bomb", "type": "trap",        "amount": 2,
               "logic": "(Option: enable_traps)" }
