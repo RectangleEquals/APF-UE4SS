@@ -751,22 +751,29 @@ class APFrameworkWorld(World):
 # Runs at APWorld import time — before Archipelago parses any player YAMLs.
 # =============================================================================
 
-def _make_option_class_from_defn(key: str, defn: dict):
+def _make_option_class_from_defn(key: str, defn: dict, mod_id: str = ""):
     """Return a Toggle / TextChoice / Range subclass for a mod-defined option, or None."""
     from Options import Toggle, TextChoice, Range
     typ = defn.get("type", "toggle")
     description = defn.get("description", key.replace("_", " ").title())
     default = defn.get("default", "")
+    mod_tag = f" [Mod: {mod_id}]" if mod_id else ""
 
     if typ == "toggle":
         default_val = 1 if str(default).lower() in ("true", "1", "yes") else 0
+        doc = f"{description}. (0 = off, 1 = on){mod_tag}"
         return type(f"ModOption_{key}", (Toggle,), {
             "display_name": description,
+            "__doc__": doc,
             "default": default_val,
         })
     elif typ == "text_choice":
+        choices = defn.get("choices", [])
+        choices_info = f"Options: {', '.join(choices)}." if choices else "Any string value."
+        doc = f"{description}. {choices_info}{mod_tag}"
         return type(f"ModOption_{key}", (TextChoice,), {
             "display_name": description,
+            "__doc__": doc,
             "default": str(default),
         })
     elif typ == "range":
@@ -776,8 +783,10 @@ def _make_option_class_from_defn(key: str, defn: dict):
             default_val = int(default)
         except (ValueError, TypeError):
             default_val = range_start
+        doc = f"{description}. Range: {range_start}–{range_end}.{mod_tag}"
         return type(f"ModOption_{key}", (Range,), {
             "display_name": description,
+            "__doc__": doc,
             "range_start": range_start,
             "range_end": range_end,
             "default": default_val,
@@ -788,76 +797,81 @@ def _make_option_class_from_defn(key: str, defn: dict):
 def _register_dynamic_options() -> None:
     """Dynamically add mod-defined options to APFrameworkWorld.options_dataclass.
 
-    Scans all *.yaml files in the Archipelago Players directory at APWorld import time.
+    Always runs, because capabilities_data must be added last (after goal and all mod
+    options) so it appears at the bottom of the generated YAML.
+
+    Also scans all *.yaml files in the Archipelago Players directory at import time.
     For each APFramework player YAML found, decodes capabilities_data and registers each
     mod-defined option (from option_defaults) as a proper Archipelago Option subclass.
-    Uses dataclasses.make_dataclass to create a subclass of APFrameworkOptions with the
-    new fields, then sets APFrameworkWorld.options_dataclass to the subclass.
 
-    Graceful fallback: if Players directory doesn't exist, player YAMLs have no APFramework
-    sections, or decoding fails — does nothing, options_dataclass remains APFrameworkOptions.
-    _build_option_values() Pass 2 still provides manifest defaults as a fallback.
+    YAML field order produced: [static framework fields] → [goal] → [mod options] → [capabilities_data]
+
+    Graceful fallback: if Players directory doesn't exist or decoding fails, only
+    capabilities_data is appended. _build_option_values() Pass 2 still provides manifest
+    defaults as a fallback for any options not registered here.
     """
     import os
     import glob
     import dataclasses
-
-    try:
-        import yaml
-        from Utils import user_path
-    except ImportError:
-        return  # Not running inside Archipelago (e.g. unit tests)
-
-    players_dir = user_path("Players")
-    if not os.path.exists(players_dir):
-        return
+    from .Options import CapabilitiesData
 
     # Collect unique mod option definitions across all APFramework player YAMLs.
     # First definition seen wins — all mods using this APWorld should have consistent defaults.
     all_option_defs: dict = {}
 
-    for yaml_path in glob.glob(os.path.join(players_dir, "**", "*.yaml"), recursive=True):
-        try:
-            with open(yaml_path, encoding="utf-8") as f:
-                content = yaml.safe_load(f)
-            if not isinstance(content, dict):
-                continue
-            apf_section = content.get("APFramework", {})
-            if not apf_section:
-                continue
-            caps_str = apf_section.get("capabilities_data", "")
-            if not caps_str:
-                continue
-            caps_json = json.loads(base64.b64decode(caps_str).decode("utf-8"))
-            for key, defn in caps_json.get("option_defaults", {}).items():
-                # Skip options already declared as static ClassVar fields
-                if key in APFrameworkOptions.__dataclass_fields__:
-                    continue
-                if key not in all_option_defs:
-                    all_option_defs[key] = defn
-        except Exception:
-            pass  # Gracefully skip unparseable or unexpected YAMLs
+    try:
+        import yaml
+        from Utils import user_path
+        players_dir = user_path("Players")
+        if os.path.exists(players_dir):
+            for yaml_path in glob.glob(os.path.join(players_dir, "**", "*.yaml"), recursive=True):
+                try:
+                    with open(yaml_path, encoding="utf-8") as f:
+                        content = yaml.safe_load(f)
+                    if not isinstance(content, dict):
+                        continue
+                    apf_section = content.get("APFramework", {})
+                    if not apf_section:
+                        continue
+                    caps_str = apf_section.get("capabilities_data", "")
+                    if not caps_str:
+                        continue
+                    caps_json = json.loads(base64.b64decode(caps_str).decode("utf-8"))
+                    for key, defn in caps_json.get("option_defaults", {}).items():
+                        # Skip options already declared as static ClassVar fields
+                        if key in APFrameworkOptions.__dataclass_fields__:
+                            continue
+                        if key not in all_option_defs:
+                            all_option_defs[key] = defn
+                except Exception:
+                    pass  # Gracefully skip unparseable or unexpected YAMLs
+    except (ImportError, Exception):
+        pass  # Not running inside Archipelago, or Players scan failed
 
-    if not all_option_defs:
-        return
-
-    # Build extra dataclass fields for make_dataclass
-    extra_fields = []
+    # Build dynamic option fields from collected definitions
+    dynamic_fields = []
     for key, defn in all_option_defs.items():
-        OptionClass = _make_option_class_from_defn(key, defn)
+        mod_id = defn.get("mod_id", "")
+        OptionClass = _make_option_class_from_defn(key, defn, mod_id)
         if OptionClass is not None:
-            extra_fields.append(
+            dynamic_fields.append(
                 (key, OptionClass, dataclasses.field(default_factory=OptionClass))
             )
 
-    if not extra_fields:
-        return
+    # capabilities_data always goes last — it's a large base64 blob that players should
+    # not need to read or edit, so it belongs at the bottom of the generated YAML.
+    caps_field = (
+        "capabilities_data",
+        CapabilitiesData,
+        dataclasses.field(default_factory=CapabilitiesData),
+    )
 
-    # Create a new options class as a subclass of APFrameworkOptions with the dynamic fields.
-    # Its __dataclass_fields__ includes all parent fields + new mod-defined option fields.
+    # Create a new options class as a subclass of APFrameworkOptions with the dynamic fields
+    # followed by capabilities_data. Field order in YAML:
+    #   [static framework fields (logic_mode ... goal)] → [mod options] → [capabilities_data]
     NewOptionsClass = dataclasses.make_dataclass(
         "APFrameworkOptions",
-        extra_fields,
+        dynamic_fields + [caps_field],
         bases=(APFrameworkOptions,),
     )
     APFrameworkWorld.options_dataclass = NewOptionsClass

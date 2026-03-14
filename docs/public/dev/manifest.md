@@ -185,7 +185,11 @@ Goals define completion conditions for the multiworld. Each goal is an Archipela
 | `description` | string | Description shown to player |
 | `logic` | string | Logic expression evaluated as the completion condition |
 
-When more than one goal is declared (across all mods in a multiworld), the apworld automatically generates a `goal` option as a `text_choice` with each goal's `name` as a choice. Players select their goal in their YAML before generating. If only one goal exists, it is used unconditionally.
+When goals are declared, the apworld generates a `goal` option as a `text_choice` listing each goal's `name` as a valid value. Players set `goal: <name>` in their YAML before generating.
+
+**If `goal` is left empty or not set**, the completion requirement falls back to the default: **all accessible in-logic locations checked**. This produces a warning both during generation (Archipelago output) and at runtime (framework log). If you intended to pick a specific goal, set the option explicitly.
+
+**If the specified `goal` name does not match any declared goal**, a warning is emitted with a fuzzy suggestion if one exists (e.g. `Did you mean 'all_keys'?`), and the default applies. Check for typos in the goal name.
 
 Goal logic supports the full expression grammar — `(Item:)`, `(Can Access:)`, `(Option:)`, `AND`, `OR`.
 

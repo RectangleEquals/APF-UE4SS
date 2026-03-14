@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <vector>
 
 namespace ap {
 
@@ -270,6 +271,44 @@ std::string derive_display_region(const std::string &logic, const std::string &n
 } // anonymous namespace
 
 // =============================================================================
+// Goal Helpers
+// =============================================================================
+
+// Returns the closest matching goal name within edit distance ≤ 3, or "" if none.
+static std::string fuzzy_goal_suggestion(
+    const std::string &query,
+    const std::vector<GoalDef> &goals)
+{
+    // Simple Levenshtein distance (DP, O(m*n))
+    auto lev = [](const std::string &a, const std::string &b) -> int {
+        int m = static_cast<int>(a.size());
+        int n = static_cast<int>(b.size());
+        std::vector<std::vector<int>> dp(m + 1, std::vector<int>(n + 1));
+        for (int i = 0; i <= m; ++i) dp[i][0] = i;
+        for (int j = 0; j <= n; ++j) dp[0][j] = j;
+        for (int i = 1; i <= m; ++i)
+            for (int j = 1; j <= n; ++j)
+                dp[i][j] = std::min({dp[i-1][j] + 1,
+                                     dp[i][j-1] + 1,
+                                     dp[i-1][j-1] + (a[i-1] != b[j-1] ? 1 : 0)});
+        return dp[m][n];
+    };
+
+    std::string best;
+    int best_dist = 4; // only suggest if within 3 edits
+    for (const auto &g : goals)
+    {
+        int d = lev(query, g.name);
+        if (d < best_dist)
+        {
+            best_dist = d;
+            best = g.name;
+        }
+    }
+    return best;
+}
+
+// =============================================================================
 // Initialization
 // =============================================================================
 
@@ -339,33 +378,60 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
     }
     else
     {
-        no_goal_mode_ = false;
+        // Build comma-separated list of available goal names for diagnostic messages
+        std::string available_goals;
+        for (const auto &g : goals)
+            available_goals += (available_goals.empty() ? "" : ", ") + g.name;
+
         std::string selected_name;
         auto it = option_values.find("goal");
-        if (it != option_values.end() && !it->second.empty())
+        if (it != option_values.end())
             selected_name = it->second;
-        else
-            selected_name = goals[0].name;
 
-        for (const auto &g : goals)
+        if (selected_name.empty())
         {
-            if (g.name == selected_name)
+            // No goal specified — warn and use all-locations-checked default
+            no_goal_mode_ = true;
+            APLogger::get()->log(LogLevel::Warn, "APTrackerEngine",
+                                 "No goal specified — falling back to default of "
+                                 "'all in-logic locations checked'. "
+                                 "Set the 'goal' option in your YAML to choose from: "
+                                 + available_goals);
+        }
+        else
+        {
+            // Search for exact match
+            for (const auto &g : goals)
             {
-                active_goal_ = g;
-                break;
+                if (g.name == selected_name)
+                {
+                    active_goal_ = g;
+                    break;
+                }
+            }
+
+            if (active_goal_.has_value())
+            {
+                no_goal_mode_ = false;
+                APLogger::get()->log(LogLevel::Info, "APTrackerEngine",
+                                     "Active goal: '" + active_goal_->name
+                                     + "' — " + active_goal_->display);
+            }
+            else
+            {
+                // Goal name not found — fuzzy suggestion + all-locations-checked default
+                std::string suggestion = fuzzy_goal_suggestion(selected_name, goals);
+                std::string hint = suggestion.empty()
+                    ? ""
+                    : " — Did you mean '" + suggestion + "'?";
+                no_goal_mode_ = true;
+                APLogger::get()->log(LogLevel::Warn, "APTrackerEngine",
+                                     "Goal '" + selected_name + "' not found in declared goals"
+                                     + hint + ". Falling back to default of "
+                                     "'all in-logic locations checked'. "
+                                     "(Available goals: " + available_goals + ")");
             }
         }
-        if (!active_goal_.has_value())
-        {
-            APLogger::get()->log(LogLevel::Warn, "APTrackerEngine",
-                                 "Goal '" + selected_name + "' not found in declared goals — "
-                                 "falling back to '" + goals[0].name + "'. "
-                                 "Check the 'goal' option in your YAML for typos.");
-            active_goal_ = goals[0];
-        }
-
-        APLogger::get()->log(LogLevel::Info, "APTrackerEngine",
-                             "Active goal: '" + active_goal_->name + "' — " + active_goal_->display);
     }
 
     // Pre-parse region logic

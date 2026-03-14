@@ -84,9 +84,9 @@ class GoalOption(TextChoice):
     Active goal for this session. Set to a goal name declared in the mod manifest.
 
     The available goal names and their descriptions are shown in the generated YAML
-    comment block above this option. Leave empty to use the first declared goal as
-    the default. If no goals are defined, completion requires all accessible
-    in-logic locations to be checked.
+    comment block above this option. Leave empty (or do not set) to use the default
+    of all accessible in-logic locations checked. If no goals are defined, this
+    default always applies.
     """
     display_name = "Goal"
     default = ""
@@ -95,10 +95,12 @@ class GoalOption(TextChoice):
 @dataclass
 class APFrameworkOptions(PerGameCommonOptions):
     """Options dataclass for AP Framework worlds."""
-    capabilities_data: CapabilitiesData
     logic_mode: LogicMode
     filler_item_weight: FillerItemWeight
     trap_item_chance: TrapItemChance
     apf_log: APFLogLevel
     apf_logfile: APFLogFile
     goal: GoalOption
+    # NOTE: capabilities_data is intentionally absent here.
+    # _register_dynamic_options() always adds it as the last field so it appears
+    # at the bottom of the generated YAML (below goal and all mod options).
