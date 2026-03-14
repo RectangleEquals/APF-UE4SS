@@ -132,7 +132,9 @@ void APArchipelagoClient::send_location_checks(const std::vector<int64_t> &locat
 {
     if (client_ && slot_connected_)
     {
-        std::list<int64_t> ids_list(location_ids.begin(), location_ids.end());
+        std::list<int64_t> ids_list;
+        for (int64_t id : location_ids)
+            ids_list.push_back(remap_location_to_ap(id));
         client_->LocationChecks(ids_list);
     }
 }
@@ -238,6 +240,18 @@ int APArchipelagoClient::get_player_number() const
 int APArchipelagoClient::get_received_item_index() const
 {
     return received_item_index_;
+}
+
+int64_t APArchipelagoClient::remap_location_to_ap(int64_t local_id) const
+{
+    auto it = id_remap_.find(local_id);
+    return (it != id_remap_.end()) ? it->second : local_id;
+}
+
+int64_t APArchipelagoClient::remap_item_to_local(int64_t ap_id) const
+{
+    auto it = id_reverse_remap_.find(ap_id);
+    return (it != id_reverse_remap_.end()) ? it->second : ap_id;
 }
 
 // =============================================================================
@@ -355,6 +369,29 @@ void APArchipelagoClient::setup_callbacks()
             }
             APLogger::get()->log(LogLevel::Debug, "APArchipelagoClient",
                                  "Extracted " + std::to_string(info.option_values.size()) + " option values from slot_data");
+        }
+
+        // Extract ID remapping tables (populated for player 2+ by the Python apworld)
+        id_remap_.clear();
+        id_reverse_remap_.clear();
+        if (slot_data.contains("id_remapping") && slot_data["id_remapping"].is_object())
+        {
+            for (const auto &[k, v] : slot_data["id_remapping"].items())
+            {
+                try { id_remap_[std::stoll(k)] = v.get<int64_t>(); } catch (...) {}
+            }
+        }
+        if (slot_data.contains("id_reverse_remap") && slot_data["id_reverse_remap"].is_object())
+        {
+            for (const auto &[k, v] : slot_data["id_reverse_remap"].items())
+            {
+                try { id_reverse_remap_[std::stoll(k)] = v.get<int64_t>(); } catch (...) {}
+            }
+        }
+        if (!id_remap_.empty())
+        {
+            APLogger::get()->log(LogLevel::Info, "APArchipelagoClient",
+                                 "ID remap loaded: " + std::to_string(id_remap_.size()) + " entries");
         }
 
         slot_info_ = info;

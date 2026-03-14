@@ -1,7 +1,6 @@
 {
     "game_name": "Palworld",
     "version": "1.0.0",
-    "id_base": 6942067,
     "ap_server": {
         "host": "localhost",
         "port": 38281,

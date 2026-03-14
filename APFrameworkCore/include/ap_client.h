@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Forward declaration for external APClient library
@@ -218,6 +219,20 @@ class AP_API APArchipelagoClient
      */
     int get_received_item_index() const;
 
+    /**
+     * @brief Translate a local location ID to the AP server ID using id_remapping.
+     * @param local_id Local (C++) location ID.
+     * @return AP server ID, or local_id unchanged if no mapping exists.
+     */
+    int64_t remap_location_to_ap(int64_t local_id) const;
+
+    /**
+     * @brief Translate an AP server item ID to the local (C++) ID using id_reverse_remap.
+     * @param ap_id AP server item ID.
+     * @return Local item ID, or ap_id unchanged if no mapping exists.
+     */
+    int64_t remap_item_to_local(int64_t ap_id) const;
+
     // ==========================================================================
     // Callbacks
     // ==========================================================================
@@ -288,6 +303,12 @@ class AP_API APArchipelagoClient
     std::atomic<bool> slot_connected_{false};
     std::optional<SlotInfo> slot_info_;
     std::atomic<int> received_item_index_{0};
+
+    // ID remapping tables read from slot_data at slot connect.
+    // id_remap_:         local (C++) ID  →  AP server ID  (used when sending location checks)
+    // id_reverse_remap_: AP server ID    →  local (C++) ID (used when receiving items)
+    std::unordered_map<int64_t, int64_t> id_remap_;
+    std::unordered_map<int64_t, int64_t> id_reverse_remap_;
 
     // Callbacks
     RoomInfoCallback room_info_callback_;

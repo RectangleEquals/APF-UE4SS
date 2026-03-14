@@ -26,6 +26,11 @@ from .Options import APFrameworkOptions
 from .Rules import set_rules, set_completion_rules
 
 
+# Maximum items+locations per APF configuration. Each player slot gets an
+# exclusive ID range of this size so two APF players never collide.
+PER_PLAYER_RANGE = 50_000
+
+
 class APFrameworkWebWorld(WebWorld):
     """Web world for displaying game info on the Archipelago website."""
     theme = "jungle"
@@ -148,6 +153,9 @@ class APFrameworkWorld(World):
         self.__class__.location_name_to_id = {
             name: data.code for name, data in self.location_table.items()
         }
+
+        # Apply per-player ID offset so two APF players never share IDs
+        self._apply_player_offset()
 
         # Check for ID conflicts with other worlds
         self.check_id_conflicts()
@@ -377,6 +385,47 @@ class APFrameworkWorld(World):
             f"{len(dp.get('location_name_to_id', {}))} locations, "
             f"checksum={dp.get('checksum', 'N/A')}",
             "DataPackage",
+        )
+
+    def _apply_player_offset(self) -> None:
+        """Assign unique IDs per player slot by adding a per-player offset.
+
+        Player 1: base IDs unchanged (e.g. Key A = 6942079)
+        Player 2: base + 50,000  (e.g. Key A = 6992079)
+        Player 3: base + 100,000, etc.
+
+        Stores forward remap (local→AP) in self.id_remapping for slot_data.
+        Player 1 skips this (identity mapping, no slot_data overhead).
+        """
+        if self.player <= 1:
+            return  # Player 1 uses base IDs unchanged
+
+        offset = (self.player - 1) * PER_PLAYER_RANGE
+        remap: Dict[int, int] = {}
+
+        new_items: Dict[str, Any] = {}
+        for name, data in self.item_table.items():
+            new_id = data.code + offset
+            remap[data.code] = new_id
+            new_items[name] = data._replace(code=new_id)
+        self.item_table = new_items
+
+        new_locs: Dict[str, Any] = {}
+        for name, data in self.location_table.items():
+            new_id = data.code + offset
+            remap[data.code] = new_id
+            new_locs[name] = data._replace(code=new_id)
+        self.location_table = new_locs
+
+        self.id_remapping = remap
+        self.__class__.item_name_to_id = {n: d.code for n, d in self.item_table.items()}
+        self.__class__.location_name_to_id = {n: d.code for n, d in self.location_table.items()}
+        self._update_data_package()
+
+        self.log.info(
+            f"Player {self.player}: applied ID offset +{offset} "
+            f"({len(remap)} IDs remapped)",
+            "IDOffset",
         )
 
     def check_id_conflicts(self) -> None:
@@ -664,7 +713,10 @@ class APFrameworkWorld(World):
         (Option: ...) logic expressions at runtime with the player's
         actual chosen YAML options.
         """
-        slot_data = {"id_remapping": self.id_remapping}
+        slot_data: Dict[str, Any] = {
+            "id_remapping":     self.id_remapping,
+            "id_reverse_remap": {v: k for k, v in self.id_remapping.items()},
+        }
 
         # Serialize option values for C++ logic evaluation (all values as strings)
         options_dict: Dict[str, str] = {
@@ -673,7 +725,8 @@ class APFrameworkWorld(World):
         slot_data["option_values"] = options_dict
 
         self.log.debug(
-            f"fill_slot_data: {len(self.id_remapping)} remaps, "
+            f"fill_slot_data: player={self.player}, "
+            f"{len(self.id_remapping)} ID remaps, "
             f"{len(options_dict)} options, "
             f"{len(self.__class__.item_name_to_id)} items, "
             f"{len(self.__class__.location_name_to_id)} locations",

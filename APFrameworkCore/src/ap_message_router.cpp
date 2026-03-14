@@ -37,8 +37,11 @@ APMessageRouter::~APMessageRouter() = default;
 std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id, const std::string &item_name,
                                                                  const std::string &sender_name)
 {
+    // Translate AP server item ID to local (C++) ID (no-op for player 1 / single-player)
+    int64_t local_id = APArchipelagoClient::get()->remap_item_to_local(item_id);
+
     // Look up item ownership
-    auto item_opt = APCapabilities::get()->get_item_by_id(item_id);
+    auto item_opt = APCapabilities::get()->get_item_by_id(local_id);
     if (!item_opt)
     {
         APLogger::get()->log(LogLevel::Warn, "APMessageRouter", "Unknown item ID: " + std::to_string(item_id));
@@ -54,11 +57,11 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
                              "Item received (no action, counting at receipt): " + item_name);
 
         // Count immediately — no action means nothing to confirm later
-        APStateManager::get()->increment_item_progression_count(item_id);
+        APStateManager::get()->increment_item_progression_count(local_id);
         APStateManager::get()->save_state();
 
         // Notify owning mod (+ opt-in subscribers) so Lua on_item_received fires
-        send_item_received(item_id, item_name, sender_name);
+        send_item_received(local_id, item_name, sender_name);
 
         // Recompute tracker so (Item: X) logic nodes reflect the newly received item
         broadcast_tracker_update();
@@ -72,7 +75,7 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
     // Create pending action
     PendingAction pending;
     pending.mod_id = item.mod_id;
-    pending.item_id = item_id;
+    pending.item_id = local_id;
     pending.item_name = item_name;
     pending.action = item.action;
     pending.resolved_args = resolved_args;
@@ -90,7 +93,7 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
         args_json.push_back({{"name", arg.name}, {"type", arg_type_to_string(arg.type)}, {"value", arg.value}});
     }
 
-    msg.payload = {{"item_id", item_id},
+    msg.payload = {{"item_id", local_id},
                    {"item_name", item_name},
                    {"action", item.action},
                    {"args", args_json},

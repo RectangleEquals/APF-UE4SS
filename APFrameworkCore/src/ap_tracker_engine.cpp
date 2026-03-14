@@ -356,7 +356,13 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
             }
         }
         if (!active_goal_.has_value())
-            active_goal_ = goals[0]; // fallback if name not matched
+        {
+            APLogger::get()->log(LogLevel::Warn, "APTrackerEngine",
+                                 "Goal '" + selected_name + "' not found in declared goals — "
+                                 "falling back to '" + goals[0].name + "'. "
+                                 "Check the 'goal' option in your YAML for typos.");
+            active_goal_ = goals[0];
+        }
 
         APLogger::get()->log(LogLevel::Info, "APTrackerEngine",
                              "Active goal: '" + active_goal_->name + "' — " + active_goal_->display);
