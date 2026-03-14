@@ -146,6 +146,58 @@ class APFrameworkWorld(World):
         if self.options.logic_mode.value == 1 and self.region_table:  # basic
             self.__class__.topology_present = True
 
+        # Apply placement hints from capabilities
+        # Hints are generation-time only — independent of logic (which controls access rules).
+        option_values = self._build_option_values()
+        seen_early: set = set()
+
+        for item_entry in self.capabilities.get("items", []):
+            name = item_entry.get("name", "")
+            if name not in self.item_table:
+                continue
+
+            # start — push one copy to start inventory; reduce pool count by 1
+            if self._hint_active(item_entry.get("start", ""), option_values):
+                self.multiworld.push_precollected(self.create_item(name))
+                old = self.item_table[name]
+                if old.count > 0:
+                    self.item_table[name] = old._replace(count=old.count - 1)
+
+            # early — request one copy in sphere 1 (best-effort, de-duplicated per name)
+            if self._hint_active(item_entry.get("early", ""), option_values) \
+                    and name not in seen_early:
+                seen_early.add(name)
+                typ = item_entry.get("type", "filler")
+                if typ in ("filler", "trap"):
+                    self.log.warn(
+                        f"Item '{name}' has 'early' hint but is '{typ}' — early filler is unusual",
+                        "Placement",
+                    )
+                self.multiworld.local_early_items[self.player][name] = (
+                    self.multiworld.local_early_items[self.player].get(name, 0) + 1
+                )
+
+            # local — must stay in this player's world
+            if self._hint_active(item_entry.get("local", ""), option_values):
+                item_id = self.item_table[name].code
+                if item_id is not None:
+                    self.multiworld.local_items[self.player].add(item_id)
+
+        for loc_entry in self.capabilities.get("locations", []):
+            loc_name = loc_entry.get("name", "")
+            prio_active = self._hint_active(loc_entry.get("priority", ""), option_values)
+            excl_active = self._hint_active(loc_entry.get("exclude", ""), option_values)
+            if prio_active and excl_active:
+                self.log.warn(
+                    f"Location '{loc_name}' has both 'priority' and 'exclude' hints — "
+                    f"priority wins",
+                    "Placement",
+                )
+            if prio_active:
+                self.options.priority_locations.value.add(loc_name)
+            elif excl_active:
+                self.options.exclude_locations.value.add(loc_name)
+
         # Update class-level ID mappings (required for item/location creation)
         self.__class__.item_name_to_id = {
             name: data.code for name, data in self.item_table.items()
@@ -181,6 +233,21 @@ class APFrameworkWorld(World):
                 f"  {len(goals)} goals, {len(overrides)} item overrides",
                 "World",
             )
+
+    def _hint_active(self, hint_val, option_values: dict) -> bool:
+        """Return True if a placement hint is currently active.
+
+        hint_val may be: True/False (Python bool, from JSON bool true/false),
+        "" or None (absent / disabled), or a logic expression string.
+        Logic expressions use only (Option:) nodes — (Item:) and (Can Access:)
+        are invalid in hint context and evaluate as False (hint inactive).
+        """
+        if isinstance(hint_val, bool):
+            return hint_val
+        if not hint_val:   # None or ""
+            return False
+        # Logic expression — active unless it always evaluates to False
+        return not is_always_false(str(hint_val), option_values)
 
     def _process_capabilities(self, data: dict) -> dict:
         """Unwrap nested structure and validate."""

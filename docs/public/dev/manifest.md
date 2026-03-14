@@ -258,6 +258,8 @@ Locations are check points in the game that the player fulfills to receive items
 | `name` | string | Location name — must be unique within this mod |
 | `amount` | int | Number of separate check instances. Default: `1`. Use when the same "location type" occurs N times. Checks as `"Location Name 1"` through `"Location Name N"`. |
 | `logic` | string | Access requirement. The first `(Can Access: R)` node determines both the AP sphere region and the tracker display group. |
+| `priority` | `true` or option-logic | Location will always contain a progression item. Cannot be combined with `exclude` (priority wins if both active). |
+| `exclude` | `true` or option-logic | Location will not contain progression items (gets filler or useful). Cannot be combined with `priority`. |
 
 Locations with no `logic` are always accessible (sphere 0).
 
@@ -283,6 +285,9 @@ Items are the things that are shuffled into the multiworld item pool.
 | `type` | string | `"progression"`, `"useful"`, `"filler"`, or `"trap"` |
 | `amount` | int | Number of copies in the pool. `-1` signals a filler template: the apworld fills remaining item slots with copies of this item after all other items are placed. |
 | `logic` | string | **Option-only** condition for including the item in the pool. `(Item:)` and `(Can Access:)` nodes are invalid here and evaluate to false with a warning. |
+| `early` | `true` or option-logic | Request one copy be placed in sphere 1 (best-effort). Warning logged for filler/trap items. |
+| `start` | `true` or option-logic | Give one copy to the player at game start. That copy is never placed in the pool. If `amount > 1`, remaining copies still go to pool. Requires a filler template (`amount: -1`) so auto-balance can fill the gap. |
+| `local` | `true` or option-logic | Item must be placed in this player's world, not sent to another game. |
 | `action` | string | Handler to call when this item is received. Format: `"ModName.HandlerName"`. If omitted, the framework calls `on_item_received` with no custom action. |
 | `args` | array | Arguments passed to the action handler. See [Item Actions](#item-actions) below. |
 
@@ -293,6 +298,52 @@ Items are the things that are shuffled into the multiworld item pool.
 - `trap` — negative or annoying effect; AP can route these to other players
 
 **Item logic** is option-only because items must be included or excluded before randomization begins, at which point only option values are known. See [logic.md — Scope Rules](logic.md#scope-rules-by-entry-type) for the restriction details.
+
+---
+
+## Placement Hints
+
+Placement hints let mod authors influence *where in the generation sphere* their items and locations land. They map directly to Archipelago generation mechanisms and are evaluated at generation time using the player's current option values.
+
+**Hint value semantics** (same for all 5 hint fields):
+- **Omitted or `false`** — Hint inactive. No effect on generation.
+- **`true`** (JSON bool) — Hint always active, regardless of player options.
+- **Logic expression string** (e.g. `"(Option: ensure_early_keys)"`) — Hint active only when the expression evaluates to true given the player's chosen YAML options. Only `(Option:)`, `AND`, `OR`, `NOT`, `True`, `False` are valid — `(Item:)` and `(Can Access:)` are invalid in hint expressions and evaluate to `False` (hint inactive).
+
+**Item hints (`early`, `start`, `local`):**
+
+```json
+{ "name": "Gate Key", "type": "progression", "amount": 1,
+  "early": "(Option: ensure_early_gate)",
+  "local": "(Option: keep_keys_local)" }
+
+{ "name": "Starting Compass", "type": "useful", "amount": 1,
+  "start": true }
+```
+
+| Hint | AP Mechanism | Effect |
+|---|---|---|
+| `early` | `local_early_items[player][name] += 1` | Best-effort: one copy placed in sphere 1. Warning if applied to a filler or trap item. |
+| `start` | `push_precollected(item)` + reduce pool count by 1 | One copy given at game start; that copy never enters the pool. Requires a filler template (`amount: -1`) so auto-balance fills the gap. |
+| `local` | `local_items[player].add(item_id)` | Item must be placed in this player's world, not sent to other games. |
+
+**Location hints (`priority`, `exclude`):**
+
+```json
+{ "name": "Main Story Vault", "priority": true }
+{ "name": "Optional Bonus Cache", "exclude": "(Option: skip_bonus)" }
+```
+
+| Hint | AP Mechanism | Effect |
+|---|---|---|
+| `priority` | `options.priority_locations.value.add(name)` | Location will always contain a progression item. |
+| `exclude` | `options.exclude_locations.value.add(name)` | Location will not contain progression items (gets filler or useful). |
+
+**Key rules:**
+- `early` + `local` together gives the strongest early-game guarantee: sphere-1 AND in this world.
+- `start` + `amount: 1` produces zero copies in the pool. The filler template compensates.
+- `priority` and `exclude` on the same location: warning logged, `priority` takes precedence.
+- Hints are generation-time only and have no effect on the C++ tracker's access-rule logic.
 
 ---
 

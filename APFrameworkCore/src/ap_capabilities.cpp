@@ -236,6 +236,8 @@ void APCapabilities::add_manifest(const Manifest &manifest)
             ownership.location_name = loc.name;
             ownership.instance = i;
             ownership.logic = loc.logic;
+            ownership.priority = loc.priority;
+            ownership.exclude  = loc.exclude;
             locations_.push_back(ownership);
         }
     }
@@ -251,6 +253,9 @@ void APCapabilities::add_manifest(const Manifest &manifest)
         ownership.args = item.args;
         ownership.max_count = (item.amount < 0) ? -1 : item.amount;
         ownership.logic = item.logic;
+        ownership.early = item.early;
+        ownership.start = item.start;
+        ownership.local = item.local;
         items_.push_back(ownership);
     }
 
@@ -720,6 +725,8 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_loc.mod_id = loc.mod_id;
         cfg_loc.instance = loc.instance;
         cfg_loc.logic = loc.logic;
+        cfg_loc.priority = loc.priority;
+        cfg_loc.exclude  = loc.exclude;
         config.capabilities.locations.push_back(cfg_loc);
     }
 
@@ -733,6 +740,9 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_item.mod_id = item.mod_id;
         cfg_item.count = item.max_count;
         cfg_item.logic = item.logic;
+        cfg_item.early = item.early;
+        cfg_item.start = item.start;
+        cfg_item.local = item.local;
         config.capabilities.items.push_back(cfg_item);
     }
 

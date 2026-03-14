@@ -117,6 +117,8 @@ struct LocationOwnership {
   int64_t location_id = 0;
   int instance = 1;
   std::string logic;                                 // Logic expression string (includes (Can Access: R) for region placement)
+  std::string priority = "";                         // Placement hint: "True" or option-logic expr
+  std::string exclude  = "";                         // Placement hint: "True" or option-logic expr
 };
 
 struct ItemOwnership {
@@ -128,6 +130,9 @@ struct ItemOwnership {
   std::vector<ActionArg> args;
   int max_count = 1;
   std::string logic;                                 // Option-only logic (e.g. "(Option: enable_traps)")
+  std::string early = "";                            // Placement hint: "True" or option-logic expr
+  std::string start = "";                            // Placement hint: "True" or option-logic expr
+  std::string local = "";                            // Placement hint: "True" or option-logic expr
 };
 
 // =============================================================================
@@ -243,6 +248,8 @@ struct CapabilitiesConfigLocation {
   std::string mod_id;
   int instance = 1;
   std::string logic;                                 // Logic expression string (includes (Can Access: R) for region placement)
+  std::string priority = "";                         // Placement hint: "True" or option-logic expr
+  std::string exclude  = "";                         // Placement hint: "True" or option-logic expr
 };
 
 struct CapabilitiesConfigItem {
@@ -252,6 +259,9 @@ struct CapabilitiesConfigItem {
   std::string mod_id;
   int count = 1;
   std::string logic;                                 // Option-only logic (e.g. "(Option: enable_traps)")
+  std::string early = "";                            // Placement hint: "True" or option-logic expr
+  std::string start = "";                            // Placement hint: "True" or option-logic expr
+  std::string local = "";                            // Placement hint: "True" or option-logic expr
 };
 
 struct CapabilitiesConfigRegion {
@@ -338,6 +348,18 @@ struct CapabilitiesConfig {
     if (!regions_arr.empty())
       caps["regions"] = regions_arr;
 
+    // Helper: emit a placement hint field.
+    // "True"  → JSON bool true  (always active — clean JSON, no string needed)
+    // ""      → omit field      (inactive/absent)
+    // other   → JSON string     (option-logic expression)
+    auto emit_hint = [](nlohmann::ordered_json &obj,
+                        const std::string &key,
+                        const std::string &val) {
+      if (val.empty()) return;
+      if (val == "True") obj[key] = true;
+      else               obj[key] = val;
+    };
+
     // Emit locations
     nlohmann::ordered_json locs_arr = nlohmann::ordered_json::array();
     for (const auto &loc : capabilities.locations) {
@@ -348,6 +370,8 @@ struct CapabilitiesConfig {
       l["instance"] = loc.instance;
       if (!loc.logic.empty())
         l["logic"] = loc.logic;
+      emit_hint(l, "priority", loc.priority);
+      emit_hint(l, "exclude",  loc.exclude);
       locs_arr.push_back(l);
     }
     caps["locations"] = locs_arr;
@@ -363,6 +387,9 @@ struct CapabilitiesConfig {
       it["count"] = item.count;
       if (!item.logic.empty())
         it["logic"] = item.logic;
+      emit_hint(it, "early", item.early);
+      emit_hint(it, "start", item.start);
+      emit_hint(it, "local", item.local);
       items_arr.push_back(it);
     }
     caps["items"] = items_arr;

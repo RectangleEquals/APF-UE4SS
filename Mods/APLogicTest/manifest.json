@@ -24,6 +24,31 @@
             "range_start": 0,
             "range_end": 10,
             "description": "Number of extra Data Shard filler items"
+        },
+        "ensure_early_key": {
+            "type": "toggle",
+            "default": false,
+            "description": "Place Key A in sphere 1 (early game access)"
+        },
+        "start_with_power": {
+            "type": "toggle",
+            "default": false,
+            "description": "Start with Power Cell in inventory (opens Zone Sigma immediately)"
+        },
+        "keys_local": {
+            "type": "toggle",
+            "default": false,
+            "description": "Keep all Key items in this player's world"
+        },
+        "beacons_local": {
+            "type": "toggle",
+            "default": false,
+            "description": "Keep Signal Beacon items in this player's world"
+        },
+        "skip_bonus": {
+            "type": "toggle",
+            "default": false,
+            "description": "Exclude bonus locations from receiving progression items"
         }
     },
 
@@ -54,21 +79,30 @@
             { "name": "Zone Beta",  "logic": "(Item: Key A)" },
             { "name": "Zone Gamma", "logic": "(Item: Key A) AND (Item: Key B)" },
             { "name": "Zone Delta", "logic": "(Item: Key A) AND ((Item: Key B) OR (Item: Key C))" },
-            { "name": "Zone Omega", "logic": "(Item: Key B) AND (Item: Key C)" }
+            { "name": "Zone Omega", "logic": "(Item: Key B) AND (Item: Key C)" },
+            { "name": "Zone Sigma", "logic": "(Item: Power Cell)" }
         ],
 
         "items": [
-            { "name": "Key A",       "type": "progression", "amount": 1 },
-            { "name": "Key B",       "type": "progression", "amount": 1 },
-            { "name": "Key C",       "type": "progression", "amount": 1 },
-            { "name": "Power Cell",  "type": "progression", "amount": 1 },
-            { "name": "Data Shard",  "type": "filler",      "amount": -1 },
-            { "name": "Glitch Bomb", "type": "trap",        "amount": 2,
+            { "name": "Key A",      "type": "progression", "amount": 1,
+              "early": "(Option: ensure_early_key)",
+              "local": "(Option: keys_local)" },
+            { "name": "Key B",      "type": "progression", "amount": 1,
+              "local": "(Option: keys_local)" },
+            { "name": "Key C",      "type": "progression", "amount": 1,
+              "local": "(Option: keys_local)" },
+            { "name": "Power Cell", "type": "progression", "amount": 1,
+              "start": "(Option: start_with_power)" },
+            { "name": "Signal Beacon", "type": "useful",  "amount": 3,
+              "local": "(Option: beacons_local)" },
+            { "name": "Data Shard", "type": "filler",     "amount": -1 },
+            { "name": "Glitch Bomb","type": "trap",       "amount": 2,
               "logic": "(Option: enable_traps)" }
         ],
 
         "locations": [
-            { "name": "Alpha: Free Chest" },
+            { "name": "Alpha: Free Chest",
+              "priority": true },
             { "name": "Alpha: Key Cache",
               "logic": "(Item: Key A)" },
 
@@ -94,7 +128,19 @@
             { "name": "Omega: Terminal",
               "logic": "(Can Access: Zone Omega)" },
             { "name": "Omega: Core",
-              "logic": "(Can Access: Zone Omega) AND (Option: test_scope == complex) AND (Item: Key A) AND (Item: Key B) AND (Item: Key C)" }
+              "logic": "(Can Access: Zone Omega) AND (Option: test_scope == complex) AND (Item: Key A) AND (Item: Key B) AND (Item: Key C)",
+              "exclude": "(Option: skip_bonus)" },
+
+            { "name": "Sigma: Data Cache",
+              "logic": "(Can Access: Zone Sigma)" },
+            { "name": "Sigma: Research Lab",
+              "logic": "(Can Access: Zone Sigma) AND ((Item: Key B) OR (Item: Key C))" },
+            { "name": "Sigma: Bonus Cache",
+              "logic": "(Can Access: Zone Sigma)",
+              "exclude": "(Option: skip_bonus)" },
+            { "name": "Sigma: Locked Vault",
+              "logic": "(Can Access: Zone Sigma) AND (Item: Key A) AND (Item: Key B) AND (Item: Key C)",
+              "exclude": true }
         ]
     }
 }

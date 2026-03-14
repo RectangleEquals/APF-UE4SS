@@ -65,6 +65,8 @@ struct LocationDef {
     std::string name;
     int amount = 1;
     std::string logic;                       // Logic expression string (includes (Can Access: R) for region placement)
+    std::string priority = "";              // Placement hint: "True" or option-logic expr
+    std::string exclude  = "";              // Placement hint: "True" or option-logic expr
 };
 
 // =============================================================================
@@ -78,6 +80,9 @@ struct ItemDef {
     std::string action;
     std::vector<ActionArg> args;
     std::string logic;                       // Option-only logic (e.g. "(Option: enable_traps)")
+    std::string early = "";                 // Placement hint: "True" or option-logic expr
+    std::string start = "";                 // Placement hint: "True" or option-logic expr
+    std::string local = "";                 // Placement hint: "True" or option-logic expr
 };
 
 // =============================================================================

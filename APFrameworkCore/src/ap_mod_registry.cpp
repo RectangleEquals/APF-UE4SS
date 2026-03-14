@@ -276,6 +276,20 @@ size_t APModRegistry::count() const
 // Manifest Parsing
 // =============================================================================
 
+// Reads a placement-hint field from a JSON object.
+// JSON bool true  → "True"   (always active)
+// JSON bool false → ""       (inactive / omitted)
+// JSON string     → pass-through (option-logic expression)
+// absent / other  → ""
+static std::string parse_hint(const nlohmann::json &obj, const std::string &key)
+{
+    auto it = obj.find(key);
+    if (it == obj.end()) return "";
+    if (it->is_boolean()) return it->get<bool>() ? "True" : "";
+    if (it->is_string()) return it->get<std::string>();
+    return "";
+}
+
 std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_content) const
 {
     try
@@ -402,6 +416,8 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.name = loc.value("name", "");
                     def.amount = loc.value("amount", 1);
                     def.logic = loc.value("logic", "");
+                    def.priority = parse_hint(loc, "priority");
+                    def.exclude  = parse_hint(loc, "exclude");
 
                     if (!def.name.empty())
                     {
@@ -421,6 +437,9 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.amount = item.value("amount", 1);
                     def.action = item.value("action", "");
                     def.logic = item.value("logic", "");
+                    def.early = parse_hint(item, "early");
+                    def.start = parse_hint(item, "start");
+                    def.local = parse_hint(item, "local");
 
                     // Parse action args
                     if (item.contains("args") && item["args"].is_array())
