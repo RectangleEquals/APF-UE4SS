@@ -152,3 +152,4 @@ compile_commands.json
 # Tool artifacts
 tools/apf_manager/.apf_manager_config.json
 tools/apf_manifesto/build_cache/
+tools/apf_manifesto/*.md
