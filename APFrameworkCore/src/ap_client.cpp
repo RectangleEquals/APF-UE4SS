@@ -328,8 +328,6 @@ void APArchipelagoClient::setup_callbacks()
     client_->set_slot_connected_handler([this](const nlohmann::json &slot_data) {
         APLogger::get()->log(LogLevel::Info, "APArchipelagoClient", "Slot connected");
 
-        slot_connected_ = true;
-
         SlotInfo info;
         info.slot_id = client_->get_player_number();
         info.slot_name = slot_name_;
@@ -394,7 +392,11 @@ void APArchipelagoClient::setup_callbacks()
                                  "ID remap loaded: " + std::to_string(id_remap_.size()) + " entries");
         }
 
+        // Publish slot_info_ BEFORE setting slot_connected_ = true.
+        // The atomic write acts as a release fence: any thread that reads
+        // slot_connected_ = true is guaranteed to see the fully-populated slot_info_.
         slot_info_ = info;
+        slot_connected_ = true;
 
         APLogger::get()->log(LogLevel::Info, "APArchipelagoClient",
                              "Data package valid at slot connect: " +

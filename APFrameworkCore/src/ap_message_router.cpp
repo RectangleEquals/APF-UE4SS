@@ -58,7 +58,11 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
 
         // Count immediately — no action means nothing to confirm later
         APStateManager::get()->increment_item_progression_count(local_id);
-        APStateManager::get()->save_state();
+        // Guard: don't overwrite the session file before load_state() has run.
+        // Items replayed by the AP server on reconnect arrive during CONNECTING,
+        // before handle_syncing() loads the persisted checked_locations.
+        if (APStateManager::get()->is_loaded())
+            APStateManager::get()->save_state();
 
         // Notify owning mod (+ opt-in subscribers) so Lua on_item_received fires
         send_item_received(local_id, item_name, sender_name);

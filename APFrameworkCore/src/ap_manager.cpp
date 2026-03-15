@@ -900,7 +900,10 @@ void APManager::handle_framework_event(const FrameworkEvent &event)
             {
                 APMessageRouter::get()->route_item_receipt(arg.item_id, arg.item_name, arg.sender);
                 APStateManager::get()->increment_received_item_index();
-                APStateManager::get()->save_state();
+                // Guard: don't overwrite the session file before load_state() has run.
+                // AP server replays items during CONNECTING before handle_syncing() loads state.
+                if (APStateManager::get()->is_loaded())
+                    APStateManager::get()->save_state();
             }
             else if constexpr (std::is_same_v<T, LocationScoutEvent>)
             {
@@ -1022,18 +1025,6 @@ void APManager::handle_connecting(int64_t elapsed_ms)
                                      std::to_string(slot_info->option_values.size()) +
                                      " option values");
 
-            // Pre-compute snapshot asynchronously — can take many seconds for large games
-            snapshot_cache_future_ = std::async(std::launch::async, []() -> nlohmann::json {
-                APLogger::set_thread_name("Snap-Worker");
-                APLogger::get()->log(LogLevel::Debug, "APManager",
-                                     "Tracker snapshot computation starting");
-                auto result = APTrackerEngine::get()->compute_snapshot().to_json();
-                APLogger::get()->log(LogLevel::Debug, "APManager",
-                                     "Tracker snapshot computation complete");
-                return result;
-            });
-            APLogger::get()->log(LogLevel::Debug, "APManager",
-                                 "Tracker snapshot pre-computation started (async)");
         }
 
         transition_to_unlocked(LifecycleState::SYNCING, "Connected to AP server");
@@ -1057,6 +1048,21 @@ void APManager::handle_syncing(int64_t elapsed_ms)
     {
         APStateManager::get()->load_state();
         state_loaded_ = true;
+
+        // Start snapshot computation NOW — after load_state() restores checked_locations
+        // and after replayed items have been processed (both happen before handle_syncing()).
+        // Computing here ensures the snapshot sees the correct item state and checked set.
+        snapshot_cache_future_ = std::async(std::launch::async, []() -> nlohmann::json {
+            APLogger::set_thread_name("Snap-Worker");
+            APLogger::get()->log(LogLevel::Debug, "APManager",
+                                 "Tracker snapshot computation starting");
+            auto result = APTrackerEngine::get()->compute_snapshot().to_json();
+            APLogger::get()->log(LogLevel::Debug, "APManager",
+                                 "Tracker snapshot computation complete");
+            return result;
+        });
+        APLogger::get()->log(LogLevel::Debug, "APManager",
+                             "Tracker snapshot pre-computation started (async)");
     }
 
     // Validate checksum (compute_checksum uses APConfig internally)
