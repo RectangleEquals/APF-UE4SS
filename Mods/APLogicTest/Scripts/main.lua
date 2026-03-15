@@ -31,6 +31,7 @@ if not success_ui then
     print("[APLogicTest] WARNING: Failed to load logic_test_ui.lua\n")
     print("[APLogicTest] Error: " .. tostring(LogicTestUI) .. "\n")
     LogicTestUI = nil
+    return
 end
 
 print("[APLogicTest] Libraries loaded successfully\n")
@@ -120,6 +121,14 @@ local function merge_snapshot(payload)
         td.checked_locations[id] = true
     end
 
+    -- Re-sync: ensure td.locations reflects checked_locations (snapshot's per-location
+    -- checked field may be false even for already-checked locations on reconnect).
+    for id, _ in pairs(td.checked_locations) do
+        if td.locations[id] then
+            td.locations[id].checked = true
+        end
+    end
+
     recompute_region_counts(td)
     return td
 end
@@ -160,6 +169,15 @@ local function merge_update(td, delta)
 
     for _, id in ipairs(delta.checked_locations or {}) do
         td.checked_locations[id] = true
+    end
+
+    -- Re-sync: checked_locations is authoritative — a delta replacing a location entry
+    -- must not un-check a location the player already checked (C++ sends checked:false
+    -- when accessibility changes, not as a statement about prior check state).
+    for id, _ in pairs(td.checked_locations) do
+        if td.locations[id] then
+            td.locations[id].checked = true
+        end
     end
 
     recompute_region_counts(td)
@@ -233,11 +251,12 @@ APClient.on_error(function(code, message)
 end)
 
 -- ============================================================================
--- Keybind — F3 toggles the logic test panel
+-- Keybind — F2 toggles the logic test panel
 -- ============================================================================
 
-RegisterKeyBind(Key.F3, function()
+RegisterKeyBind(Key.F2, function()
     ExecuteInGameThread(function()
+        APClient.log("debug", "Toggling UI...\n")
         if LogicTestUI then LogicTestUI.toggle_visible() end
     end)
 end)
@@ -246,7 +265,7 @@ end)
 -- Initialization
 -- ============================================================================
 
-APClient.log("info", "APLogicTest keybinds registered (F3=toggle)\n")
+APClient.log("info", "APLogicTest keybinds registered (F2=toggle)\n")
 
 if LogicTestUI then
     LogicTestUI.init(APClient)

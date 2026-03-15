@@ -36,7 +36,13 @@ local function push_locations(td)
     for loc_id, ldata in pairs(td.locations or {}) do
         -- Lua strings auto-convert to FString; no FText() wrapper needed.
         -- Widget BP converts FString → FText internally for display.
-        widget:AddLocation(loc_id, ldata.name or tostring(loc_id), ldata.score or 0.0, ldata.checked or false)
+        -- out_of_logic: location pruned at generation (option logic simplified to ConstFalse).
+        -- WBP_LogicTestUI:AddLocation must accept this 5th bool param to show grey/N-A/disabled state.
+        if not ldata.out_of_logic or ldata.out_of_logic == false then
+            widget:AddLocation(loc_id, ldata.name or tostring(loc_id), ldata.score or 0.0, ldata.checked or false)
+        else
+            APClient.log("debug", "[APLogicTest] Skipping out of logic location: " .. ldata.name or tostring(loc_id) .. "\n")
+        end
     end
 
     widget:RefreshStatus()
@@ -53,33 +59,24 @@ end
 function M.init(client)
     APClient = client
 
-    -- Location check event: fired by WBP_LogicTestButton when a row is clicked.
-    -- Registered here (not top-level) so APClient is guaranteed to be set.
-    RegisterCustomEvent("APLogicTest_ToLua_CheckLocation", function(location_id)
-        local id = tonumber(location_id)
-        if id then
-            APClient.check_location(id)
-            APClient.log("info", "Checked location: " .. tostring(id) .. "\n")
-        end
-    end)
-
     -- Gate ModActor discovery: only register InitLuaInterop hook after a valid
     -- PlayerController exists (i.e. a game session has started).
     RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(Context)
         if player_controller == nil or not player_controller:IsValid() then
             player_controller = Context:get()
-            APClient.log("info", "[APLogicTest] Registering ModActor:InitLuaInterop\n")
+            APClient.log("debug", "[APLogicTest] Registering ModActor:InitLuaInterop\n")
 
             RegisterHook("/Game/Mods/APLogicTest/ModActor.ModActor_C:InitLuaInterop", function(actorContext)
+                APClient.log("info", "[APLogicTest] >>> InitLuaInterop (Lua)\n")
                 local actor = actorContext:get()
                 if not actor or not actor:IsValid() then
+                    APClient.log("debug", "[APLogicTest] >>> InitLuaInterop (Lua): Invalid actor\n")
                     return
                 end
 
-                local ok, w = pcall(function()
-                    return actor:GetLogicTestUI()
-                end)
-                if not ok or not w then
+                local w = actor.WBP_LogicTestUI_Inst
+                if not w or not w:IsValid() then
+                    APClient.log("debug", "[APLogicTest] >>> InitLuaInterop (Lua): Invalid UI widget\n")
                     return
                 end
                 widget = w
@@ -89,6 +86,19 @@ function M.init(client)
                 if pending_td then
                     push_locations(pending_td)
                     pending_td = nil
+                end
+            end)
+
+            -- Location check event: fired by WBP_LogicTestButton when a row is clicked.
+            -- Registered here (not top-level) so APClient is guaranteed to be set.
+            RegisterHook("/Game/Mods/APLogicTest/WBP_LogicTestButton.WBP_LogicTestButton_C:APLogicTest_ToLua_CheckLocation", function(widgetContext, location_id)
+                local id = location_id:get()
+                APClient.log("debug", "[APLogicTest] >>> APLogicTest_ToLua_CheckLocation - " .. tostring(id) .. "\n")
+                if id and id ~= 0 then
+                    APClient.check_location(id)  -- integer; polymorphic check_location routes by ID
+                    APClient.log("info", "Checked location: " .. APClient.get_location(id).name .. "\n")
+                else
+                    APClient.log("warn", "[APLogicTest] Invalid location_id from button\n")
                 end
             end)
         end
