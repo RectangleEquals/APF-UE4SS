@@ -539,7 +539,20 @@ class APFrameworkWorld(World):
             remap[old_id] = safe_start
             safe_start += 1
 
-        self.id_remapping = remap
+        # Compose with the existing id_remapping (set by _apply_player_offset, if any).
+        # The prior remap maps { base_id → offset_id }; remap maps { offset_id → safe_id }.
+        # C++ only knows base IDs, so id_remapping must ultimately map base_id → final_ap_id.
+        prior = self.id_remapping  # {} for player 1, {base→offset} for player 2+
+        if prior:
+            # Update entries in the prior remap whose offset_id was conflicted.
+            # Entries whose offset_id was not conflicted keep their offset value unchanged.
+            composed: Dict[int, int] = {
+                base_id: remap.get(ap_id, ap_id) for base_id, ap_id in prior.items()
+            }
+            self.id_remapping = composed
+        else:
+            # No prior offset (player 1): conflict remap maps base_id → safe_id directly.
+            self.id_remapping = remap
 
         # Apply remapping to location table (preserve all fields)
         new_location_table = {}
@@ -579,6 +592,13 @@ class APFrameworkWorld(World):
 
         # Refresh data package with remapped IDs
         self._update_data_package()
+
+        self.log.warning(
+            f"ID conflict resolved: {len(conflicting_ids)} IDs remapped to safe range "
+            f"starting at {next(iter(remap.values())) if remap else '?'}. "
+            f"id_remapping now covers {len(self.id_remapping)} entries.",
+            "IDConflict",
+        )
 
     def create_regions(self) -> None:
         """Create regions and locations.
