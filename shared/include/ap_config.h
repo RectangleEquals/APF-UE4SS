@@ -15,12 +15,15 @@
  * {
  *     "game_name": "Palworld",
  *     "version": "1.0.0",
- *     "id_base": 6942067,
  *     "ap_server": { "host": "localhost", "port": 38281, ... },
  *     "logging": { "level": "info", "file": "", "console": true },
  *     "timeouts": { ... },
  *     "threading": { ... }
  * }
+ *
+ * Note: id_base is NOT part of this config. It is the hardcoded constant
+ * APF_GLOBAL_ID_BASE (defined in ap_types.h). Per-player ID uniqueness is
+ * handled via per-slot offsets in slot_data, not by this config.
  */
 
 #include "Types/ap_shared_config_types.h"
@@ -119,7 +122,6 @@ public:
 
     const std::string& get_game_name() const { return config_.game_name; }
     const std::string& get_version() const { return config_.version; }
-    int64_t get_id_base() const { return config_.id_base; }
 
     // Logging config (nested)
     LogLevel get_log_level() const { return config_.logging.level; }

@@ -508,7 +508,7 @@ bool APCapabilities::has_conflicts() const
 
 void APCapabilities::assign_ids()
 {
-    int64_t base_id = APConfig::get()->get_id_base();
+    int64_t base_id = APF_GLOBAL_ID_BASE;
     int64_t current_id = base_id;
 
     // Assign location IDs first
@@ -681,7 +681,7 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
     config.game = game_name;
     config.slot_name = slot_name;
     config.checksum = compute_checksum();
-    config.id_base = APConfig::get()->get_id_base();
+    config.id_base = APF_GLOBAL_ID_BASE;
 
     // Get current timestamp
     auto now = std::chrono::system_clock::now();

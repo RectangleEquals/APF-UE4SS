@@ -8,17 +8,18 @@
  * {
  *     "game_name": "Palworld",
  *     "version": "1.0.0",
- *     "id_base": 6942067,
  *     "ap_server": { "host": "localhost", "port": 38281, ... },
  *     "logging": { "level": "info", "file": "", "console": true },
  *     "timeouts": { ... },
  *     "threading": { ... }
  * }
+ *
+ * Note: id_base is NOT part of framework_config.json. It is a hardcoded framework
+ * constant (APF_GLOBAL_ID_BASE = 6942067) defined in ap_types.h.
  */
 
 #include "ap_shared_enums.h"
 
-#include <cstdint>
 #include <string>
 
 namespace ap {
@@ -88,7 +89,6 @@ struct APServerConfig {
 struct FrameworkConfig {
     std::string game_name;
     std::string version;
-    int64_t id_base = 6942067;
     APServerConfig ap_server;
     LoggingConfig logging;
     TimeoutConfig timeouts;

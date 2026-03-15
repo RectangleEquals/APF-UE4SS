@@ -109,7 +109,7 @@ class AP_API APCapabilities
     /**
      * @brief Assign IDs to all locations and items.
      *
-     * Uses base_id from APConfig::get()->get_id_base().
+     * Uses APF_GLOBAL_ID_BASE as the starting ID.
      * IDs are assigned in order: locations first, then items.
      * Multi-instance locations/items get sequential IDs.
      */

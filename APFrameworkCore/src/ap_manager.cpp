@@ -130,7 +130,7 @@ int APManager::init(lua_State *L)
     // Transition to GENERATION
     transition_to_unlocked(LifecycleState::GENERATION, "Generating capabilities");
 
-    // Assign IDs (uses APConfig::get()->get_id_base() internally)
+    // Assign IDs (uses APF_GLOBAL_ID_BASE internally)
     APCapabilities::get()->assign_ids();
 
     // Compute and store checksum (uses APConfig for game_name and slot_name)

@@ -303,12 +303,16 @@ struct CapabilitiesConfigOptionDefault {
   std::string default_value; // encoded as string (toggle: "true"/"false", range: "3", text_choice: "standard")
 };
 
+// Global base ID for all AP Framework item/location IDs.
+// Never user-configurable — per-player uniqueness is handled via per-slot offsets in slot_data.
+inline constexpr int64_t APF_GLOBAL_ID_BASE = 6942067LL;
+
 struct CapabilitiesConfig {
   std::string version;
   std::string game;
   std::string slot_name;
   std::string generated_at;
-  int64_t id_base = 6942067;
+  int64_t id_base = APF_GLOBAL_ID_BASE;
   std::string checksum;
   std::vector<ModInfo> mods;
   CapabilitiesData capabilities;
