@@ -81,10 +81,12 @@ local function recompute_region_counts(td)
         rdata.checked = 0
     end
     for _, ldata in pairs(td.locations) do
-        local rdata = td.regions[ldata.display_region]
-        if rdata then
-            rdata.total = rdata.total + 1
-            if ldata.checked then rdata.checked = rdata.checked + 1 end
+        if not ldata.out_of_logic then  -- skip OOL locations from region totals
+            local rdata = td.regions[ldata.display_region]
+            if rdata then
+                rdata.total = rdata.total + 1
+                if ldata.checked then rdata.checked = rdata.checked + 1 end
+            end
         end
     end
 end
@@ -114,6 +116,7 @@ local function merge_snapshot(payload)
             score          = loc.score,
             checked        = loc.checked or false,
             logic_tree     = loc.logic_tree,
+            out_of_logic   = loc.out_of_logic or false,
         }
     end
 
@@ -143,6 +146,7 @@ local function merge_update(td, delta)
             score          = loc.score,
             checked        = loc.checked or false,
             logic_tree     = loc.logic_tree,
+            out_of_logic   = loc.out_of_logic or false,
         }
     end
 

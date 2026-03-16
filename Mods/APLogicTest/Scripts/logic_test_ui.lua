@@ -41,7 +41,7 @@ local function push_locations(td)
         if not ldata.out_of_logic or ldata.out_of_logic == false then
             widget:AddLocation(loc_id, ldata.name or tostring(loc_id), ldata.score or 0.0, ldata.checked or false)
         else
-            APClient.log("debug", "[APLogicTest] Skipping out of logic location: " .. ldata.name or tostring(loc_id) .. "\n")
+            APClient.log("debug", "[APLogicTest] Skipping OOL location: " .. (ldata.name or tostring(loc_id)) .. "\n")
         end
     end
 
