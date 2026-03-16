@@ -97,6 +97,7 @@ local function merge_snapshot(payload)
         regions           = {},
         received_items    = payload.received_items or {},
         checked_locations = {},
+        goal              = payload.goal or { name = "", display = "", description = "", score = 0.0, no_goal_mode = true },
     }
 
     for _, reg in ipairs(payload.regions or {}) do
@@ -169,6 +170,10 @@ local function merge_update(td, delta)
 
     if delta.received_items then
         td.received_items = delta.received_items
+    end
+
+    if delta.goal then
+        td.goal = delta.goal
     end
 
     for _, id in ipairs(delta.checked_locations or {}) do

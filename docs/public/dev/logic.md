@@ -40,6 +40,9 @@ primary     := '(' expression ')'
              | '(Can Access:' NAME ')'
              | '(Option:' NAME ')'
              | '(Option:' NAME OP VALUE ')'
+             | '(Goal:' NAME ')'
+             | '(Goal: none)'
+             | '(Goal: ?)'
              | 'True'
              | 'False'
 
@@ -63,6 +66,9 @@ VALUE := any characters up to the closing ')'
 | `(Option: key)` | `(Option: include_traps)` | Toggle option is enabled (truthy) |
 | `(Option: key == val)` | `(Option: logic_difficulty == expert)` | Option equals the value |
 | `(Option: key >= N)` | `(Option: key_count >= 5)` | Option compares to a numeric value |
+| `(Goal: name)` | `(Goal: any_key)` | Player's selected goal is exactly `name` (case-insensitive) |
+| `(Goal: none)` | `(Goal: none)` | No goal is selected (all-locations completion mode) |
+| `(Goal: ?)` | `(Goal: ?)` | Any goal is set (player has an active goal) |
 | `True` | `True` | Always satisfied |
 | `False` | `False` | Never satisfied |
 | `A AND B` | `(Item: Iron Key) AND (Can Access: Mountain Pass)` | Both must be satisfied |
@@ -70,6 +76,62 @@ VALUE := any characters up to the closing ')'
 | `(A)` | `((Item: Iron Key) OR (Item: Crystal Key))` | Grouping — no semantic effect, just precedence |
 
 Option operators for numeric comparison: `>=`, `<=`, `>`, `<`, `==`, `!=`. String comparison falls back to lexicographic order when the value cannot be parsed as a number.
+
+---
+
+## Goal Selector — `(Goal: X)`
+
+`(Goal: X)` is syntactic sugar that is converted to `(Option: goal == X)` at parse time. It is the recommended way to write goal-conditional logic because it is more expressive and intent-revealing than the raw `(Option:)` form.
+
+```
+(Goal: any_key)           ← recommended
+(Option: goal == any_key) ← equivalent — both produce identical behavior
+```
+
+The conversion happens in the tokenizer of both the Python parser and the C++ evaluator, so the two forms are completely interchangeable. The `(Goal:)` form never reaches the AST — it is always folded into an `OptionNode` before evaluation.
+
+### Three valid forms
+
+| Form | Equivalent to | True when |
+|---|---|---|
+| `(Goal: name)` | `(Option: goal == name)` | The player selected goal `name` exactly |
+| `(Goal: none)` | `(Option: goal == )` — empty string | No goal is selected (all-locations mode) |
+| `(Goal: ?)` | `(Option: goal)` — boolean truthy check | Any goal is set (not the no-goal default) |
+
+### Special reserved values
+
+- **`none`** is a reserved goal selector meaning "no goal is active." Manifests must not declare a goal with `"name": "none"` — the framework logs a warning if they do.
+- **`?`** is not a valid identifier and cannot conflict with real goal names.
+
+### Case sensitivity
+
+Goal name matching is **case-insensitive** in both the Python apworld and the C++ tracker runtime. `(Goal: Any_Key)` matches a goal declared as `"name": "any_key"`. By convention, goal names should be lowercase (matching the manifest declaration) for readability.
+
+### When `(Goal: X)` evaluates to `false`
+
+- The player did not select a goal (empty/unset `goal:` in YAML → no-goal mode active)
+- The player selected a **different** goal than `name`
+- The goal name contains a typo (no fuzzy matching at evaluation time — always an exact match after case folding)
+
+### Valid uses
+
+`(Goal: X)` is valid anywhere `(Option: X == Y)` is valid:
+
+| Context | Valid? | Notes |
+|---|---|---|
+| Region `logic` | ✅ | The region (and all its locations) becomes inaccessible when the wrong goal is active |
+| Location `logic` | ✅ | Location becomes out-of-logic when the wrong goal is active |
+| Location `exclude` / `priority` | ✅ | Hint inactive when the wrong goal is active |
+| Item `logic` | ✅ | Item excluded from the pool at generation when the wrong goal is active |
+| Item `start` / `early` / `local` | ✅ | Hint inactive when the wrong goal is active |
+
+### Common pattern: goal-dependent region access
+
+```json
+{ "name": "Zone Beta", "logic": "(Item: Iron Key) OR (Goal: any_key)" }
+```
+
+With `goal: any_key`: `(Goal: any_key)` resolves to `True` at generation → Zone Beta is always accessible (sphere 0) → no deadlock from having a single sphere-0 location. With any other goal, Zone Beta requires Iron Key unchanged.
 
 ---
 
@@ -262,6 +324,8 @@ Located in the `Mountain Pass` region for AP sphere purposes and display groupin
 **Empty or missing logic:** An entry with no `logic` field (or an empty string) is treated as `Const(true)` — always accessible. In the tracker, it scores `1.0`. In AP generation, it places the location in the `Menu` region with no access rule.
 
 **Unknown options:** If an `(Option: key)` references an option name not present in the player's options, it defaults to `true` (permissive) — the content is included. This ensures that option-gated content is not accidentally hidden when options evolve between mod versions. **A warning is logged in both the C++ framework and the Python apworld** when an unknown option key is encountered at evaluation time.
+
+**Case sensitivity of option and goal comparisons:** String option comparisons (including `(Goal: X)` which expands to `(Option: goal == X)`) are **case-insensitive** in both the Python apworld and the C++ runtime. `(Goal: Any_Key)` correctly matches a goal declared as `"name": "any_key"`. By convention, use lowercase to match manifest declarations.
 
 **`True` / `False` literals:** Explicit constants, rarely used in practice. `False` can be used during development to temporarily disable a location without removing it from the manifest.
 

@@ -109,6 +109,13 @@ nlohmann::json TrackerUpdate::to_json() const
     }
     j["checked_locations"] = checked;
 
+    // Goal status
+    j["goal"] = {{"name",         goal.name},
+                 {"display",      goal.display},
+                 {"description",  goal.description},
+                 {"score",        goal.score},
+                 {"no_goal_mode", goal.no_goal_mode}};
+
     return j;
 }
 
@@ -220,6 +227,13 @@ nlohmann::json TrackerSnapshot::to_json() const
         checked.push_back(id);
     }
     j["checked_locations"] = checked;
+
+    // Goal status
+    j["goal"] = {{"name",         goal.name},
+                 {"display",      goal.display},
+                 {"description",  goal.description},
+                 {"score",        goal.score},
+                 {"no_goal_mode", goal.no_goal_mode}};
 
     return j;
 }
@@ -434,6 +448,24 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
         }
     }
 
+    // Pre-parse goal logic node for scored evaluation on each tracker tick
+    goal_logic_node_ = LogicNode::make_const(false);
+    if (active_goal_.has_value() && !active_goal_->logic.empty())
+    {
+        try
+        {
+            auto ast = parse_logic(active_goal_->logic);
+            ast = evaluate_options(ast, option_values);
+            ast = simplify(ast);
+            goal_logic_node_ = std::move(ast);
+        }
+        catch (const std::exception &e)
+        {
+            APLogger::get()->log(LogLevel::Warn, "APTrackerEngine",
+                                 "Failed to parse goal logic: " + std::string(e.what()));
+        }
+    }
+
     // Pre-parse region logic
     parsed_regions_.clear();
     auto all_regions = APCapabilities::get()->get_regions();
@@ -500,7 +532,8 @@ TrackerState APTrackerEngine::build_tracker_state() const
 void APTrackerEngine::compute_results(
     const TrackerState &state,
     std::vector<TrackerLocationResult> &loc_results,
-    std::vector<TrackerRegionResult> &reg_results) const
+    std::vector<TrackerRegionResult> &reg_results,
+    TrackerState *out_full_state) const
 {
     auto snap_start = std::chrono::steady_clock::now();
     APLogger::get()->log(LogLevel::Debug, "APTrackerEngine",
@@ -520,6 +553,9 @@ void APTrackerEngine::compute_results(
     // Build full state with reachable regions
     TrackerState full_state = state;
     full_state.reachable_regions = reachable;
+
+    if (out_full_state)
+        *out_full_state = full_state;
 
     // Compute region results (with scored trees)
     reg_results.clear();
@@ -601,9 +637,11 @@ TrackerSnapshot APTrackerEngine::compute_snapshot()
 
     // Dynamic state
     auto state = build_tracker_state();
-    compute_results(state, snapshot.locations, snapshot.regions);
+    TrackerState full_state;
+    compute_results(state, snapshot.locations, snapshot.regions, &full_state);
     snapshot.received_items = state.received_items;
     snapshot.checked_locations = APStateManager::get()->get_checked_locations();
+    snapshot.goal = compute_goal_status(full_state, snapshot.locations);
 
     return snapshot;
 }
@@ -613,11 +651,46 @@ TrackerUpdate APTrackerEngine::compute_update()
     TrackerUpdate update;
 
     auto state = build_tracker_state();
-    compute_results(state, update.locations, update.regions);
+    TrackerState full_state;
+    compute_results(state, update.locations, update.regions, &full_state);
     update.received_items = state.received_items;
     update.checked_locations = APStateManager::get()->get_checked_locations();
+    update.goal = compute_goal_status(full_state, update.locations);
 
     return update;
+}
+
+GoalStatus APTrackerEngine::compute_goal_status(
+    const TrackerState &full_state,
+    const std::vector<TrackerLocationResult> &loc_results) const
+{
+    GoalStatus gs;
+    gs.no_goal_mode = no_goal_mode_;
+
+    if (no_goal_mode_)
+    {
+        // Score = fraction of in-logic locations that have been checked
+        int total = 0, checked_count = 0;
+        for (const auto &loc : loc_results)
+        {
+            if (!loc.out_of_logic)
+            {
+                ++total;
+                if (loc.checked) ++checked_count;
+            }
+        }
+        gs.score = (total > 0) ? static_cast<float>(checked_count) / static_cast<float>(total)
+                               : 1.0f;
+    }
+    else if (active_goal_.has_value())
+    {
+        gs.name = active_goal_->name;
+        gs.display = active_goal_->display;
+        gs.description = active_goal_->description;
+        gs.score = evaluate_scored(goal_logic_node_, full_state).score;
+    }
+
+    return gs;
 }
 
 // =============================================================================

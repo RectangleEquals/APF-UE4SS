@@ -89,6 +89,19 @@ struct EcosystemItem
 };
 
 // =============================================================================
+// Goal Status (changes as items are received)
+// =============================================================================
+
+struct GoalStatus
+{
+    std::string name;        ///< Goal name from manifest (empty in no_goal_mode)
+    std::string display;     ///< Human-readable goal display name
+    std::string description; ///< Goal description
+    float score = 0.0f;      ///< 0.0–1.0 progress toward goal completion
+    bool no_goal_mode = false; ///< True = all-locations completion mode
+};
+
+// =============================================================================
 // Dynamic Results (change on state events)
 // =============================================================================
 
@@ -121,6 +134,7 @@ struct TrackerUpdate
     std::vector<TrackerRegionResult> regions;
     std::map<std::string, int> received_items;
     std::set<int64_t> checked_locations;
+    GoalStatus goal;
 
     nlohmann::json to_json() const;
 };
@@ -139,6 +153,7 @@ struct TrackerSnapshot
     std::vector<TrackerRegionResult> regions;
     std::map<std::string, int> received_items;
     std::set<int64_t> checked_locations;
+    GoalStatus goal;
 
     nlohmann::json to_json() const;
 };
@@ -242,7 +257,12 @@ class AP_API APTrackerEngine
     /// Compute location and region results from current state
     void compute_results(const TrackerState &state,
                          std::vector<TrackerLocationResult> &loc_results,
-                         std::vector<TrackerRegionResult> &reg_results) const;
+                         std::vector<TrackerRegionResult> &reg_results,
+                         TrackerState *out_full_state = nullptr) const;
+
+    /// Compute goal status from current full state and already-computed location results
+    GoalStatus compute_goal_status(const TrackerState &full_state,
+                                   const std::vector<TrackerLocationResult> &loc_results) const;
 
     /// Build ecosystem metadata from APCapabilities/APModRegistry
     void build_ecosystem_metadata();
@@ -256,6 +276,7 @@ class AP_API APTrackerEngine
     // Goal tracking
     std::optional<GoalDef> active_goal_; ///< Selected goal for this session (nullopt = no goals defined)
     bool no_goal_mode_ = false;           ///< True when no goals — completion = all in-logic locations checked
+    LogicNode goal_logic_node_;           ///< Pre-parsed goal logic (valid when active_goal_ is set)
 
     // Pre-parsed location logic (index matches locations_meta_)
     struct ParsedLocation

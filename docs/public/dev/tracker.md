@@ -89,7 +89,7 @@ The snapshot contains two categories of data: **static ecosystem metadata** (doe
     ],
     "locations_meta": [
         {
-            "location_id": 6942100,
+            "id": 6942100,
             "name": "Mountain Pass: Supply Cache",
             "display_region": "Mountain Pass",
             "mod_id": "author.mygame.mymod",
@@ -98,7 +98,7 @@ The snapshot contains two categories of data: **static ecosystem metadata** (doe
     ],
     "items_meta": [
         {
-            "item_id": 6942067,
+            "id": 6942067,
             "name": "Iron Key",
             "type": "progression",
             "original_type": "progression",
@@ -134,6 +134,7 @@ The static metadata arrives once in the snapshot and does not change during a se
             "display_region": "Mountain Pass",
             "score": 1.0,
             "checked": false,
+            "out_of_logic": false,
             "logic_tree": { ... }
         }
     ],
@@ -154,16 +155,24 @@ The static metadata arrives once in the snapshot and does not change during a se
     "received_items": {
         "Lantern": 1
     },
-    "checked_locations": [6942100]
+    "checked_locations": [6942100],
+    "goal": {
+        "name": "all_keys",
+        "display": "Acquire All Keys",
+        "description": "Collect all Key items",
+        "score": 0.5,
+        "no_goal_mode": false
+    }
 }
 ```
 
 | Field | Description |
 |---|---|
-| `locations[]` | All locations with current score, checked status, and full scored AST tree |
-| `regions[]` | All regions with current score (average of children), reachability status, and AST |
+| `locations[]` | All locations with current score, checked status, out-of-logic flag, and full scored AST tree |
+| `regions[]` | All regions with current score, reachability status, and AST |
 | `received_items{}` | Map of item name → count received so far |
 | `checked_locations[]` | Array of location IDs that have been checked |
+| `goal{}` | Current goal status — see [Goal Status Object](#goal-status-object) below |
 
 ---
 
@@ -173,14 +182,15 @@ Each entry in `locations[]` and `regions[]`:
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | int64 | Location ID (matches `locations_meta[i].location_id`) |
+| `id` | int64 | Location ID (matches `locations_meta[i].id`) |
 | `name` | string | Location name |
 | `display_region` | string | Display group derived from first `(Can Access: R)` in logic |
 | `score` | float | 0.0–1.0 accessibility score |
 | `checked` | bool | True if this location has been checked |
+| `out_of_logic` | bool | True if the location's logic simplified to `Const(false)` at generation — the location was pruned from the multiworld (option-gated content that was turned off). It is never reachable; exclude it from any display or count logic in your UI. |
 | `logic_tree` | object | Recursive scored AST — see below |
 
-Region entries use `name` instead of `id` (regions are identified by name), and `reachable` instead of `checked`.
+Region entries use `name` instead of `id` (regions are identified by name), and `reachable` instead of `checked`. Regions do not have an `out_of_logic` field.
 
 ---
 
@@ -192,18 +202,18 @@ The `logic_tree` field is a recursive tree mirroring the AST structure of the lo
 
 ```json
 {
-    "type": "And",
+    "type": "and",
     "score": 0.5,
     "display": "(Can Access: Deep Caves) AND (Item: Iron Key)",
     "children": [
         {
-            "type": "CanAccess",
+            "type": "can_access",
             "score": 0.0,
             "display": "(Can Access: Deep Caves)",
             "children": []
         },
         {
-            "type": "Item",
+            "type": "item",
             "score": 1.0,
             "display": "(Item: Iron Key)",
             "children": []
@@ -214,7 +224,7 @@ The `logic_tree` field is a recursive tree mirroring the AST structure of the lo
 
 | Field | Type | Description |
 |---|---|---|
-| `type` | string | Node type: `"Const"`, `"Item"`, `"CanAccess"`, `"Option"`, `"And"`, `"Or"` |
+| `type` | string | Node type: `"const"`, `"item"`, `"can_access"`, `"option"`, `"and"`, `"or"` (all lowercase) |
 | `score` | float | 0.0–1.0 score for this node |
 | `display` | string | Human-readable text representation of this expression |
 | `children` | array | Child nodes (empty for leaf nodes) |
@@ -235,6 +245,7 @@ The `logic_tree` field is a recursive tree mirroring the AST structure of the lo
 | `Const(false)` | `0.0` |
 | `Item(name, count)` | `min(received / required, 1.0)` — partial credit |
 | `CanAccess(region)` | `1.0` if reachable, `0.0` otherwise |
+| `Option(...)` | Always `1.0` at runtime — all option nodes are resolved to `Const` during initialization before scoring begins |
 | `And(children)` | average of all children scores |
 | `Or(children)` | maximum of all children scores |
 
@@ -244,23 +255,74 @@ See [logic.md — Scored Evaluation](logic.md#runtime-c-tracker) for the full sc
 
 ## TRACKER_UPDATE Schema
 
-Updates have the same structure as the dynamic state section of the snapshot, but only include entries that changed since the last snapshot or update. Unchanged locations and regions are omitted.
+Updates have the same structure as the dynamic state section of the snapshot. **Every update includes all locations and all regions** — entries are not filtered to only changed ones. Replace your entire cached location and region state on each update; do not attempt to merge individual fields.
+
+The update also includes the current goal status object.
 
 ```json
 {
     "locations": [
         { "id": 6942101, "name": "Caves: Hidden Alcove", "display_region": "Deep Caves",
-          "score": 1.0, "checked": false, "logic_tree": { ... } }
+          "score": 1.0, "checked": false, "out_of_logic": false, "logic_tree": { ... } }
     ],
     "regions": [
         { "name": "Deep Caves", "score": 1.0, "reachable": true, "logic_tree": { ... } }
     ],
     "received_items": { "Iron Key": 1 },
-    "checked_locations": []
+    "checked_locations": [],
+    "goal": {
+        "name": "all_keys",
+        "display": "Acquire All Keys",
+        "description": "Collect all Key items",
+        "score": 0.5,
+        "no_goal_mode": false
+    }
 }
 ```
 
-**Merging updates:** Merge delta into your cached snapshot by location ID (for locations) and region name (for regions). Replace the full entry, not individual fields.
+**Merging updates:** Replace `locations`, `regions`, `received_items`, `checked_locations`, and `goal` in their entirety from each update. The `checked_locations` array is the authoritative source of which locations have been checked — always re-apply it to `locations` entries after merging (a location entry may have `checked: false` if its score changed, but if the ID is in `checked_locations`, treat it as checked).
+
+---
+
+## Goal Status Object
+
+Both `TRACKER_SNAPSHOT` and `TRACKER_UPDATE` include a `goal` object at the top level of the dynamic state payload. It describes the player's active goal and current progress toward it.
+
+```json
+{
+    "name": "all_keys",
+    "display": "Acquire All Keys",
+    "description": "Collect all Key items",
+    "score": 0.5,
+    "no_goal_mode": false
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Internal goal name from manifest (empty string in `no_goal_mode`) |
+| `display` | string | Human-readable goal display name (empty in `no_goal_mode`) |
+| `description` | string | Goal description text (empty in `no_goal_mode`) |
+| `score` | float | 0.0–1.0 progress toward completion |
+| `no_goal_mode` | bool | True when no goal is selected or no goals are defined — completion mode is "all in-logic locations checked" |
+
+**Score semantics:**
+- When `no_goal_mode: true`: `score = checked_in_logic / total_in_logic` — fraction of non-out-of-logic locations that have been checked
+- When `no_goal_mode: false`: `score` = `evaluate_scored(goal_logic_node, state).score` — uses the same `And`/`Or`/`Item`/`CanAccess` scoring rules as location logic
+
+**Example display pattern:**
+
+```lua
+local g = snapshot.goal or {}
+if g.no_goal_mode then
+    -- "All In-Logic Locations: 8/15 (53%)"
+    local pct = math.floor((g.score or 0.0) * 100)
+    widget:SetGoalStatus("", "All In-Logic Locations", g.score or 0.0)
+else
+    -- "Acquire All Keys: 50%"
+    widget:SetGoalStatus(g.name or "", g.display or "Goal", g.score or 0.0)
+end
+```
 
 ---
 

@@ -17,6 +17,9 @@ Grammar:
                | '(Can Access:' NAME ')'
                | '(Option:' NAME ')'
                | '(Option:' NAME OP VALUE ')'
+               | '(Goal:' NAME ')'
+               | '(Goal: none)'
+               | '(Goal: ?)'
                | 'True' | 'False'
 
 Option expressions are evaluated at generation time (static). Item and region
@@ -140,6 +143,25 @@ def tokenize(logic: str) -> List[Token]:
                     raise ValueError(f"Unclosed '(Can Access:' starting near position {i}")
                 region = logic[i:close].strip()
                 tokens.append((CAN_ACCESS, region))
+                i = close + 1
+                continue
+
+            # (Goal: NAME) — syntactic sugar for (Option: goal == NAME)
+            # Special reserved values:
+            #   (Goal: none) → goal option is empty string (no goal selected / default mode)
+            #   (Goal: ?)    → boolean truthy check (any goal is active)
+            if rest.startswith('(Goal:'):
+                i += len('(Goal:')
+                close = logic.find(')', i)
+                if close == -1:
+                    raise ValueError(f"Unclosed '(Goal:' starting near position {i}")
+                goal_name = logic[i:close].strip()
+                if goal_name == '?':
+                    tokens.append((OPTION, ("goal", None, None)))    # boolean check
+                elif goal_name.lower() == 'none':
+                    tokens.append((OPTION, ("goal", "==", "")))      # empty = no goal set
+                else:
+                    tokens.append((OPTION, ("goal", "==", goal_name)))
                 i = close + 1
                 continue
 

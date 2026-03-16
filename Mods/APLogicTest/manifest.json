@@ -76,7 +76,7 @@
     "capabilities": {
         "regions": [
             { "name": "Zone Alpha" },
-            { "name": "Zone Beta",  "logic": "(Item: Key A)" },
+            { "name": "Zone Beta",  "logic": "(Item: Key A) OR (Goal: any_key)" },
             { "name": "Zone Gamma", "logic": "(Item: Key A) AND (Item: Key B)" },
             { "name": "Zone Delta", "logic": "(Item: Key A) AND ((Item: Key B) OR (Item: Key C))" },
             { "name": "Zone Omega", "logic": "(Item: Key B) AND (Item: Key C)" },

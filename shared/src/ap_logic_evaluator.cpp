@@ -189,6 +189,47 @@ std::vector<Token> tokenize(const std::string &logic)
                 continue;
             }
 
+            // (Goal: NAME) — syntactic sugar for (Option: goal == NAME)
+            // Special reserved values:
+            //   (Goal: none) → goal option is empty string (no goal selected / default mode)
+            //   (Goal: ?)    → boolean truthy check (any goal is active)
+            if (rest.rfind("(Goal:", 0) == 0)
+            {
+                i += 6; // skip "(Goal:"
+                auto close = logic.find(')', i);
+                if (close == std::string::npos)
+                    throw std::runtime_error("Unclosed '(Goal:' near position " + std::to_string(i));
+
+                std::string goal_name = trim(logic.substr(i, close - i));
+                Token tok;
+                tok.type = TokenType::Option;
+                tok.str_val = "goal";
+
+                std::string lower_name = goal_name;
+                std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(),
+                               [](unsigned char c){ return std::tolower(c); });
+
+                if (goal_name == "?")
+                {
+                    tok.opt_op = "";    // boolean check: truthy when any goal is set
+                    tok.opt_value = "";
+                }
+                else if (lower_name == "none")
+                {
+                    tok.opt_op = "==";  // match empty string = no goal selected
+                    tok.opt_value = "";
+                }
+                else
+                {
+                    tok.opt_op = "==";
+                    tok.opt_value = goal_name;
+                }
+
+                tokens.push_back(tok);
+                i = close + 1;
+                continue;
+            }
+
             // (Option: NAME) or (Option: NAME OP VALUE)
             if (rest.rfind("(Option:", 0) == 0)
             {
@@ -489,19 +530,26 @@ LogicNode evaluate_options(const LogicNode &node, const std::map<std::string, st
         }
         catch (...)
         {
-            // String comparison fallback
+            // String comparison fallback — lowercase both sides for case-insensitive match
+            // (mirrors Python's evaluate_options which applies .lower() to both operands)
+            std::string left_lower = value_str;
+            std::string right_lower = node.option_value;
+            std::transform(left_lower.begin(), left_lower.end(), left_lower.begin(),
+                           [](unsigned char c){ return std::tolower(c); });
+            std::transform(right_lower.begin(), right_lower.end(), right_lower.begin(),
+                           [](unsigned char c){ return std::tolower(c); });
             if (node.option_op == "==")
-                result = value_str == node.option_value;
+                result = left_lower == right_lower;
             else if (node.option_op == "!=")
-                result = value_str != node.option_value;
+                result = left_lower != right_lower;
             else if (node.option_op == ">=")
-                result = value_str >= node.option_value;
+                result = left_lower >= right_lower;
             else if (node.option_op == "<=")
-                result = value_str <= node.option_value;
+                result = left_lower <= right_lower;
             else if (node.option_op == ">")
-                result = value_str > node.option_value;
+                result = left_lower > right_lower;
             else if (node.option_op == "<")
-                result = value_str < node.option_value;
+                result = left_lower < right_lower;
         }
 
         return LogicNode::make_const(result);

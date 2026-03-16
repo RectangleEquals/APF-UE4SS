@@ -193,6 +193,30 @@ When goals are declared, the apworld generates a `goal` option as a `text_choice
 
 Goal logic supports the full expression grammar — `(Item:)`, `(Can Access:)`, `(Option:)`, `AND`, `OR`.
 
+### Using `(Goal: X)` in region and item logic
+
+The special `(Goal: goal_name)` expression lets other logic strings react to the player's active goal. It is syntactic sugar for `(Option: goal == goal_name)` and can appear anywhere an option expression is valid.
+
+```json
+"regions": [
+    { "name": "Zone Beta", "logic": "(Item: Iron Key) OR (Goal: any_key)" }
+]
+```
+
+With `goal: any_key`, `(Goal: any_key)` resolves to `True` at generation — Zone Beta is always accessible. With any other goal it requires Iron Key, unchanged. This is the recommended pattern for preventing goal-specific generation deadlocks.
+
+Three forms are supported:
+
+| Form | True when |
+|---|---|
+| `(Goal: name)` | The player selected this goal exactly (case-insensitive) |
+| `(Goal: none)` | No goal is selected (all-locations completion mode) |
+| `(Goal: ?)` | Any goal is set (not the no-goal default) |
+
+> **Reserved name:** `none` must not be used as a goal `name`. The framework logs a warning if it is.
+
+See [logic.md — Goal Selector](logic.md#goal-selector--goal-x) for the complete reference including case sensitivity, valid placement contexts, and evaluation semantics.
+
 ---
 
 ## Capabilities
@@ -441,6 +465,103 @@ The resulting combined logic is `(original_logic) OR (override_logic)`. Multiple
 When `"vocab_validation": true`, all item, location, and region names are validated against game-specific vocabulary files in `Templates/<GameName>/`. If a name is not recognized, the framework logs a warning during manifest loading.
 
 This opt-in feature catches typos in large manifests early, before generation. See [templates.md](templates.md) for how vocabulary files are structured.
+
+---
+
+## Best Practices: Avoiding Deadlocks and Softlocks
+
+Archipelago's fill algorithm requires at least one location to be reachable with no items, and every progression item must be placeable in a reachable location before the items that gate further locations are distributed. Violations produce a `FillError` at generation time. The patterns below describe how each manifest feature can go wrong and how to prevent it.
+
+### Sphere-0 minimum
+
+Archipelago requires at least one location to be accessible from the starting state (no items collected). If every location in your mod is gated by at least one item, generation will always fail. Ensure at least one location has no `logic` or has logic that simplifies to `True` before any items are placed.
+
+```json
+// BAD — all locations require items; nothing accessible at generation start
+{ "name": "Zone Alpha: Chest", "logic": "(Item: Iron Key)" }
+
+// GOOD — one free location always accessible
+{ "name": "Zone Alpha: Free Chest" }                     // no logic
+{ "name": "Zone Alpha: Key Cache", "logic": "(Item: Iron Key)" }
+```
+
+### Option-conditional items and location consistency
+
+If a location's logic requires an item that is conditionally excluded from the pool via `"logic"`, that location becomes unfillable when the option that removes the item is active. Always apply the same option condition to the location or keep the item unconditional.
+
+```json
+// BAD — SpecialKey excluded when vault_mode=false, but Vault requires it unconditionally
+{ "name": "SpecialKey", "type": "progression", "logic": "(Option: vault_mode)" }
+{ "name": "Vault: Access", "logic": "(Item: SpecialKey)" }
+
+// GOOD — location excluded when item is excluded
+{ "name": "Vault: Access", "logic": "(Option: vault_mode) AND (Item: SpecialKey)" }
+```
+
+### Option-conditional regions
+
+All locations inside a region become out-of-logic when the region itself is inaccessible. If those locations hold progression items needed by other logic paths, you can create a deadlock where the items required to open the region are locked inside it.
+
+When a region's logic is option-conditional (e.g., `"logic": "(Option: hard_mode)"`), ensure that every progression item inside that region is either also option-conditional or exists in a copy outside the region. Otherwise the fill algorithm will find no valid placement.
+
+### Goal-conditional region access and sphere-0 deadlocks
+
+When a region's access logic is keyed to an item, every progression item needed to access that region must be reachable from sphere 0 locations. If the only sphere-0 location receives the "wrong" key (a key that doesn't open the region), the fill algorithm cannot place the remaining keys anywhere accessible and fails.
+
+The `(Goal: X)` expression solves this class of problem for goal-dependent regions. If a region requires `(Item: Iron Key)` to prevent trivial access, but the `any_key` goal makes Iron Key non-special, you can write:
+
+```json
+{ "name": "Zone Beta", "logic": "(Item: Iron Key) OR (Goal: any_key)" }
+```
+
+With `goal: any_key` active, Zone Beta becomes sphere-0 accessible, providing additional fill locations and eliminating the deadlock. With all other goals, Zone Beta still requires Iron Key.
+
+### `start` hint and item count
+
+`"start": true` removes one copy from the pool before randomization. If `"amount": 1` and `"start": true`, zero copies remain in the pool. Ensure a filler template (`"amount": -1`) exists to absorb the missing slot; without it, the item pool will be one item short and generation will fail.
+
+```json
+// amount: 1 + start: true → pool count = 0 → filler template required
+{ "name": "Compass", "type": "useful", "amount": 1, "start": true }
+{ "name": "Data Shard", "type": "filler", "amount": -1 }   // auto-fills the gap
+```
+
+### `early` hint (best-effort, not guaranteed)
+
+`"early"` requests that one copy land in sphere 1, but Archipelago makes no hard guarantee — if sphere 1 is too constrained, the request may not be satisfied. It will not cause a `FillError`; it simply may not be honored. For a hard sphere-1 guarantee, `"local"` combined with `"early"` is the strongest available hint, but neither prevents the fill from placing the item later if necessary.
+
+### `priority` and `exclude` on the same location
+
+Declaring both `"priority"` and `"exclude"` on the same location (by having both evaluate to `true` simultaneously) is a contradiction. The framework logs a warning and `priority` takes precedence. Avoid writing logic where this can occur.
+
+### Cross-region logic and circular dependencies
+
+Region logic should form a directed acyclic graph. If Region A requires Region B to be reachable, and Region B requires Region A, neither can ever become reachable — all locations inside both regions are permanently blocked. Always ensure there is a directed path from the always-reachable starting regions to every other region.
+
+```json
+// BAD — circular dependency; neither region is ever reachable
+{ "name": "Zone A", "logic": "(Can Access: Zone B)" }
+{ "name": "Zone B", "logic": "(Can Access: Zone A)" }
+```
+
+### Goal-conditional content consistency
+
+`(Goal: X)` creates goal-specific items or locations. When the wrong goal is active, those items are excluded from the pool and those locations are out-of-logic. Apply the goal condition consistently:
+
+```json
+// BAD — location requires GoalItem, but GoalItem excluded when goal != special_goal
+{ "name": "GoalItem", "type": "progression", "logic": "(Goal: special_goal)" }
+{ "name": "Vault: Boss Chamber", "logic": "(Item: GoalItem)" }
+
+// GOOD — location also conditional on the same goal
+{ "name": "Vault: Boss Chamber", "logic": "(Goal: special_goal) AND (Item: GoalItem)" }
+```
+
+`(Goal: X) OR (Goal: Y)` is valid and expresses "open when either of these goals is selected."
+
+### Accessibility checker
+
+Archipelago checks location accessibility at generation time. A "Could not access required locations for accessibility check" error means at least one location is unreachable under the generated option/goal combination. Check the generator log carefully — it lists the specific locations that failed, which identifies which option or item gate is incorrectly configured.
 
 ---
 
