@@ -45,12 +45,12 @@ local function push_locations(td)
         end
     end
 
-    -- Goal status
+    -- Goal status — score sent as 0–100 (Blueprint displays what it receives)
     local g = td.goal or {}
     if g.no_goal_mode then
-        widget:SetGoalStatus("", "All In-Logic Locations", g.score or 0.0)
+        widget:SetGoalStatus("", "All In-Logic Locations", (g.score or 0.0) * 100)
     else
-        widget:SetGoalStatus(g.name or "", g.display or "Goal", g.score or 0.0)
+        widget:SetGoalStatus(g.name or "", g.display or "Goal", (g.score or 0.0) * 100)
     end
 
     widget:RefreshStatus()
