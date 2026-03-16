@@ -210,9 +210,15 @@ class AP_API APTrackerEngine
     std::optional<GoalDef> get_active_goal() const;
 
     /**
-     * @brief True when no goals are defined — completion = all in-logic locations checked.
+     * @brief True when no specific goal is active — completion = all in-logic locations checked.
      */
     bool is_no_goal_mode() const;
+
+    /**
+     * @brief Describes why no_goal_mode_ is active (e.g. "no goals declared in manifest",
+     *        "no goal specified in YAML", "goal 'X' unrecognized"). Empty when a goal is active.
+     */
+    const std::string& get_no_goal_label() const;
 
     /**
      * @brief Returns the set of location IDs whose logic simplified to ConstFalse (pruned at generation).
@@ -276,6 +282,7 @@ class AP_API APTrackerEngine
     // Goal tracking
     std::optional<GoalDef> active_goal_; ///< Selected goal for this session (nullopt = no goals defined)
     bool no_goal_mode_ = false;           ///< True when no goals — completion = all in-logic locations checked
+    std::string no_goal_label_;           ///< Describes why no_goal_mode_ is active (for log messages)
     LogicNode goal_logic_node_;           ///< Pre-parsed goal logic (valid when active_goal_ is set)
 
     // Pre-parsed location logic (index matches locations_meta_)

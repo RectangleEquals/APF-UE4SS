@@ -495,7 +495,7 @@ void APMessageRouter::check_and_send_goal_completion()
     auto active_goal = tracker->get_active_goal();
     std::string label = active_goal.has_value()
                             ? "'" + active_goal->name + "' — " + active_goal->display
-                            : "all-locations (no goals defined)";
+                            : "all-locations (" + tracker->get_no_goal_label() + ")";
     APLogger::get()->log(LogLevel::Info, "APMessageRouter",
                          "Goal achieved: " + label + " — status update sent to AP server");
 }

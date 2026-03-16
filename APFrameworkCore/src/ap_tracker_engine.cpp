@@ -387,6 +387,7 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
     if (goals.empty())
     {
         no_goal_mode_ = true;
+        no_goal_label_ = "no goals declared in manifest";
         APLogger::get()->log(LogLevel::Info, "APTrackerEngine",
                              "No goals defined — completion mode: all in-logic locations checked");
     }
@@ -406,6 +407,7 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
         {
             // No goal specified — warn and use all-locations-checked default
             no_goal_mode_ = true;
+            no_goal_label_ = "no goal specified in YAML";
             APLogger::get()->log(LogLevel::Warn, "APTrackerEngine",
                                  "No goal specified — falling back to default of "
                                  "'all in-logic locations checked'. "
@@ -439,6 +441,7 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
                     ? ""
                     : " — Did you mean '" + suggestion + "'?";
                 no_goal_mode_ = true;
+                no_goal_label_ = "goal '" + selected_name + "' unrecognized";
                 APLogger::get()->log(LogLevel::Warn, "APTrackerEngine",
                                      "Goal '" + selected_name + "' not found in declared goals"
                                      + hint + ". Falling back to default of "
@@ -735,6 +738,11 @@ std::optional<GoalDef> APTrackerEngine::get_active_goal() const
 bool APTrackerEngine::is_no_goal_mode() const
 {
     return no_goal_mode_;
+}
+
+const std::string& APTrackerEngine::get_no_goal_label() const
+{
+    return no_goal_label_;
 }
 
 std::unordered_set<int64_t> APTrackerEngine::get_out_of_logic_location_ids() const

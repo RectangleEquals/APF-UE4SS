@@ -13,6 +13,7 @@ add them manually when debugging:
       apf_logfile: "C:/temp/apf_debug.log"
 """
 
+import logging as _logging
 from datetime import datetime
 
 
@@ -47,6 +48,8 @@ class APFLogger:
         if self._file:
             self._file.write(line + "\n")
             self._file.flush()
+        elif level in ("warn", "error"):
+            _logging.getLogger("APFramework").warning(line)
         else:
             print(line)
 
