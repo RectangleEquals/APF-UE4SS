@@ -320,41 +320,16 @@ class APFrameworkWorld(World):
         by evaluate_count(). location_count is len(self.location_table) so that
         {key}% expressions compute correctly against the current in-logic pool size.
 
-        A single fill sentinel (-1) is allowed across all loaded mods. If more than
-        one item has count == -1 after resolution, all but the first (manifest order)
-        are set to 0 and a warning is logged.
+        Multiple items may use "fill" (count == -1). create_items() distributes
+        remaining pool slots by random draw across all fill candidates.
         """
         location_count = len(self.location_table)
-        fill_item: str = ""  # name of the first fill item seen
 
         for name, data in list(self.item_table.items()):
             if not data.count_expr:
-                # No expression — honour the integer count as-is; detect -1 sentinel
-                if data.count == -1:
-                    if fill_item:
-                        self.log.warn(
-                            f"Item '{name}' is a second fill item (amount='fill') — "
-                            f"only one fill item is allowed. Treating '{name}' as 0.",
-                            "Items",
-                        )
-                        self.item_table[name] = data._replace(count=0)
-                    else:
-                        fill_item = name
-                continue
+                continue  # No expression — count is already correct (including -1 for fill)
 
             resolved = evaluate_count(data.count_expr, option_values, location_count)
-
-            if resolved == -1:  # fill sentinel returned
-                if fill_item:
-                    self.log.warn(
-                        f"Item '{name}' is a second fill item (amount='fill') — "
-                        f"only one fill item is allowed. Treating '{name}' as 0.",
-                        "Items",
-                    )
-                    resolved = 0
-                else:
-                    fill_item = name
-
             self.item_table[name] = data._replace(count=resolved)
 
     def _filter_by_logic(self) -> None:

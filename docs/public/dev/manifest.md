@@ -390,7 +390,7 @@ The `"amount"` field accepts an integer literal **or** a string expression for o
 
 **`"fill"` + `"logic"` interaction:** `"logic"` controls whether the item is included at all. If `"logic"` evaluates to false, `"amount"` is irrelevant — item is excluded from the pool regardless.
 
-**Only one `"fill"` item across all loaded mods.** A second fill item logs a warning and is treated as `"amount": 0`.
+**Multiple `"fill"` items are allowed.** Any number of mods may declare fill items. Remaining pool slots are distributed by random draw — each slot independently picks from all fill candidates (uniform probability). With two fill items, each gets roughly 50% of fill slots.
 
 **Not supported (and will warn + return 0):**
 - `(Item: X)` or `(Can Access: Region)` in amount conditions — runtime concepts, not known at generation
