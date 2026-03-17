@@ -252,6 +252,7 @@ void APCapabilities::add_manifest(const Manifest &manifest)
         ownership.action = item.action;
         ownership.args = item.args;
         ownership.max_count = (item.amount < 0) ? -1 : item.amount;
+        ownership.count_expr = item.amount_expr;
         ownership.logic = item.logic;
         ownership.early = item.early;
         ownership.start = item.start;
@@ -739,6 +740,7 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_item.type = item_type_to_string(item.type);
         cfg_item.mod_id = item.mod_id;
         cfg_item.count = item.max_count;
+        cfg_item.count_expr = item.count_expr;
         cfg_item.logic = item.logic;
         cfg_item.early = item.early;
         cfg_item.start = item.start;

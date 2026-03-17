@@ -307,10 +307,10 @@ Items are the things that are shuffled into the multiworld item pool.
 |---|---|---|
 | `name` | string | Item name — must be unique within this mod |
 | `type` | string | `"progression"`, `"useful"`, `"filler"`, or `"trap"` |
-| `amount` | int | Number of copies in the pool. `-1` signals a filler template: the apworld fills remaining item slots with copies of this item after all other items are placed. |
+| `amount` | int **or** string expression | Number of copies in the pool. Accepts an integer literal (legacy) or a string expression for option-driven quantity control. Use `"fill"` instead of the deprecated `-1` for the auto-balance filler. See [Expressive Item Quantities](#expressive-item-quantities) below. |
 | `logic` | string | **Option-only** condition for including the item in the pool. `(Item:)` and `(Can Access:)` nodes are invalid here and evaluate to false with a warning. |
 | `early` | `true` or option-logic | Request one copy be placed in sphere 1 (best-effort). Warning logged for filler/trap items. |
-| `start` | `true` or option-logic | Give one copy to the player at game start. That copy is never placed in the pool. If `amount > 1`, remaining copies still go to pool. Requires a filler template (`amount: -1`) so auto-balance can fill the gap. |
+| `start` | `true` or option-logic | Give one copy to the player at game start. That copy is never placed in the pool. If `amount > 1`, remaining copies still go to pool. Requires a filler template (`amount: "fill"`) so auto-balance can fill the gap. |
 | `local` | `true` or option-logic | Item must be placed in this player's world, not sent to another game. |
 | `action` | string | Handler to call when this item is received. Format: `"ModName.HandlerName"`. If omitted, the framework calls `on_item_received` with no custom action. |
 | `args` | array | Arguments passed to the action handler. See [Item Actions](#item-actions) below. |
@@ -322,6 +322,81 @@ Items are the things that are shuffled into the multiworld item pool.
 - `trap` — negative or annoying effect; AP can route these to other players
 
 **Item logic** is option-only because items must be included or excluded before randomization begins, at which point only option values are known. See [logic.md — Scope Rules](logic.md#scope-rules-by-entry-type) for the restriction details.
+
+---
+
+## Expressive Item Quantities
+
+The `"amount"` field accepts an integer literal **or** a string expression for option-driven quantity control.
+
+**String expression forms:**
+
+| Form | Example | Meaning |
+|---|---|---|
+| `"fill"` | `"amount": "fill"` | Auto-balance: fill all remaining pool slots. Preferred over deprecated `-1`. |
+| `{key}` | `"amount": "{trap_count}"` | Option's integer value — `range` → int, `toggle` → 0/1. |
+| `{key}%` | `"amount": "{bonus_fill_pct}%"` | `floor(location_count × value / 100)` copies, where `location_count` is the total number of in-logic locations for this generation. |
+| Ternary | `"amount": "<condition> ? <value> : <value>"` | Conditional count. Condition = any boolean logic expression; values = any of the above forms or an integer literal. |
+
+**`{key}` vs `(Option: key)`:**
+- `{key}` — the option's **integer value**. Use in value positions (standalone or ternary branches).
+- `(Option: key)` — a **boolean/comparison expression**. Use in ternary condition positions only.
+
+`(Option: key)` as a standalone `"amount"` value is not valid — use `{key}` instead.
+
+**Examples:**
+
+```json
+// Fixed count (unchanged behavior)
+{ "name": "Iron Key", "type": "progression", "amount": 1 }
+
+// Auto-balance filler
+{ "name": "Data Shard", "type": "filler", "amount": "fill" }
+
+// Count driven by a range option
+{ "name": "Trap Bomb", "type": "trap", "amount": "{trap_count}" }
+
+// Conditional count — include traps only when enabled
+{ "name": "Trap Bomb", "type": "trap", "amount": "(Option: include_traps) ? {trap_count} : 0" }
+
+// Compound condition — traps only when enabled AND count > 0
+{ "name": "Trap Bomb", "type": "trap",
+  "amount": "((Option: include_traps) AND (Option: trap_count > 0)) ? {trap_count} : 0" }
+
+// Percentage of pool (requires a range option 0–100)
+{ "name": "Trap Bomb", "type": "trap", "amount": "{trap_fill_pct}%" }
+```
+
+**Rules and anti-patterns:**
+
+**Auto-balance + expression on the same item is a no-op.** If the auto-balance filler item and an option expression are both on the same item, the expression has no effect — auto-balance always compensates to maintain pool balance. Use a separate item:
+
+```json
+// ✗ WRONG — expression on fill item is a permanent no-op
+{ "name": "Data Shard", "type": "filler", "amount": "{extra_count}" }
+
+// ✓ CORRECT — separate fixed-count item from the auto-balance filler
+{ "name": "Bonus Token", "type": "filler", "amount": "{extra_count}" }
+{ "name": "Data Shard",  "type": "filler", "amount": "fill" }
+```
+
+**Pool overflow is clamped.** If an expression evaluates to more items than fit in the remaining pool, a warning is logged and the count is clamped. Design `range_end` values conservatively.
+
+**Zero is valid.** `{key}` with a value of `0` produces zero copies — equivalent to exclusion. No warning.
+
+**Unknown option → 0 + warning.** More conservative than the `"logic"` field behavior (which defaults permissive). An unexpected non-zero item count is more disruptive than an unexpectedly included item.
+
+**Text-choice options have no integer value.** `{key}` where `key` is a `text_choice` → warning and returns 0. Use a comparison in a ternary condition instead: `"(Option: scope == hard) ? 3 : 1"`.
+
+**`"fill"` + `"logic"` interaction:** `"logic"` controls whether the item is included at all. If `"logic"` evaluates to false, `"amount"` is irrelevant — item is excluded from the pool regardless.
+
+**Only one `"fill"` item across all loaded mods.** A second fill item logs a warning and is treated as `"amount": 0`.
+
+**Not supported (and will warn + return 0):**
+- `(Item: X)` or `(Can Access: Region)` in amount conditions — runtime concepts, not known at generation
+- `(Option: key)` as standalone amount (use `{key}` instead)
+- Nested ternaries — use `"logic"` field + multiple items instead
+- `{key}` where `key` is a `text_choice` option
 
 ---
 
@@ -348,7 +423,7 @@ Placement hints let mod authors influence *where in the generation sphere* their
 | Hint | AP Mechanism | Effect |
 |---|---|---|
 | `early` | `local_early_items[player][name] += 1` | Best-effort: one copy placed in sphere 1. Warning if applied to a filler or trap item. |
-| `start` | `push_precollected(item)` + reduce pool count by 1 | One copy given at game start; that copy never enters the pool. Requires a filler template (`amount: -1`) so auto-balance fills the gap. |
+| `start` | `push_precollected(item)` + reduce pool count by 1 | One copy given at game start; that copy never enters the pool. Requires a filler template (`amount: "fill"`) so auto-balance fills the gap. |
 | `local` | `local_items[player].add(item_id)` | Item must be placed in this player's world, not sent to other games. |
 
 **Location hints (`priority`, `exclude`):**
@@ -518,12 +593,12 @@ With `goal: any_key` active, Zone Beta becomes sphere-0 accessible, providing ad
 
 ### `start` hint and item count
 
-`"start": true` removes one copy from the pool before randomization. If `"amount": 1` and `"start": true`, zero copies remain in the pool. Ensure a filler template (`"amount": -1`) exists to absorb the missing slot; without it, the item pool will be one item short and generation will fail.
+`"start": true` removes one copy from the pool before randomization. If `"amount": 1` and `"start": true`, zero copies remain in the pool. Ensure a filler template (`"amount": "fill"`) exists to absorb the missing slot; without it, the item pool will be one item short and generation will fail.
 
 ```json
 // amount: 1 + start: true → pool count = 0 → filler template required
 { "name": "Compass", "type": "useful", "amount": 1, "start": true }
-{ "name": "Data Shard", "type": "filler", "amount": -1 }   // auto-fills the gap
+{ "name": "Data Shard", "type": "filler", "amount": "fill" }   // auto-fills the gap
 ```
 
 ### `early` hint (best-effort, not guaranteed)
@@ -626,7 +701,7 @@ The following manifest exercises every feature: options, goals, regions, locatio
             { "name": "Crystal Key", "type": "progression", "amount": 1 },
             { "name": "Lantern",     "type": "useful",      "amount": 1,
               "action": "MyMod.GrantLantern", "args": [] },
-            { "name": "Data Shard",  "type": "filler",      "amount": -1 },
+            { "name": "Data Shard",  "type": "filler",      "amount": "fill" },
             { "name": "Trap Bomb",   "type": "trap",        "amount": 2,
               "logic": "(Option: include_traps)" }
         ],

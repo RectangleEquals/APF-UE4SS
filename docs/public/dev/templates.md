@@ -44,7 +44,7 @@ A template file contains a subset of the `capabilities` object — only the keys
 }
 ```
 
-A template can contain any combination of `regions`, `items`, and `locations` keys. Only those keys are merged. The template format mirrors the manifest `capabilities` structure exactly — each entry uses the same fields (`name`, `logic`, `amount`, `type`, etc.).
+A template can contain any combination of `regions`, `items`, and `locations` keys. Only those keys are merged. The template format mirrors the manifest `capabilities` structure exactly — each entry uses the same fields (`name`, `logic`, `amount`, `type`, etc.). Template item entries support the full `amount` expression grammar — `"fill"`, `{key}`, `{key}%`, and ternary forms are all valid inside a template, identical to their behavior in the declaring manifest.
 
 ---
 

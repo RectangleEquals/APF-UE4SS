@@ -537,3 +537,164 @@ def is_always_false(logic: str, options: Optional[Dict[str, Any]] = None) -> boo
         ast = evaluate_options(ast, options)
         ast = simplify(ast)
     return isinstance(ast, ConstNode) and not ast.value
+
+
+# ============================================================================
+# Amount Expression Evaluator
+# ============================================================================
+
+def _find_ternary_split(expr: str):
+    """Locate depth-0 '?' and ':' to split a ternary expression.
+
+    Returns (condition, true_val, false_val) strings, or None if not a ternary.
+    """
+    depth = 0
+    q_pos = None
+    for i, c in enumerate(expr):
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+        elif c == '?' and depth == 0:
+            q_pos = i
+            break
+    if q_pos is None:
+        return None
+
+    condition = expr[:q_pos].strip()
+    rest = expr[q_pos + 1:]
+
+    depth = 0
+    c_pos = None
+    for i, c in enumerate(rest):
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+        elif c == ':' and depth == 0:
+            c_pos = i
+            break
+    if c_pos is None:
+        return None
+
+    return condition, rest[:c_pos].strip(), rest[c_pos + 1:].strip()
+
+
+def _evaluate_amount_value(val_str: str, options: Dict[str, Any], location_count: int) -> int:
+    """Evaluate a single value token (integer, {key}, {key}%, fill) to an integer.
+
+    Returns -1 for the auto-balance sentinel ("fill").
+    """
+    v = val_str.strip()
+
+    if v == 'fill':
+        return -1
+
+    if v.endswith('%'):
+        inner = v[:-1].strip()
+        if inner.startswith('{') and inner.endswith('}'):
+            key = inner[1:-1].strip()
+            opt_val = options.get(key)
+            if opt_val is None:
+                logging.warning(f"[APF] Unknown option '{key}' in amount expression — using 0")
+                return 0
+            if isinstance(opt_val, str):
+                logging.warning(
+                    f"[APF] text_choice option '{key}' has no integer value for '{{key}}%' — using 0"
+                )
+                return 0
+            return max(0, int(int(opt_val) * location_count // 100))
+        else:
+            try:
+                return max(0, int(float(inner) * location_count // 100))
+            except (ValueError, TypeError):
+                logging.warning(f"[APF] Invalid percentage '{val_str}' in amount expression — using 0")
+                return 0
+
+    if v.startswith('{') and v.endswith('}'):
+        key = v[1:-1].strip()
+        opt_val = options.get(key)
+        if opt_val is None:
+            logging.warning(f"[APF] Unknown option '{key}' in amount expression — using 0")
+            return 0
+        if isinstance(opt_val, str):
+            logging.warning(
+                f"[APF] text_choice option '{key}' has no integer value in amount expression — using 0"
+            )
+            return 0
+        return max(0, int(opt_val))
+
+    try:
+        return max(0, int(v))
+    except (ValueError, TypeError):
+        logging.warning(f"[APF] Invalid value '{val_str}' in amount expression — using 0")
+        return 0
+
+
+def evaluate_count(expr_str: str, options: Dict[str, Any], location_count: int = 0) -> int:
+    """Evaluate an item amount expression string to an integer count.
+
+    Returns -1 for the auto-balance fill sentinel.
+    Returns 0 on any error (with a warning logged).
+
+    Supported forms:
+      Integer literal:  "3"  → 3
+      fill sentinel:    "fill"  → -1  (also legacy -1 int handled by caller)
+      {key}:            "{trap_count}"  → option's integer value
+      {key}%:           "{pct}%"  → floor(location_count * value / 100)
+      Ternary:          "<condition> ? <true_val> : <false_val>"
+
+    Forbidden: (Item:), (Can Access:), (Option:) as standalone (not in ternary condition),
+    arithmetic, nested ternaries.
+    """
+    if not expr_str:
+        return 1
+
+    expr = expr_str.strip()
+
+    # Integer literal (including legacy -1)
+    try:
+        return int(expr)
+    except (ValueError, TypeError):
+        pass
+
+    # "fill" keyword
+    if expr == 'fill':
+        return -1
+
+    # Standalone {key} or {key}%
+    if expr.startswith('{'):
+        return _evaluate_amount_value(expr, options, location_count)
+
+    # Ternary
+    parts = _find_ternary_split(expr)
+    if parts is not None:
+        condition, true_val, false_val = parts
+
+        # Nested ternary guard
+        if _find_ternary_split(true_val) is not None or _find_ternary_split(false_val) is not None:
+            logging.warning(
+                f"[APF] Nested ternary in amount expression '{expr_str}' — not supported, using 0"
+            )
+            return 0
+
+        # Runtime nodes not valid in amount conditions
+        if '(Item:' in condition or '(Can Access:' in condition:
+            logging.warning(
+                f"[APF] Runtime nodes (Item:/Can Access:) in amount condition '{expr_str}' — using 0"
+            )
+            return 0
+
+        cond_true = not is_always_false(condition, options)
+        return _evaluate_amount_value(true_val if cond_true else false_val, options, location_count)
+
+    # Bare (Option:) or (Goal:) — invalid as standalone amount
+    if expr.startswith('(Option:') or expr.startswith('(Goal:'):
+        logging.warning(
+            f"[APF] '{expr_str}' is a boolean expression, not a count — "
+            f"use {{key}} for an option's integer value"
+        )
+        return 0
+
+    logging.warning(f"[APF] Unrecognized amount expression '{expr_str}' — using 0")
+    return 0

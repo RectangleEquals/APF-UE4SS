@@ -129,6 +129,7 @@ struct ItemOwnership {
   std::string action;
   std::vector<ActionArg> args;
   int max_count = 1;
+  std::string count_expr = "";                       // Amount expression (non-empty = Python resolves at generation time)
   std::string logic;                                 // Option-only logic (e.g. "(Option: enable_traps)")
   std::string early = "";                            // Placement hint: "True" or option-logic expr
   std::string start = "";                            // Placement hint: "True" or option-logic expr
@@ -258,6 +259,7 @@ struct CapabilitiesConfigItem {
   std::string type;
   std::string mod_id;
   int count = 1;
+  std::string count_expr = "";                       // Amount expression (non-empty = Python resolves at generation time)
   std::string logic;                                 // Option-only logic (e.g. "(Option: enable_traps)")
   std::string early = "";                            // Placement hint: "True" or option-logic expr
   std::string start = "";                            // Placement hint: "True" or option-logic expr
@@ -389,6 +391,8 @@ struct CapabilitiesConfig {
       it["type"] = item.type;
       it["mod_id"] = item.mod_id;
       it["count"] = item.count;
+      if (!item.count_expr.empty())
+        it["count_expr"] = item.count_expr;
       if (!item.logic.empty())
         it["logic"] = item.logic;
       emit_hint(it, "early", item.early);

@@ -20,10 +20,10 @@
         },
         "extra_filler": {
             "type": "range",
-            "default": 3,
+            "default": 0,
             "range_start": 0,
-            "range_end": 10,
-            "description": "Number of extra Data Shard filler items"
+            "range_end": 9,
+            "description": "Number of extra Bonus Fragment filler items"
         },
         "ensure_early_key": {
             "type": "toggle",
@@ -95,7 +95,8 @@
               "start": "(Option: start_with_power)" },
             { "name": "Signal Beacon", "type": "useful",  "amount": 3,
               "local": "(Option: beacons_local)" },
-            { "name": "Data Shard", "type": "filler",     "amount": -1 },
+            { "name": "Bonus Fragment", "type": "filler", "amount": "{extra_filler}" },
+            { "name": "Data Shard", "type": "filler",     "amount": "fill" },
             { "name": "Glitch Bomb","type": "trap",       "amount": 2,
               "logic": "(Option: enable_traps)" }
         ],

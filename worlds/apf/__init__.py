@@ -21,7 +21,7 @@ from worlds.AutoWorld import World, WebWorld
 from .Items import APFrameworkItem, ItemData, build_item_table, get_filler_items, get_trap_items
 from .Locations import APFrameworkLocation, LocationData, build_location_table
 from .Logger import APFLogger
-from .LogicParser import is_always_false
+from .LogicParser import is_always_false, evaluate_count
 from .Options import APFrameworkOptions
 from .Rules import set_rules, set_completion_rules
 
@@ -141,6 +141,9 @@ class APFrameworkWorld(World):
         self.item_table = build_item_table(self.capabilities)
         known_regions = set(self.region_table.keys()) if self.region_table else None
         self.location_table = build_location_table(self.capabilities, known_regions)
+
+        # Resolve item amount expressions (must run after location_table is built for % forms)
+        self._resolve_item_amounts(self._build_option_values())
 
         # Set topology_present based on logic mode
         if self.options.logic_mode.value == 1 and self.region_table:  # basic
@@ -309,6 +312,50 @@ class APFrameworkWorld(World):
                     option_values[key] = str(raw)
 
         return option_values
+
+    def _resolve_item_amounts(self, option_values: dict) -> None:
+        """Evaluate amount expressions for all items in item_table.
+
+        Items with a non-empty count_expr have their count resolved to an integer
+        by evaluate_count(). location_count is len(self.location_table) so that
+        {key}% expressions compute correctly against the current in-logic pool size.
+
+        A single fill sentinel (-1) is allowed across all loaded mods. If more than
+        one item has count == -1 after resolution, all but the first (manifest order)
+        are set to 0 and a warning is logged.
+        """
+        location_count = len(self.location_table)
+        fill_item: str = ""  # name of the first fill item seen
+
+        for name, data in list(self.item_table.items()):
+            if not data.count_expr:
+                # No expression — honour the integer count as-is; detect -1 sentinel
+                if data.count == -1:
+                    if fill_item:
+                        self.log.warn(
+                            f"Item '{name}' is a second fill item (amount='fill') — "
+                            f"only one fill item is allowed. Treating '{name}' as 0.",
+                            "Items",
+                        )
+                        self.item_table[name] = data._replace(count=0)
+                    else:
+                        fill_item = name
+                continue
+
+            resolved = evaluate_count(data.count_expr, option_values, location_count)
+
+            if resolved == -1:  # fill sentinel returned
+                if fill_item:
+                    self.log.warn(
+                        f"Item '{name}' is a second fill item (amount='fill') — "
+                        f"only one fill item is allowed. Treating '{name}' as 0.",
+                        "Items",
+                    )
+                    resolved = 0
+                else:
+                    fill_item = name
+
+            self.item_table[name] = data._replace(count=resolved)
 
     def _filter_by_logic(self) -> None:
         """Filter capabilities entries whose logic evaluates to always-False.

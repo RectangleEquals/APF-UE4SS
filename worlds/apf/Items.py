@@ -26,6 +26,7 @@ class ItemData(NamedTuple):
     mod_id: str
     count: int  # -1 means filler (fill remaining slots)
     logic: str = ""  # Option-only logic (e.g. "(Option: enable_traps)")
+    count_expr: str = ""  # Amount expression string (overrides count when non-empty)
 
 
 def get_classification(type_str: str) -> ItemClassification:
@@ -60,6 +61,7 @@ def build_item_table(capabilities: dict) -> Dict[str, ItemData]:
             mod_id=item_data.get("mod_id", ""),
             count=item_data.get("count", 1),
             logic=item_data.get("logic", ""),
+            count_expr=item_data.get("count_expr", ""),
         )
 
     return item_table

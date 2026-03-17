@@ -434,7 +434,38 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     ItemDef def;
                     def.name = item.value("name", "");
                     def.type = item_type_from_string(item.value("type", "filler"));
-                    def.amount = item.value("amount", 1);
+                    // Parse "amount" — accepts int or string expression
+                    {
+                        auto amt_it = item.find("amount");
+                        if (amt_it != item.end())
+                        {
+                            if (amt_it->is_number_integer())
+                            {
+                                def.amount = amt_it->get<int>();
+                                if (def.amount == -1)
+                                    APLogger::get()->log(LogLevel::Debug, "APModRegistry",
+                                        "Item '" + def.name + "': amount=-1 is deprecated — use \"fill\" instead");
+                            }
+                            else if (amt_it->is_string())
+                            {
+                                std::string s = amt_it->get<std::string>();
+                                if (s == "fill")
+                                {
+                                    def.amount = -1;
+                                }
+                                else
+                                {
+                                    // Store expression for Python to evaluate at generation time
+                                    def.amount_expr = s;
+                                    def.amount = 0;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            def.amount = 1;
+                        }
+                    }
                     def.action = item.value("action", "");
                     def.logic = item.value("logic", "");
                     def.early = parse_hint(item, "early");

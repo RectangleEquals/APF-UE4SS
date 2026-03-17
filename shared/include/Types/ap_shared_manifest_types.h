@@ -77,6 +77,7 @@ struct ItemDef {
     std::string name;
     ItemType type = ItemType::Filler;
     int amount = 1;
+    std::string amount_expr = "";           // Non-empty overrides amount integer (e.g. "{extra_filler}", "fill", ternary)
     std::string action;
     std::vector<ActionArg> args;
     std::string logic;                       // Option-only logic (e.g. "(Option: enable_traps)")
