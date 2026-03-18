@@ -49,6 +49,13 @@
             "type": "toggle",
             "default": false,
             "description": "Exclude bonus locations from receiving progression items"
+        },
+        "bonus_fill_pct": {
+            "type": "range",
+            "default": 0,
+            "range_start": 0,
+            "range_end": 25,
+            "description": "Percentage of pool slots filled with Compact Data items ({key}% expression test)"
         }
     },
 
@@ -96,6 +103,8 @@
             { "name": "Signal Beacon", "type": "useful",  "amount": 3,
               "local": "(Option: beacons_local)" },
             { "name": "Bonus Fragment", "type": "filler", "amount": "{extra_filler}" },
+            { "name": "Compact Data",   "type": "filler", "amount": "{bonus_fill_pct}%" },
+            { "name": "Data Pack",      "type": "filler", "amount": "(Option: enable_traps) ? {extra_filler} : 0" },
             { "name": "Data Shard", "type": "filler",     "amount": "fill" },
             { "name": "Glitch Bomb","type": "trap",       "amount": 2,
               "logic": "(Option: enable_traps)" }
