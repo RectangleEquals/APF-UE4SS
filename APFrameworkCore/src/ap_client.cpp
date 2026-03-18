@@ -1,4 +1,5 @@
 #include "ap_client.h"
+#include "ap_capabilities.h"
 #include "ap_logger.h"
 
 #include <apclient.hpp>
@@ -192,6 +193,10 @@ std::string APArchipelagoClient::get_location_name(int64_t location_id) const
         std::string name = client_->get_location_name(location_id, game_);
         if (name == "Unknown")
         {
+            // DP not yet valid — fall back to local capabilities registry
+            auto cap_loc = APCapabilities::get()->get_location_by_id(location_id);
+            if (cap_loc.has_value())
+                return cap_loc->location_name;
             APLogger::get()->log(LogLevel::Warn, "APArchipelagoClient",
                                  "Location name lookup FAILED for ID " + std::to_string(location_id) +
                                      " (game='" + game_ + "', dp_valid=" +
@@ -209,6 +214,10 @@ std::string APArchipelagoClient::get_item_name(int64_t item_id) const
         std::string name = client_->get_item_name(item_id, game_);
         if (name == "Unknown")
         {
+            // DP not yet valid — fall back to local capabilities registry
+            auto cap_item = APCapabilities::get()->get_item_by_id(item_id);
+            if (cap_item.has_value())
+                return cap_item->item_name;
             APLogger::get()->log(LogLevel::Warn, "APArchipelagoClient",
                                  "Item name lookup FAILED for ID " + std::to_string(item_id) +
                                      " (game='" + game_ + "', dp_valid=" +
