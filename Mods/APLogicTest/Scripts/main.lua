@@ -52,6 +52,7 @@ local function on_tick()
     if now - tick_time_last < TICK_UPDATE_INTERVAL then return end
     tick_time_last = now
     APClient.update()
+    if LogicTestUI then LogicTestUI.tick() end
 end
 
 RH.add_function(obj_WebBrowser,     "/Game/Pal/Blueprint/UI/Title/WBP_WebBrowser_News.WBP_WebBrowser_News_C:Tick", on_tick)
@@ -248,6 +249,14 @@ APClient.on_state_active(function()
         APClient.log("info", "Tracker subscription sent\n")
     else
         APClient.log("warn", "Failed to subscribe to tracker\n")
+    end
+end)
+
+APClient.on_item_received(function(item_id, item_name, sender, meta)
+    APClient.log("debug", "Item received: " .. (item_name or tostring(item_id))
+        .. " from " .. (sender or "?") .. "\n")
+    if LogicTestUI then
+        LogicTestUI.handle_item(APClient, item_id, item_name, sender, meta)
     end
 end)
 

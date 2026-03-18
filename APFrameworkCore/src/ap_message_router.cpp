@@ -35,7 +35,8 @@ APMessageRouter::~APMessageRouter() = default;
 // =============================================================================
 
 std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id, const std::string &item_name,
-                                                                 const std::string &sender_name)
+                                                                 const std::string &sender_name,
+                                                                 int64_t location_id, bool is_self)
 {
     // Translate AP server item ID to local (C++) ID (no-op for player 1 / single-player)
     int64_t local_id = APArchipelagoClient::get()->remap_item_to_local(item_id);
@@ -65,7 +66,7 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
             APStateManager::get()->save_state();
 
         // Notify owning mod (+ opt-in subscribers) so Lua on_item_received fires
-        send_item_received(local_id, item_name, sender_name);
+        send_item_received(local_id, item_name, sender_name, location_id, is_self);
 
         // Recompute tracker so (Item: X) logic nodes reflect the newly received item
         broadcast_tracker_update();
@@ -97,11 +98,15 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
         args_json.push_back({{"name", arg.name}, {"type", arg_type_to_string(arg.type)}, {"value", arg.value}});
     }
 
-    msg.payload = {{"item_id", local_id},
-                   {"item_name", item_name},
-                   {"action", item.action},
-                   {"args", args_json},
-                   {"sender", sender_name}};
+    std::string handled_by_exec = APStateManager::get()->get_item_handler(local_id);
+    msg.payload = {{"item_id",     local_id},
+                   {"item_name",   item_name},
+                   {"action",      item.action},
+                   {"args",        args_json},
+                   {"sender",      sender_name},
+                   {"location_id", location_id},
+                   {"is_self",     is_self},
+                   {"handled_by",  handled_by_exec}};
 
     APIPCServer::get()->send_message(item.mod_id, msg);
 
@@ -510,7 +515,8 @@ void APMessageRouter::reset_goal_sent()
 // =============================================================================
 
 void APMessageRouter::send_item_received(int64_t item_id, const std::string &item_name,
-                                         const std::string &sender)
+                                         const std::string &sender,
+                                         int64_t location_id, bool is_self)
 {
     std::unordered_set<std::string> recipients;
 
@@ -530,20 +536,33 @@ void APMessageRouter::send_item_received(int64_t item_id, const std::string &ite
                 recipients.insert(sub);
     }
 
-    IPCMessage msg;
-    msg.type    = IPCMessageType::ITEM_RECEIVED;
-    msg.source  = IPCTarget::FRAMEWORK;
-    msg.payload = {{"item_id", item_id}, {"item_name", item_name}, {"sender", sender}};
+    std::string handled_by = APStateManager::get()->get_item_handler(item_id);
 
+    IPCMessage msg;
+    msg.type   = IPCMessageType::ITEM_RECEIVED;
+    msg.source = IPCTarget::FRAMEWORK;
+
+    int sent_count = 0;
     for (const auto &recipient : recipients)
     {
-        msg.target = recipient;
+        // Skip delivery if this mod silenced this item
+        if (APStateManager::get()->is_item_silenced(item_id, recipient))
+            continue;
+
+        msg.target  = recipient;
+        msg.payload = {{"item_id",     item_id},
+                       {"item_name",   item_name},
+                       {"sender",      sender},
+                       {"location_id", location_id},
+                       {"is_self",     is_self},
+                       {"handled_by",  handled_by}};
         APIPCServer::get()->send_message(recipient, msg);
+        ++sent_count;
     }
 
     APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
                          "ITEM_RECEIVED sent for '" + item_name + "' to " +
-                         std::to_string(recipients.size()) + " recipient(s)");
+                         std::to_string(sent_count) + " recipient(s)");
 }
 
 void APMessageRouter::subscribe_items(const std::string &mod_id,

@@ -84,7 +84,8 @@ class AP_API APMessageRouter
      * 4. Return PendingAction for tracking
      */
     std::optional<PendingAction> route_item_receipt(int64_t item_id, const std::string &item_name,
-                                                    const std::string &sender_name);
+                                                    const std::string &sender_name,
+                                                    int64_t location_id = 0, bool is_self = false);
 
     /**
      * @brief Resolve arguments for an item action.
@@ -224,7 +225,8 @@ class AP_API APMessageRouter
      * Mods cannot opt out of their own items; own-mod IDs are silently skipped in subscribe_items().
      */
     void send_item_received(int64_t item_id, const std::string &item_name,
-                            const std::string &sender);
+                            const std::string &sender,
+                            int64_t location_id = 0, bool is_self = false);
 
     /**
      * @brief Subscribe a mod to ITEM_RECEIVED for specific foreign item IDs.

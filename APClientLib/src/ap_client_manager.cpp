@@ -256,16 +256,22 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
             }
         }
 
-        ctx->callbacks.invoke_item_received(item_id, item_name, sender);
+        int64_t     exec_location_id = msg.payload.value("location_id", int64_t(0));
+        bool        exec_is_self     = msg.payload.value("is_self",     false);
+        std::string exec_handled_by  = msg.payload.value("handled_by",  "");
+        ctx->callbacks.invoke_item_received(item_id, item_name, sender, exec_location_id, exec_is_self, exec_handled_by);
     }
     else if (msg.type == IPCMessageType::ITEM_RECEIVED)
     {
         // Framework sends this to the owning mod (and any opt-in subscribers) for no-action items.
         // Items with actions fire on_item_received from inside the EXECUTE_ACTION handler above.
-        int64_t item_id       = msg.payload.value("item_id",   int64_t(0));
-        std::string item_name = msg.payload.value("item_name", "");
-        std::string sender    = msg.payload.value("sender",    "");
-        ctx->callbacks.invoke_item_received(item_id, item_name, sender);
+        int64_t item_id        = msg.payload.value("item_id",     int64_t(0));
+        std::string item_name  = msg.payload.value("item_name",   "");
+        std::string sender     = msg.payload.value("sender",      "");
+        int64_t location_id    = msg.payload.value("location_id", int64_t(0));
+        bool    is_self        = msg.payload.value("is_self",     false);
+        std::string handled_by = msg.payload.value("handled_by",  "");
+        ctx->callbacks.invoke_item_received(item_id, item_name, sender, location_id, is_self, handled_by);
     }
     else if (msg.type == IPCMessageType::LIFECYCLE)
     {
@@ -796,6 +802,27 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
         msg.source  = ctx->mod_id;
         msg.target  = IPCTarget::FRAMEWORK;
         msg.payload = {{"all", true}, {"item_ids", nlohmann::json::array()}};
+        ctx->ipc_client->send_message(msg);
+    };
+
+    // item_handled(id_or_name [, silence])
+    // Mark an item as handled by this mod. Populates meta.handled_by for all future callbacks.
+    // silence=false (default): other mods + this mod still receive on_item_received callbacks.
+    // silence=true: also permanently suppresses future on_item_received for THIS mod (persisted).
+    module["item_handled"] = [ctx](sol::object id_or_name, sol::optional<bool> silence_opt) -> void
+    {
+        if (!ctx->ipc_client->is_connected()) return;
+        bool silence = silence_opt.value_or(false);
+        ap::ClientIPCMessage msg;
+        msg.type   = IPCMessageType::ITEM_HANDLED;
+        msg.source = ctx->mod_id;
+        msg.target = IPCTarget::FRAMEWORK;
+        if (id_or_name.is<int64_t>())
+            msg.payload = {{"item_id", id_or_name.as<int64_t>()}, {"silence", silence}};
+        else if (id_or_name.is<std::string>())
+            msg.payload = {{"item_name", id_or_name.as<std::string>()}, {"silence", silence}};
+        else
+            return;  // invalid argument type — ignore
         ctx->ipc_client->send_message(msg);
     };
 

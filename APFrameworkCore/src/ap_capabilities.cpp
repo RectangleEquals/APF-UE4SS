@@ -577,6 +577,18 @@ std::optional<ItemOwnership> APCapabilities::get_item_by_id(int64_t item_id) con
     return std::nullopt;
 }
 
+std::optional<ItemOwnership> APCapabilities::get_item_by_name(const std::string &item_name) const
+{
+    for (const auto &item : items_)
+    {
+        if (item.item_name == item_name)
+        {
+            return item;
+        }
+    }
+    return std::nullopt;
+}
+
 // =============================================================================
 // Checksum
 // =============================================================================

@@ -93,6 +93,7 @@ namespace IPCMessageType {
 
     // Item Notification Protocol
     constexpr const char* ITEM_RECEIVED      = "item_received";       // Framework -> owning mod + opt-in subscribers
+    constexpr const char* ITEM_HANDLED       = "item_handled";        // Client -> Framework; payload: {item_id or item_name, silence: bool}
     constexpr const char* SUBSCRIBE_ITEMS   = "subscribe_items";      // Client -> Framework
     constexpr const char* UNSUBSCRIBE_ITEMS = "unsubscribe_items";    // Client -> Framework
 

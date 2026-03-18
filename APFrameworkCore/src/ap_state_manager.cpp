@@ -262,4 +262,63 @@ void APStateManager::set_state(const SessionState &state)
     loaded_ = true;
 }
 
+// =============================================================================
+// Item Notification Tracking
+// =============================================================================
+
+void APStateManager::mark_item_handled(int64_t item_id, const std::string &mod_id, bool silence)
+{
+    for (auto &rec : state_.handled_items)
+    {
+        if (rec.item_id == item_id)
+        {
+            // Record exists — handled_by is immutable (first mod wins)
+            if (silence)
+            {
+                // Append mod_id to silent list if not already present
+                for (const auto &s : rec.silent)
+                    if (s == mod_id) return;
+                rec.silent.push_back(mod_id);
+                save_state();
+            }
+            return;
+        }
+    }
+
+    // New record
+    HandledItemRecord rec;
+    rec.item_id    = item_id;
+    rec.handled_by = mod_id;
+    if (silence)
+        rec.silent.push_back(mod_id);
+    state_.handled_items.push_back(rec);
+    save_state();
+}
+
+bool APStateManager::is_item_handled(int64_t item_id) const
+{
+    for (const auto &rec : state_.handled_items)
+        if (rec.item_id == item_id) return true;
+    return false;
+}
+
+bool APStateManager::is_item_silenced(int64_t item_id, const std::string &mod_id) const
+{
+    for (const auto &rec : state_.handled_items)
+    {
+        if (rec.item_id != item_id) continue;
+        for (const auto &s : rec.silent)
+            if (s == mod_id) return true;
+        return false;
+    }
+    return false;
+}
+
+std::string APStateManager::get_item_handler(int64_t item_id) const
+{
+    for (const auto &rec : state_.handled_items)
+        if (rec.item_id == item_id) return rec.handled_by;
+    return "";
+}
+
 } // namespace ap

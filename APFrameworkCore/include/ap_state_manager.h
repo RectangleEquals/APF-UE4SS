@@ -279,6 +279,40 @@ class AP_API APStateManager
      */
     void set_state(const SessionState& state);
 
+    // ==========================================================================
+    // Item Notification Tracking
+    // ==========================================================================
+
+    /**
+     * @brief Mark an item as handled by a mod.
+     * @param item_id Item ID.
+     * @param mod_id Mod that handled the item.
+     * @param silence If true, suppress future on_item_received for this mod.
+     */
+    void mark_item_handled(int64_t item_id, const std::string& mod_id, bool silence);
+
+    /**
+     * @brief Check if an item has been handled by any mod.
+     * @param item_id Item ID.
+     * @return true if handled.
+     */
+    [[nodiscard]] bool is_item_handled(int64_t item_id) const;
+
+    /**
+     * @brief Check if a specific mod has requested silence for an item.
+     * @param item_id Item ID.
+     * @param mod_id Mod ID.
+     * @return true if this mod requested silence for this item.
+     */
+    [[nodiscard]] bool is_item_silenced(int64_t item_id, const std::string& mod_id) const;
+
+    /**
+     * @brief Get the mod_id of the first mod that handled an item.
+     * @param item_id Item ID.
+     * @return mod_id string, or "" if not handled.
+     */
+    [[nodiscard]] std::string get_item_handler(int64_t item_id) const;
+
   private:
     // =========================================================================
     // Private Member Variables

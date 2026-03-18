@@ -21,6 +21,35 @@ local player_controller = nil -- cached PlayerController (validity-checked)
 local widget = nil -- WBP_LogicTestUI (from actor:GetLogicTestUI())
 local pending_td = nil -- tracker_data buffered before widget is ready
 
+-- ─── Item Popup ────────────────────────────────────────────────────────────
+local POPUP_DISPLAY_TIME = 5       -- seconds the popup remains fully visible
+
+-- Popup state machine: "idle" | "fading_in" | "showing" | "fading_out"
+local popup_state      = "idle"
+local popup_widget     = nil       -- WBP_ItemPopup reference
+local popup_show_time  = nil       -- os.time() when popup entered "showing"
+local popup_item_queue = {}        -- items queued before widget is ready
+
+-- ============================================================================
+-- Internal: Item Popup Helpers
+-- ============================================================================
+
+local function popup_add_item(item_id, item_name, sender, is_self)
+    if not popup_widget or not popup_widget:IsValid() then
+        table.insert(popup_item_queue, {
+            item_id = item_id, item_name = item_name, sender = sender, is_self = is_self
+        })
+        return
+    end
+    popup_widget:AddItem(item_id, item_name, sender, is_self)
+end
+
+local function popup_start_fade_in()
+    if not popup_widget or not popup_widget:IsValid() then return end
+    popup_state = "fading_in"
+    popup_widget:FadeIn()
+end
+
 -- ============================================================================
 -- Internal: Push Locations to Widget
 -- ============================================================================
@@ -95,6 +124,41 @@ function M.init(client)
                     push_locations(pending_td)
                     pending_td = nil
                 end
+
+                -- Acquire popup widget
+                local pw = actor.WBP_ItemPopup_Inst
+                if pw and pw:IsValid() then
+                    popup_widget = pw
+                    APClient.log("info", "[APLogicTest] WBP_ItemPopup acquired\n")
+                    -- Flush any items received before the widget was ready
+                    if #popup_item_queue > 0 then
+                        for _, item in ipairs(popup_item_queue) do
+                            popup_widget:AddItem(item.item_id, item.item_name, item.sender, item.is_self)
+                        end
+                        popup_item_queue = {}
+                        popup_start_fade_in()
+                    end
+                end
+
+                -- Animation finished hooks — BP fires these via ExecuteCustomEvent
+                RegisterHook("/Game/Mods/APLogicTest/WBP_ItemPopup.WBP_ItemPopup_C:OnFadeInDone",
+                    function()
+                        if popup_state == "fading_in" then
+                            popup_state    = "showing"
+                            popup_show_time = os.time()
+                        end
+                    end)
+
+                RegisterHook("/Game/Mods/APLogicTest/WBP_ItemPopup.WBP_ItemPopup_C:OnFadeOutDone",
+                    function()
+                        if popup_state == "fading_out" then
+                            popup_state    = "idle"
+                            popup_show_time = nil
+                            if popup_widget and popup_widget:IsValid() then
+                                popup_widget:Clear()
+                            end
+                        end
+                    end)
             end)
 
             -- Location check event: fired by WBP_LogicTestButton when a row is clicked.
@@ -146,6 +210,52 @@ function M.on_update(td)
     end
     -- Small location count (~12) — full rebuild on update is acceptable
     push_locations(td)
+end
+
+-- ============================================================================
+-- Public: Item Popup (called from main.lua on_item_received)
+-- ============================================================================
+
+--- Called by main.lua when an item is received.
+--- Drives the popup state machine and marks the item handled+silenced.
+--- @param client  table  APClient reference
+--- @param item_id number Item ID
+--- @param item_name string Item name
+--- @param sender  string Sender slot name
+--- @param meta    table  {location_id, is_self, handled_by}
+function M.handle_item(client, item_id, item_name, sender, meta)
+    if not client then return end
+
+    local is_self = meta and meta.is_self or false
+
+    -- Add item to popup (queued if widget not yet ready)
+    popup_add_item(item_id, item_name, sender, is_self)
+
+    -- Drive popup state machine
+    if popup_state == "idle" then
+        popup_start_fade_in()
+    elseif popup_state == "showing" then
+        popup_show_time = os.time()  -- reset display timer
+    elseif popup_state == "fading_out" then
+        popup_start_fade_in()  -- interrupt fade-out, show again with new item
+    end
+    -- fading_in: item already added; timer starts when FadeIn completes
+
+    -- Mark handled + silence: reconnect/restart won't re-show this notification
+    client.item_handled(item_id, true)
+end
+
+--- Called every tick from main.lua. Drives popup auto-dismiss timer.
+function M.tick()
+    if popup_state == "showing" and popup_show_time then
+        if os.time() - popup_show_time >= POPUP_DISPLAY_TIME then
+            if popup_widget and popup_widget:IsValid() then
+                popup_state    = "fading_out"
+                popup_show_time = nil
+                popup_widget:FadeOut()
+            end
+        end
+    end
 end
 
 return M

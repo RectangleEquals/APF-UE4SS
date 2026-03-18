@@ -121,10 +121,18 @@ void APCallbacks::invoke_registration_rejected(const std::string &reason)
                     [&](sol::protected_function &cb) { return cb(reason); });
 }
 
-void APCallbacks::invoke_item_received(int64_t item_id, const std::string &item_name, const std::string &sender)
+void APCallbacks::invoke_item_received(int64_t item_id, const std::string &item_name, const std::string &sender,
+                                       int64_t location_id, bool is_self, const std::string &handled_by)
 {
     invoke_callback(callback_item_received_, "on_item_received",
-                    [&](sol::protected_function &cb) { return cb(item_id, item_name, sender); });
+                    [&](sol::protected_function &cb) {
+                        sol::state_view lua(cb.lua_state());
+                        sol::table meta = lua.create_table();
+                        meta["location_id"] = location_id;
+                        meta["is_self"]     = is_self;
+                        meta["handled_by"]  = handled_by;  // "" if not yet handled by any mod
+                        return cb(item_id, item_name, sender, meta);
+                    });
 }
 
 void APCallbacks::invoke_state_active()

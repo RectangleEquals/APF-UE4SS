@@ -146,6 +146,13 @@ class AP_API APCapabilities
      */
     std::optional<ItemOwnership> get_item_by_id(int64_t item_id) const;
 
+    /**
+     * @brief Get item ownership info by name (first match across all mods).
+     * @param item_name Item name.
+     * @return ItemOwnership if found.
+     */
+    [[nodiscard]] std::optional<ItemOwnership> get_item_by_name(const std::string &item_name) const;
+
     // ==========================================================================
     // Checksum
     // ==========================================================================

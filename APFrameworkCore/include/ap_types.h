@@ -169,6 +169,16 @@ struct ValidationResult {
 };
 
 // =============================================================================
+// Item Notification Tracking
+// =============================================================================
+
+struct HandledItemRecord {
+    int64_t item_id = 0;
+    std::string handled_by;             // first mod to call item_handled()
+    std::vector<std::string> silent;    // mods that passed silence=true to item_handled()
+};
+
+// =============================================================================
 // Session State Structure (Design08)
 // =============================================================================
 
@@ -183,6 +193,7 @@ struct SessionState {
   std::string ap_server;
   int ap_port = 38281;
   std::chrono::system_clock::time_point last_active;
+  std::vector<HandledItemRecord> handled_items;
 
   nlohmann::json to_json() const {
     std::vector<int64_t> checked_vec(checked_locations.begin(),
@@ -194,6 +205,15 @@ struct SessionState {
 
     auto time_t = std::chrono::system_clock::to_time_t(last_active);
 
+    nlohmann::json handled_arr = nlohmann::json::array();
+    for (const auto &h : handled_items) {
+      nlohmann::json hr;
+      hr["id"] = h.item_id;
+      hr["handled_by"] = h.handled_by;
+      hr["silent"] = h.silent;
+      handled_arr.push_back(hr);
+    }
+
     return {{"version", version},
             {"checksum", checksum},
             {"slot_name", slot_name},
@@ -203,7 +223,8 @@ struct SessionState {
             {"item_progression_counts", progression_counts},
             {"ap_server", ap_server},
             {"ap_port", ap_port},
-            {"last_active", time_t}};
+            {"last_active", time_t},
+            {"handled_items", handled_arr}};
   }
 
   static SessionState from_json(const nlohmann::json &j) {
@@ -233,6 +254,19 @@ struct SessionState {
     if (j.contains("last_active")) {
       std::time_t t = j["last_active"].get<std::time_t>();
       state.last_active = std::chrono::system_clock::from_time_t(t);
+    }
+
+    if (j.contains("handled_items") && j["handled_items"].is_array()) {
+      for (const auto &hr : j["handled_items"]) {
+        HandledItemRecord rec;
+        rec.item_id = hr.value("id", int64_t(0));
+        rec.handled_by = hr.value("handled_by", "");
+        if (hr.contains("silent") && hr["silent"].is_array()) {
+          for (const auto &s : hr["silent"])
+            rec.silent.push_back(s.get<std::string>());
+        }
+        state.handled_items.push_back(rec);
+      }
     }
 
     return state;
