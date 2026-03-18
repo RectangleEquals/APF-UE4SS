@@ -132,7 +132,7 @@ All messages follow `{type, source, target, payload}`. The `source` is the sende
 | Type | Description |
 |---|---|
 | `registration_response` | Reply to `register` — `{success, reason}` |
-| `execute_action` | Item received — `{item_id, item_name, sender, action, args}`. Triggers `on_item_received` callback and the registered action handler. |
+| `execute_action` | Item received — `{item_id, item_name, sender, location_id, is_self, handled_by, action, args}`. Triggers `on_item_received` callback and the registered action handler. `location_id`: where the item was placed. `is_self`: true if the receiving player placed the item. `handled_by`: mod_id of the first mod to call `item_handled()` for this item, or `""`. |
 | `command_response` | Reply to a `command` — `{command, success, error, data}` |
 | `tracker_snapshot` | Full scored tracker state — sent once on `subscribe_tracker`. See [tracker.md](tracker.md). |
 | `tracker_update` | Incremental tracker update — sent when item state or region reachability changes. Same schema as snapshot but only changed entries. |
@@ -152,6 +152,7 @@ All messages follow `{type, source, target, payload}`. The `source` is the sende
 | `callback_error` | Report a Lua callback exception — `{callback, error}` |
 | `subscribe_tracker` | Begin receiving tracker updates |
 | `unsubscribe_tracker` | Stop receiving tracker updates |
+| `item_handled` | Mark an item as handled — `{item_id, silence}`. Sets `handled_by` cross-mod field on future `execute_action` deliveries for this item. If `silence=true`, additionally suppresses future `on_item_received` delivery to this mod (persisted across reconnects). |
 | `api_call` | Call a function registered by another mod — `{target, function, call_id, ...args}` |
 | `api_result` | Return value from a cross-mod API call |
 
@@ -198,8 +199,24 @@ Players typically configure `ap_host`, `ap_port`, `ap_slot_name`, and `ap_passwo
 - Which locations have been checked (set of location IDs)
 - The AP server host and port from the last successful connection
 - The data package schema version
+- Item notification tracking (`handled_items`) — per-item handling state for mods that called `item_handled()`
 
 On startup, the framework loads this file and merges it with the server's authoritative state during the SYNCING phase. If the server has newer information (e.g., locations checked on another client), the server's state wins.
+
+**`handled_items` schema:**
+
+```json
+"handled_items": [
+    {
+        "id": 6942067,
+        "handled_by": "author.mygame.mymod",
+        "silent": ["author.mygame.mymod"]
+    }
+]
+```
+
+- `handled_by`: the `mod_id` of the first mod to call `item_handled()` for this item. Cross-mod visible: all subsequent `execute_action` deliveries carry this value in the `handled_by` field.
+- `silent`: list of `mod_id`s that called `item_handled(item_id, true)`. The framework suppresses future `on_item_received` callbacks for this item to any mod in this list.
 
 ---
 
@@ -248,6 +265,7 @@ If the target mod is not yet registered, the call is queued until it registers (
 - Goal aggregation: mods declare completion conditions; `goal` option auto-generated when multiple exist
 - Item override system: mods can change another mod's item types conditionally
 - Location logic overrides: mods can add alternative access paths to another mod's locations (OR-merged)
+- Item notification tracking: `item_handled()` marks items cross-mod and optionally silences future callbacks; persisted in `session_state.json`
 
 ---
 

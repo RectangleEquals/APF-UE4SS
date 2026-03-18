@@ -71,7 +71,7 @@ APClient.on_registration_success(function()
 end)
 
 -- Receive items and apply them in-game
-APClient.on_item_received(function(item_id, item_name, sender)
+APClient.on_item_received(function(item_id, item_name, sender, meta)
     print("[MyMod] Received: " .. item_name .. " from " .. sender)
     -- Apply the item to the game here
     game_give_item(item_name)
@@ -184,6 +184,43 @@ Use the priority prefix only if your mod is an infrastructure mod (tracker, UI, 
 |---|---|---|
 | `APClient.log(level, message)` | — | Write a log entry through the framework logger. `level` is one of `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`, `"fatal"`. Appears in `ap_framework.log` attributed to your mod_id. |
 
+### Item Notifications
+
+| Function | Returns | Description |
+|---|---|---|
+| `APClient.item_handled(id_or_name [, silence])` | — | Mark an item as handled by this mod. `id_or_name` is the item ID (int64) or item name (string). All future `on_item_received` callbacks for this item (to all mods) will have `meta.handled_by` set to this mod's `mod_id`. If `silence` is `true`, future `on_item_received` callbacks for this item are also suppressed for this mod specifically (persisted across reconnects). Default: `silence = false`. |
+
+**`on_item_received` `meta` table fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `meta.location_id` | int64 | The location ID where this item was placed in the multiworld. |
+| `meta.is_self` | bool | `true` if this player placed the item themselves (found it in their own world). |
+| `meta.handled_by` | string | The `mod_id` of the first mod that called `item_handled()` for this item, or `""` if no mod has handled it yet. |
+
+**`sender` values:**
+
+| Value | Meaning |
+|---|---|
+| Another player's slot name | That player sent this item to you. |
+| Your own slot name | You sent this item to yourself; check `meta.is_self` (will be `true`). |
+| `"Server"` | Server-placed item — start inventory or similar (player 0 in apclientpp). |
+
+**Popup / Notification Pattern:**
+
+Use `item_handled(id, true)` when your mod shows a notification for a received item. The `silence=true` flag persists across reconnects, so the notification won't re-fire if the player restarts or reconnects.
+
+```lua
+APClient.on_item_received(function(item_id, item_name, sender, meta)
+    -- Only show notification if not already handled by another mod
+    if meta.handled_by == "" then
+        show_item_popup(item_name, sender, meta.is_self)
+        -- Silence so this notification doesn't re-fire on reconnect
+        APClient.item_handled(item_id, true)
+    end
+end)
+```
+
 ---
 
 ## Callbacks
@@ -197,7 +234,7 @@ Register callbacks before calling `APClient.connect()`. Each mod has its own cal
 | `on_lifecycle(fn)` | `fn(state, message)` | Any lifecycle state change. `state` is one of the 12 state strings. |
 | `on_registration_success(fn)` | `fn()` | Framework accepted your `register_mod()` call |
 | `on_registration_rejected(fn)` | `fn(reason)` | Framework rejected your registration |
-| `on_item_received(fn)` | `fn(item_id, item_name, sender)` | An item was received from the AP server and routed to your mod |
+| `on_item_received(fn)` | `fn(item_id, item_name, sender, meta)` | An item was received from the AP server and routed to your mod. See [Item Notifications](#item-notifications) for `meta` fields and notification helpers. |
 | `on_state_active(fn)` | `fn()` | Framework reached ACTIVE or RESYNCING state — safe to call `subscribe_tracker()` and other actions |
 | `on_state_error(fn)` | `fn(message)` | Framework entered ERROR_STATE |
 | `on_error(fn)` | `fn(code, message)` | A framework error occurred. Error codes: `CONFIG_INVALID`, `CONNECTION_FAILED`, `ACTION_FAILED`, etc. |
@@ -255,8 +292,10 @@ APClient.on_disconnect(function()
 end)
 
 -- ── Items ───────────────────────────────────────────────────────────────────
-APClient.on_item_received(function(item_id, item_name, sender)
-    -- Apply the item in-game
+APClient.on_item_received(function(item_id, item_name, sender, meta)
+    -- meta.location_id: where the item was placed
+    -- meta.is_self:     true if this player placed the item themselves
+    -- meta.handled_by:  mod_id of the first mod to call item_handled(), or ""
     apply_item(item_name)
 end)
 
@@ -274,12 +313,12 @@ When the AP server sends an item to your slot, the framework routes it to your m
 1. Framework receives item from AP server
 2. Looks up the item in your mod's capabilities
 3. If the item has an `action` field, calls that handler
-4. Always fires `on_item_received` with `(item_id, item_name, sender)`
+4. Always fires `on_item_received` with `(item_id, item_name, sender, meta)`
 
 **Simple pattern (no action handler):**
 
 ```lua
-APClient.on_item_received(function(item_id, item_name, sender)
+APClient.on_item_received(function(item_id, item_name, sender, meta)
     if item_name == "Key" then give_player_key()
     elseif item_name == "Coin" then give_player_coins(10)
     end
