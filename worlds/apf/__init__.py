@@ -615,7 +615,7 @@ class APFrameworkWorld(World):
         # Refresh data package with remapped IDs
         self._update_data_package()
 
-        self.log.warning(
+        self.log.warn(
             f"ID conflict resolved: {len(conflicting_ids)} IDs remapped to safe range "
             f"starting at {next(iter(remap.values())) if remap else '?'}. "
             f"id_remapping now covers {len(self.id_remapping)} entries.",
