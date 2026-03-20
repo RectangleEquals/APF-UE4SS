@@ -11,7 +11,7 @@ To create a game-specific world:
 3. Optionally override methods to add game-specific logic
 """
 
-from typing import Dict, Any, ClassVar, Set
+from typing import Dict, Any, ClassVar, Set, Optional
 import base64
 import json
 
@@ -84,6 +84,13 @@ class APFrameworkWorld(World):
     item_name_to_id: ClassVar[Dict[str, int]] = {}
     location_name_to_id: ClassVar[Dict[str, int]] = {}
 
+    # Canonical union ID mapping — built once per multiworld generation.
+    # Populated by _build_canonical_ids() on the first APF player's generate_early().
+    # Subsequent players' generate_early() calls skip the build (flag already set).
+    _canonical_built: ClassVar[bool] = False
+    _canonical_multiworld_seed: ClassVar[Optional[int]] = None
+    _canonical_player_remaps: ClassVar[Dict[int, Dict[int, int]]] = {}
+
     # =========================================================================
     # Initialization
     # =========================================================================
@@ -113,6 +120,12 @@ class APFrameworkWorld(World):
             min_level=log_level.current_key if log_level else "warn",
             logfile=log_file.value if log_file else "",
         )
+
+        # Build canonical union ID mapping across all APF players (runs once per multiworld).
+        # Sets class-level item_name_to_id / location_name_to_id with the full union of all
+        # players' items/locations. Must run before per-player tables are built so that
+        # subsequent generate_early() calls do not overwrite the union with a subset.
+        self._build_canonical_ids()
 
         cap_data = self.options.capabilities_data.value
         if not cap_data:
@@ -144,6 +157,23 @@ class APFrameworkWorld(World):
 
         # Resolve item amount expressions (must run after location_table is built for % forms)
         self._resolve_item_amounts(self._build_option_values())
+
+        # Apply this player's canonical remap to local item/location tables.
+        # Must run BEFORE the hints loop below — the local/early hints read
+        # item_table[name].code and add it to multiworld.local_items[player].
+        # Using canonical codes here ensures local_items matches Item.code values
+        # created in create_items() (which also uses canonical IDs via item_name_to_id).
+        player_remap = type(self)._canonical_player_remaps.get(self.player, {})
+        if player_remap:
+            self.item_table = {
+                n: d._replace(code=player_remap.get(d.code, d.code))
+                for n, d in self.item_table.items()
+            }
+            self.location_table = {
+                n: d._replace(code=player_remap.get(d.code, d.code))
+                for n, d in self.location_table.items()
+            }
+        self.id_remapping = player_remap  # {} for same-mod players; used by fill_slot_data()
 
         # Set topology_present based on logic mode
         if self.options.logic_mode.value == 1 and self.region_table:  # basic
@@ -200,17 +230,6 @@ class APFrameworkWorld(World):
                 self.options.priority_locations.value.add(loc_name)
             elif excl_active:
                 self.options.exclude_locations.value.add(loc_name)
-
-        # Update class-level ID mappings (required for item/location creation)
-        self.__class__.item_name_to_id = {
-            name: data.code for name, data in self.item_table.items()
-        }
-        self.__class__.location_name_to_id = {
-            name: data.code for name, data in self.location_table.items()
-        }
-
-        # Apply per-player ID offset so two APF players never share IDs
-        self._apply_player_offset()
 
         # Check for ID conflicts with other worlds
         self.check_id_conflicts()
@@ -476,6 +495,151 @@ class APFrameworkWorld(World):
             "DataPackage",
         )
 
+    def _build_canonical_ids(self) -> None:
+        """Build canonical union ID mapping across all APF players in this multiworld.
+
+        Runs exactly once per multiworld generation (guarded by _canonical_built).
+        Decodes each APF player's capabilities_data from their YAML options and builds
+        a unified name→ID mapping with unique IDs for every item and location:
+
+          - Same name, same ID across players  → one canonical entry, no remap
+          - Same name, different IDs           → use first-seen ID as canonical;
+                                                 later players get a remap entry
+          - Different names, same ID (collision)→ assign a new free ID to the
+                                                 colliding name; player gets a remap
+
+        After this runs, class-level item_name_to_id / location_name_to_id contain
+        the full union of all players' items/locations. The data package updated via
+        _update_data_package() will include every canonical ID.
+
+        Each player's id_remapping (in slot_data) covers only IDs that differ from
+        their raw capabilities IDs. Players with the same mods get empty remaps.
+        """
+        cls = type(self)
+
+        # Reset if this is a new multiworld generation (handles sequential runs in
+        # the same Python process, e.g. tournament / batch generation).
+        if cls._canonical_multiworld_seed != self.multiworld.seed:
+            cls._canonical_built = False
+            cls._canonical_multiworld_seed = self.multiworld.seed
+            cls._canonical_player_remaps = {}
+            cls.item_name_to_id = {}
+            cls.location_name_to_id = {}
+
+        if cls._canonical_built:
+            return
+
+        item_name_to_canonical: Dict[str, int] = {}    # name  → canonical_id
+        item_id_to_name: Dict[int, str] = {}            # canonical_id → name
+        loc_name_to_canonical: Dict[str, int] = {}     # display_name → canonical_id
+        loc_id_to_name: Dict[int, str] = {}             # canonical_id → display_name
+        all_seen_ids: Set[int] = set()
+        next_free: int = 0  # lazy-initialized to max(all_seen_ids)+1
+
+        def find_free_id() -> int:
+            nonlocal next_free
+            if next_free == 0:
+                next_free = (max(all_seen_ids) + 1) if all_seen_ids else 1
+            while next_free in all_seen_ids:
+                next_free += 1
+            result = next_free
+            next_free += 1
+            all_seen_ids.add(result)
+            return result
+
+        per_player_remaps: Dict[int, Dict[int, int]] = {}
+
+        for world in sorted(self.multiworld.worlds.values(), key=lambda w: w.player):
+            if not isinstance(world, cls):
+                continue
+
+            try:
+                raw_cap = world.options.capabilities_data.value
+                if not raw_cap:
+                    per_player_remaps[world.player] = {}
+                    continue
+                caps = world._process_capabilities(
+                    json.loads(base64.b64decode(raw_cap).decode("utf-8"))
+                )
+            except Exception as e:
+                self.log.warn(
+                    f"_build_canonical_ids: could not decode caps for player "
+                    f"{world.player}: {e}",
+                    "CanonicalIDs",
+                )
+                per_player_remaps[world.player] = {}
+                continue
+
+            player_remap: Dict[int, int] = {}
+
+            # ── Items ─────────────────────────────────────────────────────────
+            for item in caps.get("items", []):
+                raw_id: int = item["id"]
+                name: str = item["name"]
+                all_seen_ids.add(raw_id)
+
+                if name in item_name_to_canonical:
+                    canonical_id = item_name_to_canonical[name]
+                    if raw_id != canonical_id:
+                        player_remap[raw_id] = canonical_id
+                elif raw_id in item_id_to_name:
+                    # True collision: same ID, different name
+                    new_id = find_free_id()
+                    item_name_to_canonical[name] = new_id
+                    item_id_to_name[new_id] = name
+                    player_remap[raw_id] = new_id
+                else:
+                    item_name_to_canonical[name] = raw_id
+                    item_id_to_name[raw_id] = name
+
+            # ── Locations ─────────────────────────────────────────────────────
+            # Two-pass: first count instances per base name (mirrors build_location_table)
+            loc_name_counts: Dict[str, int] = {}
+            for loc in caps.get("locations", []):
+                loc_name_counts[loc["name"]] = loc_name_counts.get(loc["name"], 0) + 1
+
+            for loc in caps.get("locations", []):
+                raw_id = loc["id"]
+                base_name: str = loc["name"]
+                instance: int = loc.get("instance", 1)
+                display_name = (
+                    f"{base_name} #{instance}" if loc_name_counts[base_name] > 1 else base_name
+                )
+                all_seen_ids.add(raw_id)
+
+                if display_name in loc_name_to_canonical:
+                    canonical_id = loc_name_to_canonical[display_name]
+                    if raw_id != canonical_id:
+                        player_remap[raw_id] = canonical_id
+                elif raw_id in loc_id_to_name:
+                    new_id = find_free_id()
+                    loc_name_to_canonical[display_name] = new_id
+                    loc_id_to_name[new_id] = display_name
+                    player_remap[raw_id] = new_id
+                else:
+                    loc_name_to_canonical[display_name] = raw_id
+                    loc_id_to_name[raw_id] = display_name
+
+            per_player_remaps[world.player] = player_remap
+
+        # Commit canonical mappings to class vars
+        cls.item_name_to_id = item_name_to_canonical
+        cls.location_name_to_id = loc_name_to_canonical
+        cls._canonical_player_remaps = per_player_remaps
+        cls._canonical_built = True
+
+        total_remapped = sum(len(r) for r in per_player_remaps.values())
+        self.log.info(
+            f"Canonical ID union built: {len(item_name_to_canonical)} items, "
+            f"{len(loc_name_to_canonical)} locations across "
+            f"{len(per_player_remaps)} APF player(s). "
+            f"{total_remapped} total ID remap(s) assigned.",
+            "CanonicalIDs",
+        )
+
+        # Update data package immediately so the full union is visible to Archipelago.
+        self._update_data_package()
+
     def _apply_player_offset(self) -> None:
         """Assign unique IDs per player slot by adding a per-player offset.
 
@@ -524,6 +688,13 @@ class APFrameworkWorld(World):
 
         for world in self.multiworld.worlds.values():
             if world.player == self.player:
+                continue
+
+            # Skip other APF worlds: all APF-APF conflicts were already resolved by
+            # _build_canonical_ids(). Checking them here would cause false positives
+            # because all APF instances share the same class-level item_name_to_id
+            # (which now contains the full canonical union).
+            if isinstance(world, type(self)):
                 continue
 
             # Get location IDs
@@ -604,13 +775,13 @@ class APFrameworkWorld(World):
             )
         self.item_table = new_item_table
 
-        # Update class-level mappings
-        self.__class__.item_name_to_id = {
-            name: data.code for name, data in self.item_table.items()
-        }
-        self.__class__.location_name_to_id = {
-            name: data.code for name, data in self.location_table.items()
-        }
+        # Merge remapped entries into class-level mappings.
+        # Use update (not replace) so the canonical union built by _build_canonical_ids()
+        # is preserved — only the entries remapped for this player are overwritten.
+        for name, data in self.item_table.items():
+            self.__class__.item_name_to_id[name] = data.code
+        for name, data in self.location_table.items():
+            self.__class__.location_name_to_id[name] = data.code
 
         # Refresh data package with remapped IDs
         self._update_data_package()

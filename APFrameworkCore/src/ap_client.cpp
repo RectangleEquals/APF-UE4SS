@@ -211,16 +211,29 @@ std::string APArchipelagoClient::get_item_name(int64_t item_id) const
 {
     if (client_)
     {
-        std::string name = client_->get_item_name(item_id, game_);
+        // Apply reverse remap first: translates canonical AP IDs back to local
+        // capability IDs when this player's slot_data contains an id_remapping.
+        // For same-mod players the remap is empty (identity), so local_id == item_id.
+        int64_t local_id = remap_item_to_local(item_id);
+
+        // Primary lookup: data package (has canonical IDs for all APF players)
+        std::string name = client_->get_item_name(local_id, game_);
+        if (name == "Unknown" && local_id != item_id)
+            name = client_->get_item_name(item_id, game_);  // try raw canonical ID too
+
         if (name == "Unknown")
         {
-            // DP not yet valid — fall back to local capabilities registry
-            auto cap_item = APCapabilities::get()->get_item_by_id(item_id);
+            // Fallback: local capabilities registry (covers start-inventory items
+            // and edge cases where the DP hasn't been populated yet)
+            auto cap_item = APCapabilities::get()->get_item_by_id(local_id);
+            if (!cap_item.has_value() && local_id != item_id)
+                cap_item = APCapabilities::get()->get_item_by_id(item_id);
             if (cap_item.has_value())
                 return cap_item->item_name;
             APLogger::get()->log(LogLevel::Warn, "APArchipelagoClient",
                                  "Item name lookup FAILED for ID " + std::to_string(item_id) +
-                                     " (game='" + game_ + "', dp_valid=" +
+                                     " (local_id=" + std::to_string(local_id) +
+                                     ", game='" + game_ + "', dp_valid=" +
                                      std::string(client_->is_data_package_valid() ? "true" : "false") + ")");
         }
         return name;
