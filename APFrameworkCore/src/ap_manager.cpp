@@ -632,7 +632,8 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
                 if (cap.has_value()) item_name_str = cap->item_name;
             }
             bool silence = msg.payload.value("silence", false);
-            APStateManager::get()->mark_item_handled(item_id, client_id, silence);
+            int delivery_index = msg.payload.value("delivery_index", -1);
+            APStateManager::get()->mark_item_handled(item_id, client_id, silence, delivery_index);
             APLogger::get()->log(LogLevel::Debug, "APManager",
                 client_id + " handled item " + std::to_string(item_id)
                 + " \"" + item_name_str + "\"");
@@ -922,8 +923,9 @@ void APManager::handle_framework_event(const FrameworkEvent &event)
 
             if constexpr (std::is_same_v<T, ItemReceivedEvent>)
             {
+                int delivery_index = APStateManager::get()->get_received_item_index();
                 APMessageRouter::get()->route_item_receipt(arg.item_id, arg.item_name, arg.sender,
-                                                           arg.location_id, arg.is_self);
+                                                           arg.location_id, arg.is_self, delivery_index);
                 APStateManager::get()->increment_received_item_index();
                 // Guard: don't overwrite the session file before load_state() has run.
                 // AP server replays items during CONNECTING before handle_syncing() loads state.

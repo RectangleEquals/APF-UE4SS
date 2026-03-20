@@ -60,7 +60,8 @@ class AP_API APCallbacks
     void invoke_registration_success();
     void invoke_registration_rejected(const std::string &reason);
     void invoke_item_received(int64_t item_id, const std::string &item_name, const std::string &sender,
-                              int64_t location_id, bool is_self, const std::string &handled_by);
+                              int64_t location_id, bool is_self, const std::string &handled_by,
+                              int delivery_index = -1);
     void invoke_state_active();
     void invoke_state_error(const std::string &message);
 

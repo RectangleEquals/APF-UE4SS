@@ -188,7 +188,7 @@ Use the priority prefix only if your mod is an infrastructure mod (tracker, UI, 
 
 | Function | Returns | Description |
 |---|---|---|
-| `APClient.item_handled(id_or_name [, silence])` | — | Mark an item as handled by this mod. `id_or_name` is the item ID (int64) or item name (string). All future `on_item_received` callbacks for this item (to all mods) will have `meta.handled_by` set to this mod's `mod_id`. If `silence` is `true`, future `on_item_received` callbacks for this item are also suppressed for this mod specifically (persisted across reconnects). Default: `silence = false`. |
+| `APClient.item_handled(id_or_name [, silence [, delivery_index]])` | — | Mark an item as handled by this mod. `id_or_name` is the item ID (int64) or item name (string). All future `on_item_received` callbacks for this item (to all mods) will have `meta.handled_by` set to this mod's `mod_id`. If `silence` is `true` and `delivery_index` is provided, that specific delivery is permanently suppressed for this mod (persisted across reconnects). `delivery_index` is required for silencing — without it, `silence=true` is a no-op. Default: `silence = false`. |
 
 **`on_item_received` `meta` table fields:**
 
@@ -197,6 +197,7 @@ Use the priority prefix only if your mod is an infrastructure mod (tracker, UI, 
 | `meta.location_id` | int64 | The location ID where this item was placed in the multiworld. |
 | `meta.is_self` | bool | `true` if this player placed the item themselves (found it in their own world). |
 | `meta.handled_by` | string | The `mod_id` of the first mod that called `item_handled()` for this item, or `""` if no mod has handled it yet. |
+| `meta.delivery_index` | int | Position of this delivery in AP's items array. Pass to `item_handled()` as the third argument to silence this specific delivery. `-1` if unknown. |
 
 **`sender` values:**
 
@@ -208,15 +209,15 @@ Use the priority prefix only if your mod is an infrastructure mod (tracker, UI, 
 
 **Popup / Notification Pattern:**
 
-Use `item_handled(id, true)` when your mod shows a notification for a received item. The `silence=true` flag persists across reconnects, so the notification won't re-fire if the player restarts or reconnects.
+Use `item_handled(id, true, meta.delivery_index)` when your mod shows a notification for a received item. Silencing is per-delivery — each copy of the same item type is tracked independently, so all 10 Data Shards will show in your popup even though they share an item ID. The silence persists across reconnects, so the notification won't re-fire if the player restarts or reconnects.
 
 ```lua
 APClient.on_item_received(function(item_id, item_name, sender, meta)
     -- Only show notification if not already handled by another mod
     if meta.handled_by == "" then
         show_item_popup(item_name, sender, meta.is_self)
-        -- Silence so this notification doesn't re-fire on reconnect
-        APClient.item_handled(item_id, true)
+        -- Silence this specific delivery so it doesn't re-fire on reconnect
+        APClient.item_handled(item_id, true, meta.delivery_index)
     end
 end)
 ```
@@ -293,9 +294,10 @@ end)
 
 -- ── Items ───────────────────────────────────────────────────────────────────
 APClient.on_item_received(function(item_id, item_name, sender, meta)
-    -- meta.location_id: where the item was placed
-    -- meta.is_self:     true if this player placed the item themselves
-    -- meta.handled_by:  mod_id of the first mod to call item_handled(), or ""
+    -- meta.location_id:    where the item was placed
+    -- meta.is_self:        true if this player placed the item themselves
+    -- meta.handled_by:     mod_id of the first mod to call item_handled(), or ""
+    -- meta.delivery_index: position in AP's items array (for per-delivery silencing)
     apply_item(item_name)
 end)
 

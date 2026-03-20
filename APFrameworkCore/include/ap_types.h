@@ -174,8 +174,13 @@ struct ValidationResult {
 
 struct HandledItemRecord {
     int64_t item_id = 0;
-    std::string handled_by;             // first mod to call item_handled()
-    std::vector<std::string> silent;    // mods that passed silence=true to item_handled()
+    std::string handled_by;    // first mod to call item_handled()
+    // Note: per-delivery silence is now tracked in SessionState::silenced_deliveries
+};
+
+struct SilencedDeliveryRecord {
+    int delivery_index = 0;    // position in AP's items array (matches received_item_index at time of delivery)
+    std::string mod_id;        // mod that called item_handled(silence=true)
 };
 
 // =============================================================================
@@ -194,6 +199,7 @@ struct SessionState {
   int ap_port = 38281;
   std::chrono::system_clock::time_point last_active;
   std::vector<HandledItemRecord> handled_items;
+  std::vector<SilencedDeliveryRecord> silenced_deliveries;
 
   nlohmann::json to_json() const {
     std::vector<int64_t> checked_vec(checked_locations.begin(),
@@ -210,8 +216,12 @@ struct SessionState {
       nlohmann::json hr;
       hr["id"] = h.item_id;
       hr["handled_by"] = h.handled_by;
-      hr["silent"] = h.silent;
       handled_arr.push_back(hr);
+    }
+
+    nlohmann::json silenced_arr = nlohmann::json::array();
+    for (const auto &s : silenced_deliveries) {
+      silenced_arr.push_back({{"idx", s.delivery_index}, {"mod", s.mod_id}});
     }
 
     return {{"version", version},
@@ -224,7 +234,8 @@ struct SessionState {
             {"ap_server", ap_server},
             {"ap_port", ap_port},
             {"last_active", time_t},
-            {"handled_items", handled_arr}};
+            {"handled_items", handled_arr},
+            {"silenced_deliveries", silenced_arr}};
   }
 
   static SessionState from_json(const nlohmann::json &j) {
@@ -261,11 +272,16 @@ struct SessionState {
         HandledItemRecord rec;
         rec.item_id = hr.value("id", int64_t(0));
         rec.handled_by = hr.value("handled_by", "");
-        if (hr.contains("silent") && hr["silent"].is_array()) {
-          for (const auto &s : hr["silent"])
-            rec.silent.push_back(s.get<std::string>());
-        }
         state.handled_items.push_back(rec);
+      }
+    }
+
+    if (j.contains("silenced_deliveries") && j["silenced_deliveries"].is_array()) {
+      for (const auto &sr : j["silenced_deliveries"]) {
+        SilencedDeliveryRecord rec;
+        rec.delivery_index = sr.value("idx", 0);
+        rec.mod_id = sr.value("mod", "");
+        state.silenced_deliveries.push_back(rec);
       }
     }
 

@@ -241,8 +241,8 @@ function M.handle_item(client, item_id, item_name, sender, meta)
     end
     -- fading_in: item already added; timer starts when FadeIn completes
 
-    -- Mark handled + silence: reconnect/restart won't re-show this notification
-    client.item_handled(item_id, true)
+    -- Mark handled + silence this specific delivery: reconnect/restart won't re-show this notification
+    client.item_handled(item_id, true, meta and meta.delivery_index or -1)
 end
 
 --- Called every tick from main.lua. Drives popup auto-dismiss timer.

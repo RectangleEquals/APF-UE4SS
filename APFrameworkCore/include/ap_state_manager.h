@@ -285,11 +285,12 @@ class AP_API APStateManager
 
     /**
      * @brief Mark an item as handled by a mod.
-     * @param item_id Item ID.
+     * @param item_id Item ID (for handled_by cross-mod tracking).
      * @param mod_id Mod that handled the item.
-     * @param silence If true, suppress future on_item_received for this mod.
+     * @param silence If true, suppress future on_item_received for this specific delivery.
+     * @param delivery_index Position in AP's items array. Required for silence to take effect; -1 = no silence.
      */
-    void mark_item_handled(int64_t item_id, const std::string& mod_id, bool silence);
+    void mark_item_handled(int64_t item_id, const std::string& mod_id, bool silence, int delivery_index = -1);
 
     /**
      * @brief Check if an item has been handled by any mod.
@@ -299,12 +300,12 @@ class AP_API APStateManager
     [[nodiscard]] bool is_item_handled(int64_t item_id) const;
 
     /**
-     * @brief Check if a specific mod has requested silence for an item.
-     * @param item_id Item ID.
+     * @brief Check if a specific delivery has been silenced for a mod.
+     * @param delivery_index Position in AP's items array for this delivery.
      * @param mod_id Mod ID.
-     * @return true if this mod requested silence for this item.
+     * @return true if this mod silenced this specific delivery.
      */
-    [[nodiscard]] bool is_item_silenced(int64_t item_id, const std::string& mod_id) const;
+    [[nodiscard]] bool is_delivery_silenced(int delivery_index, const std::string& mod_id) const;
 
     /**
      * @brief Get the mod_id of the first mod that handled an item.

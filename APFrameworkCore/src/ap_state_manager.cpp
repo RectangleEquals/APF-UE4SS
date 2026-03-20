@@ -266,32 +266,37 @@ void APStateManager::set_state(const SessionState &state)
 // Item Notification Tracking
 // =============================================================================
 
-void APStateManager::mark_item_handled(int64_t item_id, const std::string &mod_id, bool silence)
+void APStateManager::mark_item_handled(int64_t item_id, const std::string &mod_id, bool silence,
+                                        int delivery_index)
 {
-    for (auto &rec : state_.handled_items)
+    // Update handled_by for this item type (first mod wins)
+    bool found = false;
+    for (const auto &rec : state_.handled_items)
     {
-        if (rec.item_id == item_id)
-        {
-            // Record exists — handled_by is immutable (first mod wins)
-            if (silence)
-            {
-                // Append mod_id to silent list if not already present
-                for (const auto &s : rec.silent)
-                    if (s == mod_id) return;
-                rec.silent.push_back(mod_id);
-                save_state();
-            }
-            return;
-        }
+        if (rec.item_id == item_id) { found = true; break; }
+    }
+    if (!found)
+    {
+        HandledItemRecord rec;
+        rec.item_id    = item_id;
+        rec.handled_by = mod_id;
+        state_.handled_items.push_back(rec);
     }
 
-    // New record
-    HandledItemRecord rec;
-    rec.item_id    = item_id;
-    rec.handled_by = mod_id;
-    if (silence)
-        rec.silent.push_back(mod_id);
-    state_.handled_items.push_back(rec);
+    // Per-delivery silence (only when delivery_index is provided)
+    if (silence && delivery_index >= 0)
+    {
+        for (const auto &sr : state_.silenced_deliveries)
+        {
+            if (sr.delivery_index == delivery_index && sr.mod_id == mod_id)
+                return;  // already silenced
+        }
+        SilencedDeliveryRecord sr;
+        sr.delivery_index = delivery_index;
+        sr.mod_id         = mod_id;
+        state_.silenced_deliveries.push_back(sr);
+    }
+
     save_state();
 }
 
@@ -302,15 +307,10 @@ bool APStateManager::is_item_handled(int64_t item_id) const
     return false;
 }
 
-bool APStateManager::is_item_silenced(int64_t item_id, const std::string &mod_id) const
+bool APStateManager::is_delivery_silenced(int delivery_index, const std::string &mod_id) const
 {
-    for (const auto &rec : state_.handled_items)
-    {
-        if (rec.item_id != item_id) continue;
-        for (const auto &s : rec.silent)
-            if (s == mod_id) return true;
-        return false;
-    }
+    for (const auto &sr : state_.silenced_deliveries)
+        if (sr.delivery_index == delivery_index && sr.mod_id == mod_id) return true;
     return false;
 }
 
