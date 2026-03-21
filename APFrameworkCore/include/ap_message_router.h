@@ -225,10 +225,10 @@ class AP_API APMessageRouter
      * Additional recipients: mods subscribed via subscribe_items() / subscribe_all_items().
      * Mods cannot opt out of their own items; own-mod IDs are silently skipped in subscribe_items().
      */
-    void send_item_received(int64_t item_id, const std::string &item_name,
-                            const std::string &sender,
-                            int64_t location_id = 0, bool is_self = false,
-                            int delivery_index = -1);
+    int send_item_received(int64_t item_id, const std::string &item_name,
+                           const std::string &sender,
+                           int64_t location_id = 0, bool is_self = false,
+                           int delivery_index = -1);
 
     /**
      * @brief Subscribe a mod to ITEM_RECEIVED for specific foreign item IDs.

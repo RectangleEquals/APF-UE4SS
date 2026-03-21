@@ -56,21 +56,25 @@ std::optional<PendingAction> APMessageRouter::route_item_receipt(int64_t item_id
     if (item.action.empty())
     {
         APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
-                             "Item received (no action, counting at receipt): " + item_name);
+                             "Item received (no action): " + item_name);
 
-        // Count immediately — no action means nothing to confirm later
-        APStateManager::get()->increment_item_progression_count(local_id);
-        // Guard: don't overwrite the session file before load_state() has run.
-        // Items replayed by the AP server on reconnect arrive during CONNECTING,
-        // before handle_syncing() loads the persisted checked_locations.
-        if (APStateManager::get()->is_loaded())
-            APStateManager::get()->save_state();
+        // Notify owning mod (+ opt-in subscribers) so Lua on_item_received fires.
+        // Returns the number of mods that actually received the delivery (0 = all silenced = replay).
+        int sent_count = send_item_received(local_id, item_name, sender_name, location_id, is_self,
+                                            delivery_index);
 
-        // Notify owning mod (+ opt-in subscribers) so Lua on_item_received fires
-        send_item_received(local_id, item_name, sender_name, location_id, is_self, delivery_index);
+        // Only update count and tracker when the item was genuinely delivered.
+        // Silenced replays (sent_count == 0) leave progression counts unchanged,
+        // preventing inflation that would accumulate across reconnect sessions.
+        if (sent_count > 0)
+        {
+            APStateManager::get()->increment_item_progression_count(local_id);
+            if (APStateManager::get()->is_loaded())
+                APStateManager::get()->save_state();
 
-        // Recompute tracker so (Item: X) logic nodes reflect the newly received item
-        broadcast_tracker_update();
+            // Recompute tracker so (Item: X) logic nodes reflect the newly received item
+            broadcast_tracker_update();
+        }
 
         return std::nullopt;
     }
@@ -519,10 +523,10 @@ void APMessageRouter::reset_goal_sent()
 // Item Notification & Subscription
 // =============================================================================
 
-void APMessageRouter::send_item_received(int64_t item_id, const std::string &item_name,
-                                         const std::string &sender,
-                                         int64_t location_id, bool is_self,
-                                         int delivery_index)
+int APMessageRouter::send_item_received(int64_t item_id, const std::string &item_name,
+                                        const std::string &sender,
+                                        int64_t location_id, bool is_self,
+                                        int delivery_index)
 {
     std::unordered_set<std::string> recipients;
 
@@ -570,6 +574,8 @@ void APMessageRouter::send_item_received(int64_t item_id, const std::string &ite
     APLogger::get()->log(LogLevel::Debug, "APMessageRouter",
                          "ITEM_RECEIVED sent for '" + item_name + "' to " +
                          std::to_string(sent_count) + " recipient(s)");
+
+    return sent_count;
 }
 
 void APMessageRouter::subscribe_items(const std::string &mod_id,
