@@ -966,6 +966,13 @@ void APManager::handle_framework_event(const FrameworkEvent &event)
 
             if constexpr (std::is_same_v<T, ItemReceivedEvent>)
             {
+                // Items may arrive before handle_syncing()/load_state() in the same update()
+                // tick. Load eagerly so the silence check in route_item_receipt() uses the
+                // correct silenced_deliveries from disk rather than an empty default state.
+                // load_state() is idempotent — handle_syncing() calling it again is a no-op.
+                if (!APStateManager::get()->is_loaded())
+                    APStateManager::get()->load_state();
+
                 int delivery_index = APStateManager::get()->get_received_item_index();
                 APMessageRouter::get()->route_item_receipt(arg.item_id, arg.item_name, arg.sender,
                                                            arg.location_id, arg.is_self, delivery_index);

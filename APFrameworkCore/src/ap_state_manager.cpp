@@ -58,6 +58,8 @@ bool APStateManager::save_state()
 
 bool APStateManager::load_state(const std::filesystem::path &path)
 {
+    if (loaded_) return true;  // Already loaded — safe to call multiple times
+
     std::string content = APPathUtil::get()->read_file(path);
     if (content.empty())
     {
