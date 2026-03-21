@@ -78,6 +78,11 @@ void APCallbacks::set_tracker_update_callback(sol::protected_function callback)
     callback_tracker_update_ = callback;
 }
 
+void APCallbacks::set_server_connection_callback(sol::protected_function callback)
+{
+    callback_server_connection_ = callback;
+}
+
 // =============================================================================
 // Callback Invocation
 // =============================================================================
@@ -147,6 +152,12 @@ void APCallbacks::invoke_state_error(const std::string &message)
     invoke_callback(callback_state_error_, "on_state_error", [&](sol::protected_function &cb) { return cb(message); });
 }
 
+void APCallbacks::invoke_server_connection(bool connected)
+{
+    invoke_callback(callback_server_connection_, "on_server_connection",
+                    [&](sol::protected_function &cb) { return cb(connected); });
+}
+
 void APCallbacks::invoke_command_response(const std::string &command, bool success, const std::string &error,
                                           const std::string &data_json, sol::state_view &lua)
 {
@@ -195,6 +206,7 @@ void APCallbacks::clear_all()
     callback_command_response_.reset();
     callback_tracker_snapshot_.reset();
     callback_tracker_update_.reset();
+    callback_server_connection_.reset();
 }
 
 // =============================================================================

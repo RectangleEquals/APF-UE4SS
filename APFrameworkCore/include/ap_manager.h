@@ -304,6 +304,7 @@ class AP_API APManager : public IAPManager
     bool state_loaded_ = false;
     bool reconnect_attempted_ = false;
     bool first_update_done_ = false;
+    bool server_connected_ = false; // true when slot is connected to AP server
 
     // Async tracker snapshot — computed on background thread, delivered from handle_active()
     std::future<nlohmann::json> snapshot_cache_future_;

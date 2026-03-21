@@ -268,6 +268,11 @@ APClient.on_error(function(code, message)
     APClient.log("error", "Error [" .. (code or "?") .. "]: " .. (message or "unknown") .. "\n")
 end)
 
+APClient.on_server_connection(function(connected)
+    APClient.log("info", "AP server " .. (connected and "connected" or "disconnected") .. "\n")
+    if LogicTestUI then LogicTestUI.set_server_connection(connected) end
+end)
+
 -- ============================================================================
 -- Keybind — F2 toggles the logic test panel
 -- ============================================================================

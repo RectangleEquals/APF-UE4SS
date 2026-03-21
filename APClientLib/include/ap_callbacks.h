@@ -47,6 +47,7 @@ class AP_API APCallbacks
     void set_command_response_callback(sol::protected_function callback);
     void set_tracker_snapshot_callback(sol::protected_function callback);
     void set_tracker_update_callback(sol::protected_function callback);
+    void set_server_connection_callback(sol::protected_function callback);
 
     // =========================================================================
     // Callback Invocation
@@ -64,6 +65,8 @@ class AP_API APCallbacks
                               int delivery_index = -1);
     void invoke_state_active();
     void invoke_state_error(const std::string &message);
+
+    void invoke_server_connection(bool connected);
 
     // These three require the calling mod's Lua state for JSON→Lua conversion.
     // The caller (APClientManager dispatch loop) passes the context's cached_lua.
@@ -97,6 +100,7 @@ class AP_API APCallbacks
     std::optional<sol::protected_function> callback_command_response_;
     std::optional<sol::protected_function> callback_tracker_snapshot_;
     std::optional<sol::protected_function> callback_tracker_update_;
+    std::optional<sol::protected_function> callback_server_connection_;
 
   public:
     /// Recursively convert a JSON value to a Lua object

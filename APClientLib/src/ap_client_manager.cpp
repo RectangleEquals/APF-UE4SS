@@ -364,6 +364,11 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
         if (ctx->cached_lua)
             ctx->callbacks.invoke_tracker_update(msg.payload, *ctx->cached_lua);
     }
+    else if (msg.type == IPCMessageType::SERVER_CONNECTION)
+    {
+        bool connected = msg.payload.value("connected", false);
+        ctx->callbacks.invoke_server_connection(connected);
+    }
     else if (msg.type == IPCMessageType::API_CALL)
     {
         // Server routes API_CALLs to the target mod's connection — ctx IS the target
@@ -977,6 +982,9 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
     };
     module["on_tracker_update"] = [ctx](sol::protected_function cb) {
         ctx->callbacks.set_tracker_update_callback(cb);
+    };
+    module["on_server_connection"] = [ctx](sol::protected_function cb) {
+        ctx->callbacks.set_server_connection_callback(cb);
     };
 
     return sol::stack::push(L, module);

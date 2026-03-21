@@ -20,6 +20,7 @@ local APClient = nil -- stored from init()
 local player_controller = nil -- cached PlayerController (validity-checked)
 local widget = nil -- WBP_LogicTestUI (from actor:GetLogicTestUI())
 local pending_td = nil -- tracker_data buffered before widget is ready
+local pending_server_connected = nil -- server connection state buffered before widget is ready
 
 -- ─── Item Popup ────────────────────────────────────────────────────────────
 local POPUP_DISPLAY_TIME = 5       -- seconds the popup remains fully visible
@@ -123,6 +124,12 @@ function M.init(client)
                 if pending_td then
                     push_locations(pending_td)
                     pending_td = nil
+                end
+
+                -- Flush server connection state that arrived before the widget was ready
+                if pending_server_connected ~= nil then
+                    widget:SetConnectionStatus(pending_server_connected)
+                    pending_server_connected = nil
                 end
 
                 -- Acquire popup widget
@@ -243,6 +250,16 @@ function M.handle_item(client, item_id, item_name, sender, meta)
 
     -- Mark handled + silence this specific delivery: reconnect/restart won't re-show this notification
     client.item_handled(item_id, true, meta and meta.delivery_index or -1)
+end
+
+--- Called by main.lua when AP server connection status changes.
+--- @param connected bool  true = connected to AP server, false = disconnected
+function M.set_server_connection(connected)
+    if widget and widget:IsValid() then
+        widget:SetConnectionStatus(connected)
+    else
+        pending_server_connected = connected  -- flush in init() when widget is acquired
+    end
 end
 
 --- Called every tick from main.lua. Drives popup auto-dismiss timer.

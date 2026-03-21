@@ -100,6 +100,9 @@ namespace IPCMessageType {
     // Cross-Mod API Protocol
     constexpr const char* API_CALL   = "api_call";     // Client -> Framework -> Client
     constexpr const char* API_RESULT = "api_result";   // Client -> Framework -> Client
+
+    // Server Connection Status
+    constexpr const char* SERVER_CONNECTION = "server_connection"; // Framework -> Client; payload: {connected: bool}
 }
 
 // =============================================================================

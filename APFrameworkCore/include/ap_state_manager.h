@@ -314,6 +314,25 @@ class AP_API APStateManager
      */
     [[nodiscard]] std::string get_item_handler(int64_t item_id) const;
 
+    // ==========================================================================
+    // Tracker Snapshot Cache
+    // ==========================================================================
+
+    /**
+     * @brief Save the most recent tracker state (snapshot or update JSON) to session state.
+     * @param snapshot JSON payload from TRACKER_SNAPSHOT or TRACKER_UPDATE.
+     *
+     * Persisted to disk so the last known tracker state survives reconnects.
+     * Sent to newly subscribing mods when the tracker engine is not yet initialized.
+     */
+    void set_tracker_snapshot(const nlohmann::json &snapshot);
+
+    /**
+     * @brief Get the cached tracker snapshot.
+     * @return JSON payload, or empty object if none cached.
+     */
+    [[nodiscard]] const nlohmann::json &get_tracker_snapshot() const;
+
   private:
     // =========================================================================
     // Private Member Variables

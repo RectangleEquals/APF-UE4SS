@@ -341,6 +341,32 @@ bool APManager::register_mod(const std::string &mod_id, const std::string &versi
                         {"items",     std::move(items_json)}};
     APIPCServer::get()->send_message(mod_id, response);
 
+    // Send current AP server connection status so the mod is never left guessing
+    {
+        IPCMessage sc_msg;
+        sc_msg.type = IPCMessageType::SERVER_CONNECTION;
+        sc_msg.source = IPCTarget::FRAMEWORK;
+        sc_msg.target = mod_id;
+        sc_msg.payload = {{"connected", server_connected_}};
+        APIPCServer::get()->send_message(mod_id, sc_msg);
+    }
+
+    // Push cached tracker snapshot so the mod can display last known state while offline
+    {
+        const auto &cached_snap = APStateManager::get()->get_tracker_snapshot();
+        if (!cached_snap.empty())
+        {
+            IPCMessage snap_msg;
+            snap_msg.type = IPCMessageType::TRACKER_SNAPSHOT;
+            snap_msg.source = IPCTarget::FRAMEWORK;
+            snap_msg.target = mod_id;
+            snap_msg.payload = cached_snap;
+            APIPCServer::get()->send_message(mod_id, snap_msg);
+            APLogger::get()->log(LogLevel::Info, "APManager",
+                                 "Cached tracker snapshot sent to " + mod_id + " on registration");
+        }
+    }
+
     return true;
 }
 
@@ -569,6 +595,23 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
                 APLogger::get()->log(LogLevel::Debug, "APManager",
                                      "Snapshot still computing — deferring for " + client_id);
                 pending_snapshot_subscribers_.push_back(client_id);
+            }
+        }
+        else
+        {
+            // Tracker not yet initialized (still connecting/offline) —
+            // send cached snapshot from previous session if available
+            const auto &cached_snap = APStateManager::get()->get_tracker_snapshot();
+            if (!cached_snap.empty())
+            {
+                IPCMessage response;
+                response.type = IPCMessageType::TRACKER_SNAPSHOT;
+                response.source = IPCTarget::FRAMEWORK;
+                response.target = client_id;
+                response.payload = cached_snap;
+                APIPCServer::get()->send_message(client_id, response);
+                APLogger::get()->log(LogLevel::Info, "APManager",
+                                     "Cached (offline) tracker snapshot sent to " + client_id);
             }
         }
     }
@@ -942,6 +985,18 @@ void APManager::handle_framework_event(const FrameworkEvent &event)
                 if (arg.new_state == LifecycleState::ERROR_STATE)
                 {
                     transition_to_unlocked(LifecycleState::ERROR_STATE, arg.message);
+
+                    // Broadcast server disconnection if we were connected
+                    if (server_connected_)
+                    {
+                        server_connected_ = false;
+                        IPCMessage sc_msg;
+                        sc_msg.type = IPCMessageType::SERVER_CONNECTION;
+                        sc_msg.source = IPCTarget::FRAMEWORK;
+                        sc_msg.target = IPCTarget::BROADCAST;
+                        sc_msg.payload = {{"connected", false}};
+                        APIPCServer::get()->broadcast(sc_msg);
+                    }
                 }
             }
             else if constexpr (std::is_same_v<T, ErrorEvent>)
@@ -1040,12 +1095,7 @@ void APManager::handle_connecting(int64_t elapsed_ms)
             APLogger::get()->log(LogLevel::Info, "APManager",
                                  "Slot connected: " + slot_info->slot_name);
 
-            // Sync checked locations from server
-            std::set<int64_t> server_checked(slot_info->checked_locations.begin(),
-                                             slot_info->checked_locations.end());
-            APStateManager::get()->set_checked_locations(server_checked);
-
-            // Initialize tracker engine with option values from slot_data
+                // Initialize tracker engine with option values from slot_data
             APTrackerEngine::get()->initialize(slot_info->option_values);
             APLogger::get()->log(LogLevel::Info, "APManager",
                                  "Tracker engine initialized with " +
@@ -1056,6 +1106,16 @@ void APManager::handle_connecting(int64_t elapsed_ms)
 
         transition_to_unlocked(LifecycleState::SYNCING, "Connected to AP server");
         state_entered_at_ = std::chrono::steady_clock::now();
+
+        // Broadcast server connection status to all connected mods
+        server_connected_ = true;
+        IPCMessage sc_msg;
+        sc_msg.type = IPCMessageType::SERVER_CONNECTION;
+        sc_msg.source = IPCTarget::FRAMEWORK;
+        sc_msg.target = IPCTarget::BROADCAST;
+        sc_msg.payload = {{"connected", true}};
+        APIPCServer::get()->broadcast(sc_msg);
+
         return;
     }
 
@@ -1075,6 +1135,36 @@ void APManager::handle_syncing(int64_t elapsed_ms)
     {
         APStateManager::get()->load_state();
         state_loaded_ = true;
+
+        // Merge server checked locations with local state (25A + 25C).
+        // load_state() already restored local checked_locations from disk.
+        // Now merge with the server's confirmed list: never discard local state,
+        // and replay any locally-checked locations the server hasn't confirmed yet.
+        auto slot_info_sync = APArchipelagoClient::get()->get_slot_info();
+        if (slot_info_sync.has_value())
+        {
+            std::set<int64_t> server_checked(slot_info_sync->checked_locations.begin(),
+                                             slot_info_sync->checked_locations.end());
+            auto local_checked = APStateManager::get()->get_checked_locations();
+
+            // Send any locally-checked locations not yet confirmed by the server
+            std::vector<int64_t> pending;
+            for (int64_t id : local_checked)
+                if (server_checked.find(id) == server_checked.end())
+                    pending.push_back(id);
+            if (!pending.empty())
+            {
+                APLogger::get()->log(LogLevel::Info, "APManager",
+                                     "Replaying " + std::to_string(pending.size()) +
+                                     " offline location check(s) to server");
+                APArchipelagoClient::get()->send_location_checks(pending);
+            }
+
+            // Merge: local ∪ server — never overwrite local state with server subset
+            std::set<int64_t> merged = server_checked;
+            merged.insert(local_checked.begin(), local_checked.end());
+            APStateManager::get()->set_checked_locations(merged);
+        }
 
         // Start snapshot computation NOW — after load_state() restores checked_locations
         // and after replayed items have been processed (both happen before handle_syncing()).
@@ -1144,6 +1234,9 @@ void APManager::handle_active()
                                      "Tracker snapshot sent to " + subscriber);
             }
             pending_snapshot_subscribers_.clear();
+
+            // Persist snapshot for offline display on future reconnects
+            APStateManager::get()->set_tracker_snapshot(*snapshot_cache_);
         }
     }
 

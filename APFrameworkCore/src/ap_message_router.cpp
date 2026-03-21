@@ -413,11 +413,14 @@ void APMessageRouter::broadcast_tracker_update()
     if (!tracker->is_initialized())
         return;
 
+    auto update = tracker->compute_update();
+    auto update_json = update.to_json();
+
+    // Persist latest tracker state so offline display can show last known state
+    APStateManager::get()->set_tracker_snapshot(update_json);
+
     if (tracker->has_subscribers())
     {
-        auto update = tracker->compute_update();
-        auto update_json = update.to_json();
-
         auto subscribers = tracker->get_subscribers();
         for (const auto &mod_id : subscribers)
         {

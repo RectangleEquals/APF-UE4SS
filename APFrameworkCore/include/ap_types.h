@@ -200,6 +200,7 @@ struct SessionState {
   std::chrono::system_clock::time_point last_active;
   std::vector<HandledItemRecord> handled_items;
   std::vector<SilencedDeliveryRecord> silenced_deliveries;
+  nlohmann::json last_tracker_snapshot = nlohmann::json::object(); // Most recent tracker state (snapshot or update)
 
   nlohmann::json to_json() const {
     std::vector<int64_t> checked_vec(checked_locations.begin(),
@@ -224,11 +225,10 @@ struct SessionState {
       silenced_arr.push_back({{"idx", s.delivery_index}, {"mod", s.mod_id}});
     }
 
-    return {{"version", version},
+    nlohmann::json result = {{"version", version},
             {"checksum", checksum},
             {"slot_name", slot_name},
             {"game_name", game_name},
-            {"received_item_index", received_item_index},
             {"checked_locations", checked_vec},
             {"item_progression_counts", progression_counts},
             {"ap_server", ap_server},
@@ -236,6 +236,9 @@ struct SessionState {
             {"last_active", time_t},
             {"handled_items", handled_arr},
             {"silenced_deliveries", silenced_arr}};
+    if (!last_tracker_snapshot.empty())
+        result["last_tracker_snapshot"] = last_tracker_snapshot;
+    return result;
   }
 
   static SessionState from_json(const nlohmann::json &j) {
@@ -244,7 +247,7 @@ struct SessionState {
     state.checksum = j.value("checksum", "");
     state.slot_name = j.value("slot_name", "");
     state.game_name = j.value("game_name", "");
-    state.received_item_index = j.value("received_item_index", 0);
+    // received_item_index is intentionally NOT persisted — AP always replays from index 0 on reconnect.
 
     if (j.contains("checked_locations") && j["checked_locations"].is_array()) {
       for (const auto &loc : j["checked_locations"]) {
@@ -284,6 +287,9 @@ struct SessionState {
         state.silenced_deliveries.push_back(rec);
       }
     }
+
+    if (j.contains("last_tracker_snapshot") && j["last_tracker_snapshot"].is_object())
+        state.last_tracker_snapshot = j["last_tracker_snapshot"];
 
     return state;
   }

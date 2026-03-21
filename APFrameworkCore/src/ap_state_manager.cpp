@@ -321,4 +321,19 @@ std::string APStateManager::get_item_handler(int64_t item_id) const
     return "";
 }
 
+// =============================================================================
+// Tracker Snapshot Cache
+// =============================================================================
+
+void APStateManager::set_tracker_snapshot(const nlohmann::json &snapshot)
+{
+    state_.last_tracker_snapshot = snapshot;
+    save_state();
+}
+
+const nlohmann::json &APStateManager::get_tracker_snapshot() const
+{
+    return state_.last_tracker_snapshot;
+}
+
 } // namespace ap
