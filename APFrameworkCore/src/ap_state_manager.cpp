@@ -297,7 +297,8 @@ void APStateManager::mark_item_handled(int64_t item_id, const std::string &mod_i
         state_.silenced_deliveries.push_back(sr);
     }
 
-    save_state();
+    if (is_loaded())
+        save_state();
 }
 
 bool APStateManager::is_item_handled(int64_t item_id) const
