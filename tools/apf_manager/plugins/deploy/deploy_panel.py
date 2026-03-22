@@ -194,10 +194,18 @@ class DeployPanel(PluginPanel):
         self._host = host
         self._profile: Optional["GameProfile"] = None
         self._detection: Optional["UE4SSResult"] = None
-        self._mods_txt = None
         self._rows: list[ModRow] = []
         self._validation_dialog: Optional[MDDialog] = None
         self._build_ui()
+
+    @property
+    def _deploy_svc(self):
+        return self._host.get_service("deploy")
+
+    @property
+    def _mods_txt(self):
+        svc = self._deploy_svc
+        return svc.mods_txt if svc else None
 
     # -----------------------------------------------------------------------
     # PluginPanel lifecycle
@@ -206,7 +214,6 @@ class DeployPanel(PluginPanel):
     def on_activate(self, game_profile: "GameProfile") -> None:
         self._profile = game_profile
         self._detection = self._host.get_detection()
-        self._load_mods_txt()
         self._refresh()
 
     def on_deactivate(self) -> None:
@@ -246,14 +253,6 @@ class DeployPanel(PluginPanel):
     # -----------------------------------------------------------------------
     # Data loading
     # -----------------------------------------------------------------------
-
-    def _load_mods_txt(self) -> None:
-        if not self._detection or not self._detection.mods_txt:
-            self._mods_txt = None
-            return
-        from .mods_txt import ModsTextManager
-        self._mods_txt = ModsTextManager(self._detection.mods_txt)
-        self._mods_txt.load()
 
     def _get_mods(self) -> list["ModInfo"]:
         svc = self._host.get_service("mods")
@@ -302,20 +301,23 @@ class DeployPanel(PluginPanel):
             self._list_layout.add_widget(row)
 
     def _build_validator(self, mods):
-        if not self._detection or not self._mods_txt:
+        mods_txt = self._mods_txt
+        if not self._detection or not mods_txt:
             return None
         from .validator import Validator
-        return Validator(self._detection, self._mods_txt, mods)
+        return Validator(self._detection, mods_txt, mods)
 
     # -----------------------------------------------------------------------
     # Toolbar actions
     # -----------------------------------------------------------------------
 
     def _on_rescan(self) -> None:
-        svc = self._host.get_service("mods")
-        if svc:
-            svc.rescan()
-        self._load_mods_txt()
+        mods_svc = self._host.get_service("mods")
+        if mods_svc:
+            mods_svc.rescan()
+        deploy_svc = self._deploy_svc
+        if deploy_svc:
+            deploy_svc.reload()
         self._refresh()
         self._host.log("Mods rescanned.")
 
@@ -326,34 +328,15 @@ class DeployPanel(PluginPanel):
         threading.Thread(target=self._deploy_all_bg, daemon=True).start()
 
     def _deploy_all_bg(self) -> None:
-        from .install_engine import InstallEngine
-
-        if not self._mods_txt:
-            Clock.schedule_once(
-                lambda dt: self._host.log("mods.txt not found — deploy skipped."), 0
-            )
+        svc = self._deploy_svc
+        if not svc:
+            Clock.schedule_once(lambda dt: self._host.log("deploy service unavailable."), 0)
             return
 
-        engine = InstallEngine(
-            self._profile,
-            self._detection,
-            self._mods_txt,
-            log_fn=lambda msg: Clock.schedule_once(
-                lambda dt, m=msg: self._host.log(m), 0
-            ),
-        )
+        def _log(msg):
+            Clock.schedule_once(lambda dt, m=msg: self._host.log(m), 0)
 
-        mods = self._get_mods()
-        for mod in mods:
-            if not mod.is_ap_mod:
-                continue
-            if mod.install_steps:
-                Clock.schedule_once(
-                    lambda dt, n=mod.display_name: self._host.log(f"Deploying {n}…"), 0
-                )
-                engine.run_steps(mod.install_steps, mod)
-
-        self._mods_txt.save()
+        svc.deploy_all(log_fn=_log)
         Clock.schedule_once(lambda dt: self._refresh(), 0)
         Clock.schedule_once(lambda dt: self._host.log("Deploy complete."), 0)
 
@@ -396,30 +379,30 @@ class DeployPanel(PluginPanel):
     # -----------------------------------------------------------------------
 
     def _on_toggle(self, mod: "ModInfo", enabled: bool) -> None:
-        if self._mods_txt:
-            self._mods_txt.set_enabled(mod.folder_name, enabled)
-            self._mods_txt.save()
+        svc = self._deploy_svc
+        if svc:
+            svc.set_enabled(mod.folder_name, enabled)
 
     def _on_move_up(self, mod: "ModInfo") -> None:
-        if not self._mods_txt:
+        svc = self._deploy_svc
+        if not svc:
             return
-        order = self._mods_txt.get_order()
+        order = svc.get_load_order()
         idx = next((i for i, n in enumerate(order) if n == mod.folder_name), None)
         if idx is not None and idx > 0:
             order[idx], order[idx - 1] = order[idx - 1], order[idx]
-            self._mods_txt.reorder(order)
-            self._mods_txt.save()
+            svc.reorder(order)
             self._refresh()
 
     def _on_move_down(self, mod: "ModInfo") -> None:
-        if not self._mods_txt:
+        svc = self._deploy_svc
+        if not svc:
             return
-        order = self._mods_txt.get_order()
+        order = svc.get_load_order()
         idx = next((i for i, n in enumerate(order) if n == mod.folder_name), None)
         if idx is not None and idx < len(order) - 1:
             order[idx], order[idx + 1] = order[idx + 1], order[idx]
-            self._mods_txt.reorder(order)
-            self._mods_txt.save()
+            svc.reorder(order)
             self._refresh()
 
     def _on_manual_step(self, mod: "ModInfo", step) -> None:

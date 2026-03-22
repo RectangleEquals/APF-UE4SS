@@ -1,0 +1,18 @@
+name: apf_manager
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # GUI (kivy installed via conda-forge, not pip, to avoid SDL2/GLEW conflicts)
+      # Run: conda install kivy pillow -y
+      # Then: pip install https://github.com/kivymd/KivyMD/archive/master.zip
+      - https://github.com/kivymd/KivyMD/archive/master.zip
+      # HTTP + Steam CDN thumbnail fetching
+      - requests>=2.31.0
+      # cx_Freeze for building the frozen executable
+      - cx_Freeze>=6.15.0
+      # Optional: plyer for file pickers (native OS dialogs)
+      - plyer>=2.1.0

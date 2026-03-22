@@ -159,15 +159,27 @@ class DiagnosticsPanel(PluginPanel):
         for missing in (self._detection.missing or []):
             self._add_result(f"Missing: {missing}", "", "error")
 
-        # Mod validation (via deploy plugin's validator if mods service present)
+        # Mod validation (via deploy service's mods_txt + validator)
         mods_svc = self._host.get_service("mods")
-        if mods_svc and self._detection.mods_txt:
+        deploy_svc = self._host.get_service("deploy")
+        if mods_svc and deploy_svc and deploy_svc.mods_txt:
+            from ...plugins.deploy.validator import Validator
+            mods_txt = deploy_svc.mods_txt
+            mods = mods_svc.scan()
+            validator = Validator(self._detection, mods_txt, mods)
+        elif mods_svc and self._detection.mods_txt:
+            # Fallback: deploy plugin not loaded, create our own mods_txt reader
             from ...plugins.deploy.mods_txt import ModsTextManager
             from ...plugins.deploy.validator import Validator
             mods_txt = ModsTextManager(self._detection.mods_txt)
             mods_txt.load()
             mods = mods_svc.scan()
             validator = Validator(self._detection, mods_txt, mods)
+        else:
+            validator = None
+            mods = []
+
+        if validator:
             for mod in mods:
                 results = validator.validate_mod(mod)
                 for r in results:

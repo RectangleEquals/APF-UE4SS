@@ -315,6 +315,10 @@ class PluginHost:
         if self._navigate_fn:
             self._navigate_fn(profile)
 
+    def get_all_plugins(self) -> list["PluginInfo"]:
+        """Return all discovered plugins (loaded and failed) sorted by name."""
+        return sorted(self._plugins.values(), key=lambda p: p.name.lower())
+
     # -----------------------------------------------------------------------
     # Utilities
     # -----------------------------------------------------------------------
