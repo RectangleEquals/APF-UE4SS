@@ -17,11 +17,15 @@ from kivy.clock import Clock
 from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.widget import Widget
 from kivymd.app import MDApp
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDFlatButton, MDRaisedButton
+from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.card import MDCard
-from kivymd.uix.dialog import MDDialog
+from kivymd.uix.dialog import (
+    MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+    MDDialogContentContainer, MDDialogButtonContainer,
+)
 from kivymd.uix.gridlayout import MDGridLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
@@ -145,9 +149,9 @@ class _AddGameContent(MDBoxLayout):
         )
         self.height = dp(130)
 
-        self.name_field = MDTextField(hint_text="Game name", mode="rectangle")
+        self.name_field = MDTextField(hint_text="Game name", mode="outlined")
         self.path_field = MDTextField(
-            hint_text="Game root folder (absolute path)", mode="rectangle"
+            hint_text="Game root folder (absolute path)", mode="outlined"
         )
         self.add_widget(self.name_field)
         self.add_widget(self.path_field)
@@ -277,17 +281,18 @@ class LibraryScreen(MDBoxLayout):
             _dismiss()
 
         self._ue4ss_dialog = MDDialog(
-            title="UE4SS Not Detected",
-            text=(
+            MDDialogHeadlineText(text="UE4SS Not Detected"),
+            MDDialogSupportingText(text=(
                 f"UE4SS was not found for {profile.display_name}.\n\n"
                 f"{detail}\n\n"
                 "Install UE4SS into the game's Binaries/Win64/ folder, "
                 "then try again."
+            )),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_dismiss),
+                MDButton(MDButtonText(text="Download UE4SS"), style="filled", on_release=_download),
             ),
-            buttons=[
-                MDFlatButton(text="Cancel", on_release=_dismiss),
-                MDRaisedButton(text="Download UE4SS", on_release=_download),
-            ],
         )
         self._ue4ss_dialog.open()
 
@@ -315,13 +320,13 @@ class LibraryScreen(MDBoxLayout):
                 self._add_dialog.dismiss()
 
         self._add_dialog = MDDialog(
-            title="Add Custom Game",
-            type="custom",
-            content_cls=content,
-            buttons=[
-                MDFlatButton(text="Cancel", on_release=_cancel),
-                MDRaisedButton(text="Add", on_release=_confirm),
-            ],
+            MDDialogHeadlineText(text="Add Custom Game"),
+            MDDialogContentContainer(content),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_cancel),
+                MDButton(MDButtonText(text="Add"), style="filled", on_release=_confirm),
+            ),
         )
         self._add_dialog.open()
 

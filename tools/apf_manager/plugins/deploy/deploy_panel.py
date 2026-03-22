@@ -23,9 +23,13 @@ from typing import Optional, TYPE_CHECKING
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDFlatButton, MDIconButton, MDRaisedButton
-from kivymd.uix.dialog import MDDialog
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
+from kivymd.uix.dialog import (
+    MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+    MDDialogContentContainer, MDDialogButtonContainer,
+)
 from kivymd.uix.label import MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
 from kivymd.uix.toolbar import MDTopAppBar
@@ -165,8 +169,9 @@ class ModRow(MDBoxLayout):
         # "button" manual step buttons
         for step in mod.manual_steps:
             if step.when == "button" and step.caption:
-                btn = MDFlatButton(
-                    text=step.caption,
+                btn = MDButton(
+                    MDButtonText(text=step.caption),
+                    style="text",
                     size_hint=(None, 1),
                     width=dp(80),
                     on_release=lambda *_, s=step: on_manual_step(mod, s),
@@ -377,9 +382,12 @@ class DeployPanel(PluginPanel):
                 self._validation_dialog.dismiss()
 
         self._validation_dialog = MDDialog(
-            title="Validation Results",
-            text=body,
-            buttons=[MDFlatButton(text="Close", on_release=_dismiss)],
+            MDDialogHeadlineText(text="Validation Results"),
+            MDDialogSupportingText(text=body),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Close"), style="text", on_release=_dismiss),
+            ),
         )
         self._validation_dialog.open()
 
@@ -433,8 +441,11 @@ class DeployPanel(PluginPanel):
                 self._step_dialog.dismiss()
 
         self._step_dialog = MDDialog(
-            title=title,
-            text=content_text[:2000],  # cap for dialog display
-            buttons=[MDFlatButton(text="OK", on_release=_close)],
+            MDDialogHeadlineText(text=title),
+            MDDialogSupportingText(text=content_text[:2000]),  # cap for dialog display
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="OK"), style="text", on_release=_close),
+            ),
         )
         self._step_dialog.open()

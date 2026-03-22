@@ -8,9 +8,13 @@ from typing import Optional, TYPE_CHECKING
 
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDFlatButton, MDIconButton, MDRaisedButton
-from kivymd.uix.dialog import MDDialog
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
+from kivymd.uix.dialog import (
+    MDDialog, MDDialogHeadlineText, MDDialogContentContainer,
+    MDDialogButtonContainer,
+)
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.toolbar import MDTopAppBar
@@ -138,7 +142,7 @@ class SessionsPanel(PluginPanel):
     # -----------------------------------------------------------------------
 
     def _open_backup_dialog(self) -> None:
-        name_field = MDTextField(hint_text="Backup name", mode="rectangle")
+        name_field = MDTextField(hint_text="Backup name", mode="outlined")
 
         def _confirm(*_):
             name = name_field.text.strip() or "backup"
@@ -166,13 +170,13 @@ class SessionsPanel(PluginPanel):
         content.add_widget(name_field)
 
         self._backup_dialog = MDDialog(
-            title="Backup Session",
-            type="custom",
-            content_cls=content,
-            buttons=[
-                MDFlatButton(text="Cancel", on_release=_cancel),
-                MDRaisedButton(text="Backup", on_release=_confirm),
-            ],
+            MDDialogHeadlineText(text="Backup Session"),
+            MDDialogContentContainer(content),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_cancel),
+                MDButton(MDButtonText(text="Backup"), style="filled", on_release=_confirm),
+            ),
         )
         self._backup_dialog.open()
 
@@ -184,7 +188,7 @@ class SessionsPanel(PluginPanel):
         name_field = MDTextField(
             hint_text="New name",
             text=backup.name,
-            mode="rectangle",
+            mode="outlined",
         )
 
         def _confirm(*_):
@@ -208,13 +212,13 @@ class SessionsPanel(PluginPanel):
         content.add_widget(name_field)
 
         self._rename_dialog = MDDialog(
-            title="Rename Backup",
-            type="custom",
-            content_cls=content,
-            buttons=[
-                MDFlatButton(text="Cancel", on_release=_cancel),
-                MDRaisedButton(text="Rename", on_release=_confirm),
-            ],
+            MDDialogHeadlineText(text="Rename Backup"),
+            MDDialogContentContainer(content),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_cancel),
+                MDButton(MDButtonText(text="Rename"), style="filled", on_release=_confirm),
+            ),
         )
         self._rename_dialog.open()
 

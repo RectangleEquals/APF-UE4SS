@@ -22,10 +22,9 @@ from typing import TYPE_CHECKING, Optional
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDIconButton, MDFlatButton
+from kivymd.uix.button import MDIconButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.screen import MDScreen
-from kivymd.uix.tooltip import MDTooltip
 
 from ..widgets.log_panel import LogPanel
 from ..widgets.plugin_panel import PluginPanel

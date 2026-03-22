@@ -11,7 +11,7 @@ from typing import Optional, TYPE_CHECKING
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDRaisedButton
+from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.toolbar import MDTopAppBar
@@ -69,7 +69,7 @@ class PackagerPanel(PluginPanel):
         ))
         self._version_field = MDTextField(
             hint_text="e.g. 1.2.0",
-            mode="rectangle",
+            mode="outlined",
             size_hint=(0.7, 1),
         )
         version_row.add_widget(self._version_field)
@@ -81,14 +81,16 @@ class PackagerPanel(PluginPanel):
             height=dp(56),
             spacing=dp(12),
         )
-        btn_row.add_widget(MDRaisedButton(
-            text="Build Release ZIP",
+        btn_row.add_widget(MDButton(
+            MDButtonText(text="Build Release ZIP"),
+            style="filled",
             on_release=lambda *_: threading.Thread(
                 target=self._build_release, daemon=True
             ).start(),
         ))
-        btn_row.add_widget(MDRaisedButton(
-            text="Build .apworld",
+        btn_row.add_widget(MDButton(
+            MDButtonText(text="Build .apworld"),
+            style="filled",
             on_release=lambda *_: threading.Thread(
                 target=self._build_apworld, daemon=True
             ).start(),

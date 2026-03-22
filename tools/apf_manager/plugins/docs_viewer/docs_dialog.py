@@ -14,12 +14,15 @@ from typing import Optional
 
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.widget import Widget
 from kivymd.app import MDApp
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDFlatButton, MDIconButton
-from kivymd.uix.dialog import MDDialog
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
+from kivymd.uix.dialog import (
+    MDDialog, MDDialogContentContainer, MDDialogButtonContainer,
+)
 from kivymd.uix.label import MDLabel
-from kivymd.uix.list import MDList, OneLineListItem
+from kivymd.uix.list import MDList, MDListItem, MDListItemHeadlineText
 from kivymd.uix.toolbar import MDTopAppBar
 
 
@@ -49,11 +52,12 @@ class DocsDialog:
                 self._dialog.dismiss()
 
         self._dialog = MDDialog(
-            title="",
-            type="custom",
-            content_cls=content,
+            MDDialogContentContainer(content),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
+            ),
             size_hint=(0.92, 0.88),
-            buttons=[MDFlatButton(text="Close", on_release=_close)],
         )
         self._dialog.open()
 
@@ -116,12 +120,12 @@ class _DocsContent(MDBoxLayout):
     def _populate_tree(self) -> None:
         self._tree_list.clear_widgets()
         if not self._docs_root.is_dir():
-            self._tree_list.add_widget(OneLineListItem(text="(docs not found)"))
+            self._tree_list.add_widget(MDListItem(MDListItemHeadlineText(text="(docs not found)")))
             return
         for f in sorted(self._docs_root.rglob("*.md")):
             rel = f.relative_to(self._docs_root)
-            item = OneLineListItem(
-                text=str(rel),
+            item = MDListItem(
+                MDListItemHeadlineText(text=str(rel)),
                 on_release=lambda _, p=f: self._load_file(p),
             )
             self._tree_list.add_widget(item)

@@ -15,7 +15,6 @@ from typing import Optional, TYPE_CHECKING
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDFlatButton, MDRaisedButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
 from kivymd.uix.textfield import MDTextField
@@ -128,7 +127,7 @@ class APConfigPanel(PluginPanel):
         self._build_form()
 
     def _mk_field(self, key: str, hint: str = "", input_filter: str = "") -> MDTextField:
-        kw = dict(hint_text=hint, mode="rectangle", size_hint=(0.6, 1))
+        kw = dict(hint_text=hint, mode="outlined", size_hint=(0.6, 1))
         if input_filter:
             kw["input_filter"] = input_filter
         f = MDTextField(**kw)

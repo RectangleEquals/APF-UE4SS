@@ -16,7 +16,7 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDRaisedButton
+from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDLabel
 from kivymd.uix.toolbar import MDTopAppBar
 
@@ -102,12 +102,14 @@ class DiagnosticsPanel(PluginPanel):
             spacing=dp(12),
             padding=[dp(16), dp(8)],
         )
-        btn_row.add_widget(MDRaisedButton(
-            text="Run Validation",
+        btn_row.add_widget(MDButton(
+            MDButtonText(text="Run Validation"),
+            style="filled",
             on_release=lambda *_: self._on_validate(),
         ))
-        btn_row.add_widget(MDRaisedButton(
-            text="Package Logs",
+        btn_row.add_widget(MDButton(
+            MDButtonText(text="Package Logs"),
+            style="filled",
             on_release=lambda *_: threading.Thread(
                 target=self._on_package_logs, daemon=True
             ).start(),

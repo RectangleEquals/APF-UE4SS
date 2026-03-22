@@ -18,12 +18,12 @@ from typing import TYPE_CHECKING
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDFlatButton, MDIconButton, MDRaisedButton
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
+from kivymd.uix.divider import MDDivider
 from kivymd.uix.label import MDLabel
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.selectioncontrol import MDSwitch
-from kivymd.uix.separator import MDSeparator
 
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost, PluginInfo
@@ -73,9 +73,9 @@ class SettingsScreen(MDScreen):
         content.bind(minimum_height=content.setter("height"))
 
         content.add_widget(self._build_mode_section())
-        content.add_widget(MDSeparator())
+        content.add_widget(MDDivider())
         content.add_widget(self._build_plugin_section())
-        content.add_widget(MDSeparator())
+        content.add_widget(MDDivider())
         content.add_widget(self._build_steam_section())
 
         scroll.add_widget(content)
@@ -97,8 +97,9 @@ class SettingsScreen(MDScreen):
             halign="left",
             size_hint_x=1,
         )
-        restart_btn = MDRaisedButton(
-            text="Restart",
+        restart_btn = MDButton(
+            MDButtonText(text="Restart"),
+            style="filled",
             size_hint_x=None,
             width="96dp",
             on_release=self._restart_app,
@@ -152,8 +153,9 @@ class SettingsScreen(MDScreen):
         section.bind(minimum_height=section.setter("height"))
 
         # Install plugin button
-        install_btn = MDFlatButton(
-            text="Install .apfplugin…",
+        install_btn = MDButton(
+            MDButtonText(text="Install .apfplugin…"),
+            style="text",
             size_hint_y=None,
             height="40dp",
             on_release=self._install_plugin,
@@ -182,8 +184,9 @@ class SettingsScreen(MDScreen):
             hint_text="libraryfolders.vdf path (leave blank for auto-detect)",
             size_hint_x=1,
         )
-        save_btn = MDFlatButton(
-            text="Save",
+        save_btn = MDButton(
+            MDButtonText(text="Save"),
+            style="text",
             size_hint_x=None,
             width="60dp",
             on_release=self._save_steam_override,
