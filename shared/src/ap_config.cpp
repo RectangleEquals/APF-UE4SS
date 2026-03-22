@@ -75,6 +75,10 @@ bool APConfig::load(const std::filesystem::path &config_path)
             {
                 config_.logging.console = log["console"].get<bool>();
             }
+            if (log.contains("append"))
+            {
+                config_.logging.append = log["append"].get<bool>();
+            }
         }
 
         // AP Server section
@@ -208,7 +212,8 @@ bool APConfig::save(const std::filesystem::path &config_path) const
     // Logging section (nested)
     j["logging"] = {{"level", log_level_to_string(config_.logging.level)},
                     {"file", config_.logging.file},
-                    {"console", config_.logging.console}};
+                    {"console", config_.logging.console},
+                    {"append", config_.logging.append}};
 
     // AP Server section
     j["ap_server"] = {{"host", config_.ap_server.host},
