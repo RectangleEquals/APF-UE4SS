@@ -1,0 +1,12 @@
+{
+  "id": "apf.builtin.library",
+  "name": "Game Library",
+  "version": "1.0.0",
+  "description": "Game library home screen. Shows installed UE4/UE5 games as clickable tiles.",
+  "mode": "both",
+  "requires": [],
+  "suggests": [],
+  "contributions": [
+    {"type": "home_screen", "label": "Library", "icon": "view-grid", "priority": 0}
+  ]
+}

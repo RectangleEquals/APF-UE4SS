@@ -1,102 +1,184 @@
 """
-APF Manager — KivyMD application root.
+APFManagerApp — KivyMD root application.
+
+Startup sequence:
+  1. Load APFConfig from ~/.apf_manager/config.json
+  2. Initialize PluginHost
+  3. Discover + load plugins from lib/plugins/ and custom_plugins/
+  4. Build ScreenManager: GameHubScreen + SettingsScreen
+  5. If plugin failures exist → navigate to SettingsScreen (all screens locked)
+  6. Otherwise → navigate to home_screen contribution (provided by library plugin)
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+from typing import Optional
+
+from kivy.clock import Clock
+from kivy.uix.screenmanager import ScreenManager, FadeTransition
 from kivymd.app import MDApp
-from kivymd.uix.tab import MDTabsBase
-from kivymd.uix.floatlayout import MDFloatLayout
-from kivy.uix.boxlayout import BoxLayout
-from kivy.lang import Builder
+from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.label import MDLabel
+from kivymd.uix.screen import MDScreen
 
-from ..config import APFConfig, APFState
-from ..discovery import ModDiscovery
-from ..ue4ss import UE4SSDetector, UE4SSDetectionResult
-
-KV = """
-<APFTab>:
-    MDLabel:
-        text: root.title
-
-MDBoxLayout:
-    orientation: 'vertical'
-
-    MDTopAppBar:
-        title: "APF Manager"
-        elevation: 4
-
-    MDTabs:
-        id: tabs
-        on_tab_switch: app.on_tab_switch(*args)
-"""
+from ..core.config import APFConfig, GameProfile
+from ..core.plugin_host import PluginHost
+from ..core.ue4ss import UE4SSDetector
+from .screens.game_hub import GameHubScreen
+from .screens.settings import SettingsScreen
 
 
-class APFTab(MDFloatLayout, MDTabsBase):
-    pass
+def _builtin_plugins_dir() -> Path:
+    """
+    Returns the built-in plugins directory.
+    In development: tools/apf_manager/plugins/ (relative to this file).
+    In frozen build: lib/plugins/ (relative to executable).
+    """
+    if getattr(sys, "frozen", False):
+        # cx_Freeze frozen build
+        return Path(sys.executable).parent / "lib" / "plugins"
+    else:
+        return Path(__file__).parent.parent / "plugins"
+
+
+def _custom_plugins_dir() -> Path:
+    """User-installed plugins: next to the executable (frozen) or ~/.apf_manager/plugins/."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent / "custom_plugins"
+    return Path.home() / ".apf_manager" / "plugins"
 
 
 class APFManagerApp(MDApp):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.config_data = APFConfig.load().resolve()
-        self.state = APFState.load()
-        self.discovery = ModDiscovery(self.config_data)
-        self.detector = UE4SSDetector()
-        self.detection: UE4SSDetectionResult | None = None
         self.title = "APF Manager"
-        self.theme_cls.theme_style = "Light"
-        self.theme_cls.primary_palette = "Blue"
+        self._config = APFConfig()
+        self._host = PluginHost()
+        self._sm: Optional[ScreenManager] = None
+        self._game_hub: Optional[GameHubScreen] = None
+        self._settings_screen: Optional[SettingsScreen] = None
+        self._home_screen: Optional[MDScreen] = None
+        self._previous_screen: str = "home"
+
+    # -----------------------------------------------------------------------
+    # MDApp lifecycle
+    # -----------------------------------------------------------------------
 
     def build(self):
-        from .tabs.setup import SetupTab
-        from .tabs.deploy import DeployTab
-        from .tabs.config_tab import ConfigTab
-        from .tabs.diagnostics import DiagnosticsTab
-        from .tabs.package import PackageTab
+        self.theme_cls.theme_style = "Dark"
+        self.theme_cls.primary_palette = "BlueGray"
+        self.theme_cls.material_style = "M3"
 
-        root = BoxLayout(orientation="vertical")
+        self._config.load()
 
-        from kivymd.uix.toolbar import MDTopAppBar
-        toolbar = MDTopAppBar(title="APF Manager", elevation=4)
-        root.add_widget(toolbar)
+        # Load plugins
+        builtin = _builtin_plugins_dir()
+        custom = _custom_plugins_dir()
+        self._host.discover_and_load(
+            plugin_dirs=[builtin, custom],
+            disabled_ids=self._config.disabled_plugins,
+            dev_mode=self._config.is_dev,
+        )
 
-        from kivymd.uix.tab import MDTabs
-        self.tabs = MDTabs()
-        self.tabs.bind(on_tab_switch=self.on_tab_switch)
+        # Wire host callbacks
+        self._host.set_navigate_fn(self._navigate_to_game)
+        self._host.set_dialog_fn(self._show_dialog)
 
-        self.setup_tab = SetupTab(app=self)
-        self.deploy_tab = DeployTab(app=self)
-        self.config_tab = ConfigTab(app=self)
-        self.diag_tab = DiagnosticsTab(app=self)
-        self.package_tab = PackageTab(app=self)
+        # Build screen manager
+        self._sm = ScreenManager(transition=FadeTransition(duration=0.15))
 
-        self.tabs.add_widget(self.setup_tab)
-        self.tabs.add_widget(self.deploy_tab)
-        self.tabs.add_widget(self.config_tab)
-        self.tabs.add_widget(self.diag_tab)
-        self.tabs.add_widget(self.package_tab)
+        # Build game hub
+        self._game_hub = GameHubScreen(host=self._host, config=self._config)
+        self._game_hub.populate_panels()
+        self._sm.add_widget(self._game_hub)
 
-        root.add_widget(self.tabs)
-        return root
+        # Build settings screen
+        self._settings_screen = SettingsScreen(host=self._host, config=self._config)
+        self._sm.add_widget(self._settings_screen)
 
-    def on_tab_switch(self, instance_tabs, instance_tab, instance_tab_label, tab_text):
-        if hasattr(instance_tab, "on_tab_activated"):
-            instance_tab.on_tab_activated()
+        # Build home screen from library plugin's home_screen contribution
+        home_contribs = self._host.get_contributions("home_screen")
+        if home_contribs and home_contribs[0].panel_class:
+            home_widget = home_contribs[0].panel_class(host=self._host, config=self._config)
+            home_screen = MDScreen(name="home")
+            home_screen.add_widget(home_widget)
+            self._home_screen = home_screen
+            self._sm.add_widget(home_screen)
+        else:
+            # Fallback: simple "no library plugin" placeholder
+            placeholder = MDScreen(name="home")
+            lbl = MDLabel(
+                text="Library plugin not loaded.\nConfigure a game in Settings.",
+                halign="center",
+            )
+            placeholder.add_widget(lbl)
+            self._home_screen = placeholder
+            self._sm.add_widget(placeholder)
 
-    def refresh_detection(self) -> UE4SSDetectionResult:
-        self.detection = self.detector.detect(self.config_data.game_root)
-        return self.detection
+        # Navigate: if any failures → settings (locked); otherwise → home
+        if self._host.has_failures:
+            self._sm.current = "settings"
+            self._settings_screen.refresh()
+            # Lock all screens except settings
+            self._lock_non_settings_screens()
+        else:
+            self._sm.current = "home"
 
-    def save_config(self) -> None:
-        self.config_data.save()
-        self.discovery.invalidate()
+        return self._sm
 
-    def log(self, msg: str) -> None:
-        """Append a message to the deploy tab log panel."""
-        if hasattr(self, "deploy_tab"):
-            self.deploy_tab.log(msg)
+    # -----------------------------------------------------------------------
+    # Navigation
+    # -----------------------------------------------------------------------
 
-    def on_stop(self):
-        self.state.save()
-        self.config_data.save()
+    def _navigate_to_game(self, profile: GameProfile) -> None:
+        from ..core.ue4ss import UE4SSDetector
+        detection = UE4SSDetector.detect(profile.game_root)
+        self._host.set_game_context(profile, detection)
+        self._config.last_game_id = profile.game_id
+        self._config.save()
+        self._game_hub.activate_for_game(profile)
+        self._previous_screen = self._sm.current
+        self._sm.current = "game_hub"
+
+    def navigate_to_library(self) -> None:
+        self._sm.current = "home"
+
+    def navigate_back(self) -> None:
+        if self._sm.current == "settings":
+            self._sm.current = self._previous_screen if self._previous_screen != "settings" else "home"
+        else:
+            self._sm.current = "home"
+
+    # -----------------------------------------------------------------------
+    # Dialog dispatcher
+    # -----------------------------------------------------------------------
+
+    def _show_dialog(self, dialog_id: str, kwargs: dict) -> None:
+        contrib = next(
+            (c for c in self._host.get_contributions("dialog") if c.dialog_id == dialog_id),
+            None,
+        )
+        if contrib and contrib.handler:
+            contrib.handler(**kwargs)
+
+    # -----------------------------------------------------------------------
+    # Plugin failure screen lock
+    # -----------------------------------------------------------------------
+
+    def _lock_non_settings_screens(self) -> None:
+        """Overlay all non-settings screens with a lock message."""
+        for screen in self._sm.screens:
+            if screen.name != "settings":
+                overlay = MDBoxLayout(
+                    orientation="vertical",
+                    md_bg_color=(0, 0, 0, 0.75),
+                )
+                overlay.add_widget(MDLabel(
+                    text="Plugin errors detected.\nResolve them in Settings to continue.",
+                    halign="center",
+                    theme_text_color="Custom",
+                    text_color=(1, 0.4, 0.4, 1),
+                ))
+                screen.add_widget(overlay)

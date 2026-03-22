@@ -1,0 +1,12 @@
+{
+  "id": "apf.builtin.deploy",
+  "name": "Deployment Manager",
+  "version": "1.0.0",
+  "description": "Deploy, configure, and manage AP mods. Handles install steps, load order, and mods.txt.",
+  "mode": "both",
+  "requires": ["apf.builtin.mods"],
+  "suggests": [],
+  "contributions": [
+    {"type": "hub_panel", "label": "Mods", "icon": "package-variant", "priority": 10}
+  ]
+}

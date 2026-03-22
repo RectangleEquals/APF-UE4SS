@@ -1,0 +1,12 @@
+{
+  "id": "apf.builtin.ap_config",
+  "name": "AP Configuration",
+  "version": "1.0.0",
+  "description": "Edit framework_config.json — AP server settings, logging, and runtime parameters.",
+  "mode": "both",
+  "requires": [],
+  "suggests": [],
+  "contributions": [
+    {"type": "hub_panel", "label": "Configure", "icon": "tune", "priority": 20}
+  ]
+}

@@ -1,1 +1,0 @@
-# APF Manifesto — core package

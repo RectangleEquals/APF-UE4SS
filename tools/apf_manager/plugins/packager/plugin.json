@@ -1,0 +1,12 @@
+{
+  "id": "apf.builtin.packager",
+  "name": "Release Packager",
+  "version": "1.0.0",
+  "description": "Build release ZIP archives and .apworld files (dev only).",
+  "mode": "dev",
+  "requires": [],
+  "suggests": ["apf.builtin.mods"],
+  "contributions": [
+    {"type": "hub_panel", "label": "Package", "icon": "package-up", "priority": 80}
+  ]
+}

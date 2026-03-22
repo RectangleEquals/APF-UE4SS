@@ -1,0 +1,12 @@
+{
+  "id": "apf.builtin.diagnostics",
+  "name": "Diagnostics",
+  "version": "1.0.0",
+  "description": "Run validation checks and package logs for bug reports.",
+  "mode": "both",
+  "requires": [],
+  "suggests": ["apf.builtin.mods"],
+  "contributions": [
+    {"type": "hub_panel", "label": "Diagnostics", "icon": "stethoscope", "priority": 40}
+  ]
+}

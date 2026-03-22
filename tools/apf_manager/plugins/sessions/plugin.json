@@ -1,0 +1,12 @@
+{
+  "id": "apf.builtin.sessions",
+  "name": "Session Manager",
+  "version": "1.0.0",
+  "description": "Backup and restore AP session state for each game.",
+  "mode": "both",
+  "requires": [],
+  "suggests": [],
+  "contributions": [
+    {"type": "hub_panel", "label": "Sessions", "icon": "backup-restore", "priority": 30}
+  ]
+}

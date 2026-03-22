@@ -1,0 +1,13 @@
+{
+  "id": "apf.builtin.docs_viewer",
+  "name": "Documentation Viewer",
+  "version": "1.0.0",
+  "description": "Browse and render Markdown documentation files.",
+  "mode": "both",
+  "requires": [],
+  "suggests": [],
+  "contributions": [
+    {"type": "hub_action", "label": "Docs", "icon": "book-open-variant"},
+    {"type": "dialog", "label": "Documentation Viewer", "icon": "book-open-variant"}
+  ]
+}

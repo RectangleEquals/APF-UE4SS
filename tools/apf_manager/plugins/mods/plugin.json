@@ -1,0 +1,10 @@
+{
+  "id": "apf.builtin.mods",
+  "name": "Mod Discovery",
+  "version": "1.0.0",
+  "description": "Scans the game's Mods directory and provides mod metadata to other plugins via the 'mods' service.",
+  "mode": "both",
+  "requires": [],
+  "suggests": [],
+  "contributions": []
+}

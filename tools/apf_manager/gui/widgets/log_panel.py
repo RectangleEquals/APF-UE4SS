@@ -1,96 +1,111 @@
 """
-APF Manager — Log panel widget with inline fullscreen toggle.
+LogPanel — scrollable, timestamped log widget shared across all hub panels.
+
+Keeps the last MAX_LINES lines. Has a collapse/expand toggle.
 """
 
 from __future__ import annotations
 
-import datetime
+from datetime import datetime
 
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.scrollview import ScrollView
-from kivy.properties import BooleanProperty
-from kivymd.uix.label import MDLabel
-from kivymd.uix.button import MDIconButton
 from kivymd.uix.boxlayout import MDBoxLayout
+from kivymd.uix.button import MDIconButton
+from kivymd.uix.label import MDLabel
+from kivymd.uix.scrollview import MDScrollView
+from kivy.properties import BooleanProperty, StringProperty
+from kivy.clock import Clock
+
+MAX_LINES = 500
 
 
 class LogPanel(MDBoxLayout):
-    """
-    A scrollable log area with a fullscreen toggle button.
-    Height expands to fill available space; toggle button is inline in the header.
-    """
-
-    fullscreen = BooleanProperty(False)
+    collapsed = BooleanProperty(False)
 
     def __init__(self, **kwargs):
-        super().__init__(orientation="vertical", **kwargs)
+        super().__init__(orientation="vertical", size_hint_y=None, **kwargs)
         self._lines: list[str] = []
-        self._build_ui()
+        self._build()
 
-    def _build_ui(self):
-        # Header bar with "Log" label and expand toggle
+    def _build(self):
+        # Header bar
         header = MDBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
             height="36dp",
-            md_bg_color=self.theme_cls.primary_color if hasattr(self, "theme_cls") else (0.2, 0.4, 0.8, 1),
-            padding=("8dp", "4dp"),
+            md_bg_color=(0.12, 0.12, 0.12, 1),
+            padding=("8dp", 0),
         )
-        self._header_label = MDLabel(
+        lbl = MDLabel(
             text="Log",
-            theme_text_color="Custom",
-            text_color=(1, 1, 1, 1),
-            bold=True,
+            font_style="Caption",
+            halign="left",
+            size_hint_x=1,
         )
-        self._toggle_btn = MDIconButton(
-            icon="arrow-expand",
-            theme_icon_color="Custom",
-            icon_color=(1, 1, 1, 1),
-            size_hint=(None, None),
-            size=("36dp", "36dp"),
+        toggle_btn = MDIconButton(
+            icon="chevron-down",
+            on_release=self._toggle_collapse,
+            size_hint_x=None,
+            width="36dp",
         )
-        self._toggle_btn.bind(on_release=self._toggle_fullscreen)
-        header.add_widget(self._header_label)
-        header.add_widget(self._toggle_btn)
+        self._toggle_btn = toggle_btn
+        header.add_widget(lbl)
+        header.add_widget(toggle_btn)
         self.add_widget(header)
 
-        # Scrollable text area
-        scroll = ScrollView()
-        self._text_label = MDLabel(
-            text="",
-            font_style="Body2",
+        # Scroll area
+        self._scroll = MDScrollView(size_hint_y=None, height="120dp")
+        self._content = MDBoxLayout(
+            orientation="vertical",
             size_hint_y=None,
-            markup=True,
+            padding=("6dp", "4dp"),
+            spacing="1dp",
         )
-        self._text_label.bind(texture_size=self._text_label.setter("size"))
-        scroll.add_widget(self._text_label)
-        self._scroll = scroll
-        self.add_widget(scroll)
+        self._content.bind(minimum_height=self._content.setter("height"))
+        self._scroll.add_widget(self._content)
+        self.add_widget(self._scroll)
 
-    def append(self, msg: str) -> None:
-        """Add a timestamped line to the log."""
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
-        line = f"[{ts}] {msg}"
+        self._update_height()
+
+    def _update_height(self):
+        if self.collapsed:
+            self._scroll.height = "0dp"
+            self.height = "36dp"
+            self._toggle_btn.icon = "chevron-up"
+        else:
+            self._scroll.height = "120dp"
+            self.height = "156dp"
+            self._toggle_btn.icon = "chevron-down"
+
+    def _toggle_collapse(self, *_):
+        self.collapsed = not self.collapsed
+        self._update_height()
+
+    def append(self, message: str) -> None:
+        """Add a log line. Thread-safe via Clock.schedule_once."""
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        line = f"[{ts}] {message}"
+        Clock.schedule_once(lambda dt: self._add_line(line))
+
+    def _add_line(self, line: str) -> None:
         self._lines.append(line)
-        # Keep last 500 lines to avoid unbounded growth
-        if len(self._lines) > 500:
-            self._lines = self._lines[-500:]
-        self._text_label.text = "\n".join(self._lines)
-        # Scroll to bottom
-        from kivy.clock import Clock
-        Clock.schedule_once(lambda dt: setattr(self._scroll, "scroll_y", 0))
+        if len(self._lines) > MAX_LINES:
+            self._lines.pop(0)
+            if self._content.children:
+                self._content.remove_widget(self._content.children[-1])
+
+        lbl = MDLabel(
+            text=line,
+            font_style="Caption",
+            size_hint_y=None,
+            height="16dp",
+            halign="left",
+        )
+        self._content.add_widget(lbl)
+        Clock.schedule_once(lambda dt: self._scroll_to_bottom())
+
+    def _scroll_to_bottom(self):
+        self._scroll.scroll_y = 0
 
     def clear(self) -> None:
         self._lines.clear()
-        self._text_label.text = ""
-
-    def _toggle_fullscreen(self, *_):
-        self.fullscreen = not self.fullscreen
-        if self.fullscreen:
-            self._toggle_btn.icon = "arrow-collapse"
-            # Request parent to give us all available space
-            self.size_hint_y = 1
-        else:
-            self._toggle_btn.icon = "arrow-expand"
-            self.size_hint_y = None
-            self.height = "200dp"
+        self._content.clear_widgets()

@@ -1,5 +1,0 @@
-kivy[base]==2.3.1
-kivymd==1.2.0
-Pillow>=10.0.0
-pyinstaller>=6.9.0
-pywin32
