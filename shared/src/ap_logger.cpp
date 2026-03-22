@@ -81,11 +81,32 @@ void APLogger::init()
         // Ensure parent directory exists
         APPathUtil::get()->ensure_directory_exists(log_path.parent_path());
 
-        log_file_.open(log_path, std::ios::out | std::ios::app);
+        bool append = APConfig::get()->get_log_append();
+        log_file_.open(log_path, std::ios::out | (append ? std::ios::app : std::ios::trunc));
         if (!log_file_.is_open())
         {
             // Failed to open log file - will still log to console if enabled
             std::cerr << "[APLogger] Failed to open log file: " << log_path << std::endl;
+        }
+        else
+        {
+            // Write session header — identifies the start of this run in the log file
+            const auto *cfg    = APConfig::get();
+            std::string pw_str = cfg->config().ap_server.password.empty() ? "NO" : "YES";
+
+            std::ostringstream hdr;
+            hdr << "================================================================================\n";
+            hdr << "AP Framework v" << cfg->get_version() << " | " << cfg->get_game_name() << "\n";
+            hdr << "Started:    " << get_timestamp() << "\n";
+            hdr << "AP Server:  " << cfg->get_ap_host() << ":" << cfg->get_ap_port()
+                << " | Password: " << pw_str << "\n";
+            hdr << "Logging:    " << log_level_to_string(cfg->get_log_level())
+                << " | Console: " << (cfg->get_log_to_console() ? "true" : "false")
+                << " | Append: "  << (append ? "true" : "false") << "\n";
+            hdr << "================================================================================\n";
+
+            log_file_ << hdr.str();
+            log_file_.flush();
         }
     }
 

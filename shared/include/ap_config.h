@@ -127,6 +127,7 @@ public:
     LogLevel get_log_level() const { return config_.logging.level; }
     const std::string& get_log_file() const { return config_.logging.file; }
     bool get_log_to_console() const { return config_.logging.console; }
+    bool get_log_append() const { return config_.logging.append; }
 
     // Server config
     const APServerConfig& get_ap_server() const { return config_.ap_server; }

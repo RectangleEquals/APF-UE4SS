@@ -9,7 +9,7 @@
  *     "game_name": "Palworld",
  *     "version": "1.0.0",
  *     "ap_server": { "host": "localhost", "port": 38281, ... },
- *     "logging": { "level": "info", "file": "", "console": true },
+ *     "logging": { "level": "info", "file": "", "console": true, "append": false },
  *     "timeouts": { ... },
  *     "threading": { ... }
  * }
@@ -32,6 +32,7 @@ struct LoggingConfig {
     LogLevel level = LogLevel::Info;
     std::string file;           // Empty = file logging disabled
     bool console = true;
+    bool append  = false;       // true = append across sessions; false = overwrite on startup
 };
 
 // =============================================================================
