@@ -1,8 +1,16 @@
 """
 LibraryScreen — game library home screen.
 
-Phase 1: Shows GameProfile entries from APFConfig as tiles (gradient placeholders).
-Phase 2: Adds Steam VDF/ACF scanning, UE filter, async thumbnails, UE4SS badges.
+Sections (horizontal carousels):
+  - Steam Games  (hidden when no steam games detected)
+  - Custom Games (always shown; "Add Custom Game" tile always first)
+
+Features:
+  - Add Custom Game: folder picker → UE root resolution → post-add details dialog
+  - Card hover: canvas scale animation (no layout reflow)
+  - Edge fade: gradient overlays on each carousel
+  - UE4SS badge: MDIconButton icon + text label (replaces unicode)
+  - Placeholder tiles (TEMP — remove after visual testing)
 """
 
 from __future__ import annotations
@@ -13,9 +21,14 @@ import webbrowser
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
+from kivy.animation import Animation
 from kivy.clock import Clock
-from kivy.graphics import Color, Rectangle
+from kivy.core.window import Window
+from kivy.graphics import Color, PushMatrix, PopMatrix, Rectangle, Scale, Translate
+from kivy.graphics.texture import Texture
 from kivy.metrics import dp
+from kivy.properties import NumericProperty
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.app import MDApp
@@ -26,7 +39,6 @@ from kivymd.uix.dialog import (
     MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
     MDDialogContentContainer, MDDialogButtonContainer,
 )
-from kivymd.uix.gridlayout import MDGridLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 
@@ -56,13 +68,128 @@ def _tile_color(name: str) -> tuple:
     return _TILE_COLORS[idx]
 
 
-# UE4SS badge colours: green=installed, yellow=undetected, red=missing game root
-_BADGE_COLORS = {
-    "ok":      (0.3, 0.8, 0.4, 1),
-    "warn":    (0.9, 0.7, 0.1, 1),
-    "error":   (0.85, 0.25, 0.25, 1),
-    "unknown": (0.5, 0.5, 0.5, 1),
+# UE4SS badge: icon name + colour per status
+_BADGE_STATUS: dict[str, tuple[str, tuple]] = {
+    "ok":      ("check-circle",  (0.3,  0.8,  0.4,  1)),
+    "warn":    ("help-circle",   (0.9,  0.7,  0.1,  1)),
+    "error":   ("close-circle",  (0.85, 0.25, 0.25, 1)),
+    "unknown": ("help-circle",   (0.5,  0.5,  0.5,  1)),
 }
+
+_TILE_W = dp(200)
+_TILE_H = dp(150)
+
+
+# ---------------------------------------------------------------------------
+# UE root detection helpers
+# ---------------------------------------------------------------------------
+
+def _has_content_paks(path: Path) -> bool:
+    """True if path/Content/Paks exists."""
+    try:
+        return (path / "Content" / "Paks").is_dir()
+    except (PermissionError, OSError):
+        return False
+
+
+def _dirs_at_depth(path: Path, depth: int) -> list[Path]:
+    """All directories exactly `depth` levels below `path`."""
+    if depth == 0:
+        return [path]
+    result: list[Path] = []
+    try:
+        for child in path.iterdir():
+            if child.is_dir():
+                result.extend(_dirs_at_depth(child, depth - 1))
+    except (PermissionError, OSError):
+        pass
+    return result
+
+
+def _find_ue_root(selected: Path) -> Optional[Path]:
+    """
+    Given any path the user selected, resolve to the UE game_root
+    (parent of the <short_name> directory that contains Content/Paks).
+
+    UE game structure: <game_root>/<short_name>/Content/Paks
+    The user may select game_root, short_name, or any deeper path.
+    """
+    # Step 1: drill down from selected (up to 3 levels).
+    # If `candidate` IS the <short_name> (has Content/Paks), return its parent.
+    for depth in range(4):
+        for candidate in _dirs_at_depth(selected, depth):
+            if _has_content_paks(candidate):
+                return candidate.parent
+
+    # Step 2: walk up — try each ancestor as game_root.
+    # A valid game_root has at least one child whose Content/Paks exists.
+    for root_candidate in [selected, *selected.parents]:
+        try:
+            for child in root_candidate.iterdir():
+                if child.is_dir() and _has_content_paks(child):
+                    return root_candidate
+        except (PermissionError, OSError):
+            continue
+    return None
+
+
+def _detect_game_name(game_root: Path) -> str:
+    """Auto-detect a display name from the game root folder name."""
+    return game_root.name.replace("_", " ").replace("-", " ").title()
+
+
+# ---------------------------------------------------------------------------
+# EdgeFadeWidget — transparent overlay with left/right gradient fades
+# ---------------------------------------------------------------------------
+
+class EdgeFadeWidget(Widget):
+    """Draws left and right alpha-fade gradients; touch events pass through."""
+
+    _FADE_W = dp(40)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._left_rect: Optional[Rectangle] = None
+        self._right_rect: Optional[Rectangle] = None
+        self._build_canvas()
+        self.bind(pos=self._update_rects, size=self._update_rects)
+
+    def _build_canvas(self) -> None:
+        # Left: opaque → transparent (left to right)
+        left_tex = Texture.create(size=(2, 1), colorfmt="rgba")
+        left_tex.blit_buffer(bytes([0, 0, 0, 200, 0, 0, 0, 0]),
+                              colorfmt="rgba", bufferfmt="ubyte")
+        left_tex.mag_filter = "linear"
+
+        # Right: transparent → opaque (left to right)
+        right_tex = Texture.create(size=(2, 1), colorfmt="rgba")
+        right_tex.blit_buffer(bytes([0, 0, 0, 0, 0, 0, 0, 200]),
+                               colorfmt="rgba", bufferfmt="ubyte")
+        right_tex.mag_filter = "linear"
+
+        with self.canvas:
+            Color(1, 1, 1, 1)
+            self._left_rect = Rectangle(
+                texture=left_tex, pos=self.pos,
+                size=(self._FADE_W, self.height),
+            )
+            self._right_rect = Rectangle(
+                texture=right_tex,
+                pos=(self.right - self._FADE_W, self.y),
+                size=(self._FADE_W, self.height),
+            )
+
+    def _update_rects(self, *_) -> None:
+        if self._left_rect:
+            self._left_rect.pos = self.pos
+            self._left_rect.size = (self._FADE_W, self.height)
+        if self._right_rect:
+            self._right_rect.pos = (self.right - self._FADE_W, self.y)
+            self._right_rect.size = (self._FADE_W, self.height)
+
+    def on_touch_down(self, touch):  return False
+    def on_touch_move(self, touch):  return False
+    def on_touch_up(self, touch):    return False
 
 
 # ---------------------------------------------------------------------------
@@ -70,32 +197,50 @@ _BADGE_COLORS = {
 # ---------------------------------------------------------------------------
 
 class GameTile(MDCard):
-    """Single game tile in the library grid."""
+    """Single game tile in a library carousel. Animates via canvas scale on hover."""
+
+    _scale_factor = NumericProperty(1.0)
 
     def __init__(self, profile: "GameProfile", on_select, **kwargs):
         super().__init__(
             orientation="vertical",
             size_hint=(None, None),
-            size=(dp(200), dp(150)),
+            size=(_TILE_W, _TILE_H),
             md_bg_color=(0.12, 0.12, 0.12, 1),
             **kwargs,
         )
         self._profile = profile
         self._on_select = on_select
         self._bg_rect: Optional[Rectangle] = None
-        self._thumb_widget = None
+        self._translate_to: Optional[Translate] = None
+        self._translate_back: Optional[Translate] = None
+        self._scale_instr: Optional[Scale] = None
+        self._badge_icon: Optional[MDIconButton] = None
         self._badge_lbl: Optional[MDLabel] = None
+        self._hovered = False
+        self._hover_anim: Optional[Animation] = None
+        self._img_area: Optional[MDBoxLayout] = None
         self._build()
 
     def _build(self) -> None:
         color = _tile_color(self._profile.display_name)
+
+        # Canvas: push matrix → translate to centre → scale → translate back
         with self.canvas.before:
+            PushMatrix()
+            self._translate_to = Translate(0, 0)
+            self._scale_instr = Scale(1, 1, 1)
+            self._translate_back = Translate(0, 0)
             Color(*color)
             self._bg_rect = Rectangle(pos=self.pos, size=self.size)
-        self.bind(pos=self._update_bg, size=self._update_bg)
+        with self.canvas.after:
+            PopMatrix()
 
-        # Image area (thumbnail or "?" placeholder)
-        self._img_area = MDBoxLayout(size_hint=(1, 0.72), orientation="vertical")
+        self.bind(pos=self._sync_canvas, size=self._sync_canvas,
+                  _scale_factor=self._sync_scale)
+
+        # Image area (flexible)
+        self._img_area = MDBoxLayout(size_hint=(1, 1), orientation="vertical")
         thumb = self._profile.custom_thumbnail
         if thumb and Path(thumb).exists():
             self._set_thumbnail(Path(thumb))
@@ -111,10 +256,11 @@ class GameTile(MDCard):
             ))
         self.add_widget(self._img_area)
 
-        # Name bar
+        # Name bar (fixed 28dp)
         name_bar = MDBoxLayout(
             orientation="horizontal",
-            size_hint=(1, 0.20),
+            size_hint=(1, None),
+            height=dp(28),
             padding=[dp(6), dp(2)],
             md_bg_color=(0, 0, 0, 0.62),
         )
@@ -132,33 +278,91 @@ class GameTile(MDCard):
         ))
         self.add_widget(name_bar)
 
-        # UE4SS badge (bottom-right corner overlay)
+        # UE4SS badge row (fixed 24dp): spacer | icon | "UE4SS" label
         badge_row = MDBoxLayout(
             orientation="horizontal",
-            size_hint=(1, 0.08),
+            size_hint=(1, None),
+            height=dp(24),
             padding=[0, 0, dp(4), 0],
+            spacing=dp(2),
+        )
+        badge_row.add_widget(Widget(size_hint_x=1))
+
+        self._badge_icon = MDIconButton(
+            icon="help-circle",
+            theme_icon_color="Custom",
+            icon_color=(0.5, 0.5, 0.5, 1),
+            size_hint=(None, None),
+            size=(dp(20), dp(20)),
+            pos_hint={"center_y": 0.5},
+            disabled=True,
         )
         self._badge_lbl = MDLabel(
-            text="UE4SS ?",
+            text="UE4SS",
             font_style="Label",
             role="small",
-            halign="right",
+            halign="left",
             valign="middle",
             theme_text_color="Custom",
-            text_color=_BADGE_COLORS["unknown"],
+            text_color=(0.5, 0.5, 0.5, 1),
+            size_hint=(None, 1),
+            width=dp(48),
         )
+        badge_row.add_widget(self._badge_icon)
         badge_row.add_widget(self._badge_lbl)
         self.add_widget(badge_row)
 
         self.bind(on_release=lambda *_: self._on_select(self._profile))
 
-    def _update_bg(self, *_) -> None:
+    # --- Canvas sync ---
+
+    def _sync_canvas(self, *_) -> None:
         if self._bg_rect:
             self._bg_rect.pos = self.pos
             self._bg_rect.size = self.size
+        self._sync_scale()
+
+    def _sync_scale(self, *_) -> None:
+        if self._translate_to is None:
+            return
+        cx, cy = self.center
+        self._translate_to.x = cx
+        self._translate_to.y = cy
+        self._scale_instr.x = self._scale_factor
+        self._scale_instr.y = self._scale_factor
+        self._translate_back.x = -cx
+        self._translate_back.y = -cy
+
+    # --- Hover ---
+
+    def on_parent(self, instance, parent) -> None:
+        if parent is not None:
+            Window.bind(mouse_pos=self._on_mouse_pos)
+        else:
+            Window.unbind(mouse_pos=self._on_mouse_pos)
+
+    def _on_mouse_pos(self, window, pos) -> None:
+        # Convert window pos to window-space tile bounds
+        wx, wy = self.to_window(self.x, self.y)
+        wr, wt = self.to_window(self.right, self.top)
+        inside = wx <= pos[0] <= wr and wy <= pos[1] <= wt
+
+        if inside and not self._hovered:
+            self._hovered = True
+            if self._hover_anim:
+                self._hover_anim.cancel(self)
+            self._hover_anim = Animation(_scale_factor=1.06, d=0.12, t="out_quad")
+            self._hover_anim.start(self)
+        elif not inside and self._hovered:
+            self._hovered = False
+            if self._hover_anim:
+                self._hover_anim.cancel(self)
+            self._hover_anim = Animation(_scale_factor=1.0, d=0.12, t="out_quad")
+            self._hover_anim.start(self)
+
+    # --- Thumbnail ---
 
     def set_thumbnail(self, path: Path) -> None:
-        """Called from background thread via Clock.schedule_once."""
         Clock.schedule_once(lambda dt: self._set_thumbnail(path), 0)
 
     def _set_thumbnail(self, path: Path) -> None:
@@ -170,27 +374,27 @@ class GameTile(MDCard):
             keep_ratio=False,
         ))
 
+    # --- Badge ---
+
     def set_ue4ss_badge(self, status: str) -> None:
-        """status: 'ok' | 'warn' | 'error' | 'unknown'"""
-        if self._badge_lbl is None:
-            return
-        labels = {"ok": "UE4SS ✓", "warn": "UE4SS !", "error": "UE4SS ✗", "unknown": "UE4SS ?"}
-        self._badge_lbl.text = labels.get(status, "UE4SS ?")
-        self._badge_lbl.text_color = _BADGE_COLORS.get(status, _BADGE_COLORS["unknown"])
+        icon_name, color = _BADGE_STATUS.get(status, _BADGE_STATUS["unknown"])
+        if self._badge_icon:
+            self._badge_icon.icon = icon_name
+            self._badge_icon.icon_color = color
+        if self._badge_lbl:
+            self._badge_lbl.text_color = color
 
 
 # ---------------------------------------------------------------------------
-# Add Game Tile — always-first placeholder tile
+# _AddGameTile — always first in the Custom section
 # ---------------------------------------------------------------------------
 
 class _AddGameTile(MDCard):
-    """Gray placeholder tile — always first in the grid — opens the Add dialog."""
-
     def __init__(self, on_add, **kwargs):
         super().__init__(
             orientation="vertical",
             size_hint=(None, None),
-            size=(dp(200), dp(150)),
+            size=(_TILE_W, _TILE_H),
             md_bg_color=(0.2, 0.2, 0.2, 1),
             **kwargs,
         )
@@ -203,7 +407,7 @@ class _AddGameTile(MDCard):
             self._bg = Rectangle(pos=self.pos, size=self.size)
         self.bind(pos=self._update_bg, size=self._update_bg)
 
-        plus_area = MDBoxLayout(size_hint=(1, 0.80), orientation="vertical")
+        plus_area = MDBoxLayout(size_hint=(1, 1), orientation="vertical")
         plus_area.add_widget(MDLabel(
             text="+",
             font_style="Display",
@@ -217,7 +421,8 @@ class _AddGameTile(MDCard):
 
         name_bar = MDBoxLayout(
             orientation="horizontal",
-            size_hint=(1, 0.20),
+            size_hint=(1, None),
+            height=dp(28),
             padding=[dp(6), dp(2)],
             md_bg_color=(0, 0, 0, 0.5),
         )
@@ -240,26 +445,130 @@ class _AddGameTile(MDCard):
 
 
 # ---------------------------------------------------------------------------
-# Add Custom Game — dialog content
+# _PlaceholderTile — TEMP: visual testing of carousel/fade/hover
+# TODO: remove placeholder tiles after visual testing is complete
 # ---------------------------------------------------------------------------
 
-class _AddGameContent(MDBoxLayout):
+class _PlaceholderTile(MDCard):
     def __init__(self, **kwargs):
         super().__init__(
             orientation="vertical",
-            spacing=dp(8),
-            padding=[dp(4), dp(8)],
-            size_hint_y=None,
+            size_hint=(None, None),
+            size=(_TILE_W, _TILE_H),
+            md_bg_color=(0.18, 0.18, 0.18, 1),
             **kwargs,
         )
-        self.height = dp(130)
+        with self.canvas.before:
+            Color(0.18, 0.18, 0.18, 1)
+            self._bg = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._upd, size=self._upd)
+        self.add_widget(MDLabel(
+            text="?",
+            font_style="Display",
+            role="small",
+            halign="center",
+            valign="middle",
+            theme_text_color="Custom",
+            text_color=(0.38, 0.38, 0.38, 1),
+        ))
 
-        self.name_field = MDTextField(hint_text="Game name", mode="outlined")
-        self.path_field = MDTextField(
-            hint_text="Game root folder (absolute path)", mode="outlined"
+    def _upd(self, *_) -> None:
+        self._bg.pos = self.pos
+        self._bg.size = self.size
+
+
+# ---------------------------------------------------------------------------
+# _CarouselSection — labeled section with horizontal carousel + edge fades
+# ---------------------------------------------------------------------------
+
+_CAROUSEL_H = dp(175)   # height of carousel row (150dp tiles + 12dp top/bottom padding)
+
+
+class _CarouselSection(MDBoxLayout):
+    """Section header + horizontally-scrolling tile carousel with edge fades."""
+
+    def __init__(self, title: str, **kwargs):
+        super().__init__(
+            orientation="vertical",
+            size_hint=(1, None),
+            adaptive_height=True,
+            spacing=dp(4),
+            padding=[dp(16), dp(8), dp(16), dp(4)],
+            **kwargs,
         )
-        self.add_widget(self.name_field)
-        self.add_widget(self.path_field)
+        self.bind(minimum_height=self.setter("height"))
+
+        # Section header
+        header = MDBoxLayout(size_hint=(1, None), height=dp(32))
+        header.add_widget(MDLabel(
+            text=title,
+            font_style="Title",
+            role="large",
+            size_hint_x=1,
+            halign="left",
+            valign="middle",
+        ))
+        self.add_widget(header)
+
+        # FloatLayout: ScrollView + EdgeFadeWidget overlay at same position
+        row = FloatLayout(size_hint=(1, None), height=_CAROUSEL_H)
+
+        self._scroll = ScrollView(
+            do_scroll_x=True,
+            do_scroll_y=False,
+            size_hint=(1, 1),
+            pos_hint={"x": 0, "y": 0},
+            bar_width=0,
+        )
+        self._tiles_box = MDBoxLayout(
+            orientation="horizontal",
+            size_hint_y=1,
+            size_hint_x=None,
+            spacing=dp(12),
+            padding=[dp(40), dp(12), dp(40), dp(12)],  # Fix 32-D: padding = fade width
+        )
+        self._tiles_box.bind(minimum_width=self._tiles_box.setter("width"))
+        self._scroll.add_widget(self._tiles_box)
+
+        row.add_widget(self._scroll)
+        row.add_widget(EdgeFadeWidget(size_hint=(1, 1), pos_hint={"x": 0, "y": 0}))
+        self.add_widget(row)
+
+        # Fix 32-F: reflow placeholders when carousel width changes
+        self._scroll.bind(width=lambda *_: Clock.schedule_once(
+            lambda dt: self._reflow_placeholders(), 0))
+
+    def clear_tiles(self) -> None:
+        self._tiles_box.clear_widgets()
+
+    def add_tile(self, tile: Widget) -> None:
+        self._tiles_box.add_widget(tile)
+
+    @property
+    def tile_count(self) -> int:
+        return len(self._tiles_box.children)
+
+    def _adjust_placeholders(self, n_real: int) -> None:
+        """Fill visible area with placeholder tiles without overflowing. Fix 32-F."""
+        slot_w = _TILE_W + dp(12)
+        usable_w = max(self._scroll.width - dp(80), 0)
+        visible_slots = max(int(usable_w / slot_w), 0)
+        n_needed = max(0, visible_slots - n_real)
+
+        placeholders = [c for c in reversed(self._tiles_box.children)
+                        if isinstance(c, _PlaceholderTile)]
+        while len(placeholders) > n_needed:
+            tile = placeholders.pop()
+            self._tiles_box.remove_widget(tile)
+        while len(placeholders) < n_needed:
+            tile = _PlaceholderTile()
+            self._tiles_box.add_widget(tile)
+            placeholders.append(tile)
+
+    def _reflow_placeholders(self) -> None:
+        n_real = sum(1 for c in self._tiles_box.children
+                     if not isinstance(c, _PlaceholderTile))
+        self._adjust_placeholders(n_real)
 
 
 # ---------------------------------------------------------------------------
@@ -268,22 +577,22 @@ class _AddGameContent(MDBoxLayout):
 
 class LibraryScreen(MDBoxLayout):
     """
-    Home screen — tile grid of all games.
-    Phase 1: config-only GameProfiles.
-    Phase 2: + Steam-discovered games (UE-filtered) with async thumbnails.
+    Home screen — two labeled carousels: Steam and Custom Games.
+    Folder-picker based Add Custom Game flow with UE root auto-detection.
     """
 
     def __init__(self, host: "PluginHost", config: "APFConfig", **kwargs):
         super().__init__(orientation="vertical", **kwargs)
         self._host = host
         self._config = config
-        self._add_dialog: Optional[MDDialog] = None
         self._ue4ss_dialog: Optional[MDDialog] = None
         self._search_visible: bool = False
         self._search_text: str = ""
-        self._steam_games: list = []          # list[SteamGame] — refreshed on build
-        self._thumbnail_cache = None          # ThumbnailCache — lazily created
-        self._tile_map: dict[str, "GameTile"] = {}  # game_id/str(app_id) → tile
+        self._steam_games: list = []
+        self._thumbnail_cache = None
+        self._tile_map: dict[str, "GameTile"] = {}
+        self._steam_section: Optional[_CarouselSection] = None
+        self._custom_section: Optional[_CarouselSection] = None
         self._build()
 
     # -----------------------------------------------------------------------
@@ -291,16 +600,25 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _build(self) -> None:
-        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
-                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
-        toolbar.add_widget(MDLabel(text="Game Library", font_style="Title", role="large",
-                                   size_hint_x=1, halign="left"))
-        toolbar.add_widget(MDIconButton(icon="magnify", on_release=lambda *_: self._toggle_search()))
-        toolbar.add_widget(MDIconButton(icon="refresh", on_release=lambda *_: threading.Thread(
-            target=self._refresh_steam, daemon=True).start()))
-        toolbar.add_widget(MDIconButton(icon="plus", on_release=lambda *_: self._open_add_dialog()))
-        toolbar.add_widget(MDIconButton(icon="cog", on_release=lambda *_: self._go_settings()))
-        self._toolbar = toolbar
+        toolbar = MDBoxLayout(
+            orientation="horizontal",
+            size_hint_y=None,
+            height=dp(56),
+            md_bg_color=(0.15, 0.2, 0.25, 1),
+            padding=(dp(8), 0),
+            spacing=dp(4),
+        )
+        toolbar.add_widget(MDLabel(
+            text="Game Library", font_style="Title", role="large",
+            size_hint_x=1, halign="left",
+        ))
+        toolbar.add_widget(MDIconButton(
+            icon="magnify", on_release=lambda *_: self._toggle_search()))
+        toolbar.add_widget(MDIconButton(
+            icon="refresh", on_release=lambda *_: threading.Thread(
+                target=self._refresh_steam, daemon=True).start()))
+        toolbar.add_widget(MDIconButton(
+            icon="cog", on_release=lambda *_: self._go_settings()))
         self.add_widget(toolbar)
 
         # Collapsible search bar
@@ -314,17 +632,22 @@ class LibraryScreen(MDBoxLayout):
         self._search_field.bind(text=self._on_search)
         self.add_widget(self._search_field)
 
-        # Scrollable tile grid
-        scroll = ScrollView(size_hint=(1, 1))
-        self._grid = MDGridLayout(
-            cols=4,
-            spacing=dp(12),
-            padding=[dp(16), dp(16)],
+        # Outer vertical scroll for all sections
+        outer_scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False)
+        self._sections_box = MDBoxLayout(
+            orientation="vertical",
             size_hint_y=None,
             adaptive_height=True,
         )
-        scroll.add_widget(self._grid)
-        self.add_widget(scroll)
+        self._sections_box.bind(minimum_height=self._sections_box.setter("height"))
+
+        self._steam_section = _CarouselSection("Steam")
+        self._custom_section = _CarouselSection("Custom Games")
+        self._sections_box.add_widget(self._steam_section)
+        self._sections_box.add_widget(self._custom_section)
+
+        outer_scroll.add_widget(self._sections_box)
+        self.add_widget(outer_scroll)
 
         Clock.schedule_once(lambda dt: self._initial_load(), 0)
 
@@ -333,7 +656,6 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _initial_load(self) -> None:
-        """Populate from config first (instant), then scan Steam in background."""
         self.refresh()
         threading.Thread(target=self._refresh_steam, daemon=True).start()
 
@@ -342,80 +664,81 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def refresh(self) -> None:
-        """Rebuild tile grid from config + cached steam games."""
-        self._grid.clear_widgets()
+        """Rebuild both carousels."""
+        self._steam_section.clear_tiles()
+        self._custom_section.clear_tiles()
         self._tile_map.clear()
 
-        # Always-first tile
-        self._grid.add_widget(_AddGameTile(on_add=self._open_add_dialog))
+        steam_games, custom_games = self._partition_games()
 
-        games = self._build_game_list()
-        if not games:
-            return
+        # --- Steam section ---
+        for entry in steam_games:
+            self._steam_section.add_tile(self._make_game_tile(entry))
 
-        for entry in games:
-            tile = GameTile(
-                profile=entry,
-                on_select=self._on_tile_selected,
-            )
-            key = entry.game_id
-            self._tile_map[key] = tile
-            self._grid.add_widget(tile)
+        self._steam_section.opacity = 1
 
-            # Async thumbnail for Steam games
-            if entry.steam_app_id and self._get_thumbnail_cache():
-                self._fetch_thumbnail(entry)
+        # --- Custom section ---
+        self._custom_section.add_tile(_AddGameTile(on_add=self._open_add_folder_picker))
+        for entry in custom_games:
+            self._custom_section.add_tile(self._make_game_tile(entry))
 
-            # Async UE4SS badge check
-            threading.Thread(
-                target=self._check_ue4ss_badge,
-                args=(entry, tile),
-                daemon=True,
-            ).start()
+        # Fix 32-F: dynamic placeholder count (no placeholders during search)
+        if not self._search_text:
+            self._steam_section._adjust_placeholders(len(steam_games))
+            self._custom_section._adjust_placeholders(1 + len(custom_games))
 
-    def _build_game_list(self) -> list["GameProfile"]:
-        """
-        Merge config games + Steam-discovered games.
-        Config games take precedence (steam_app_id used for dedup).
-        Applies search filter.
-        """
+    def _make_game_tile(self, profile: "GameProfile") -> GameTile:
+        tile = GameTile(profile=profile, on_select=self._on_tile_selected)
+        self._tile_map[profile.game_id] = tile
+        if profile.steam_app_id and self._get_thumbnail_cache():
+            self._fetch_thumbnail(profile)
+        threading.Thread(
+            target=self._check_ue4ss_badge, args=(profile, tile), daemon=True,
+        ).start()
+        return tile
+
+    def _partition_games(self) -> tuple[list, list]:
+        """Split all games into (steam_games, custom_games), applying search filter."""
         from ...core.config import GameProfile
 
-        # Start with config profiles
-        result: list[GameProfile] = list(self._config.games.values())
-        config_app_ids = {p.steam_app_id for p in result if p.steam_app_id}
+        config_games = list(self._config.games.values())
+        config_app_ids = {p.steam_app_id for p in config_games if p.steam_app_id}
 
-        # Add Steam-discovered games not already in config
+        # Config games with a steam_app_id → steam; without → custom
+        config_steam = [g for g in config_games if g.steam_app_id]
+        config_custom = [g for g in config_games if not g.steam_app_id]
+
+        # Steam-scanned games not already in config → steam
+        discovered_steam: list[GameProfile] = []
         for sg in self._steam_games:
             if sg.app_id not in config_app_ids:
-                profile = GameProfile.new(
+                discovered_steam.append(GameProfile.new(
                     display_name=sg.name,
                     game_root=str(sg.install_dir),
                     steam_app_id=sg.app_id,
-                )
-                result.append(profile)
+                ))
 
-        # Search filter
+        steam = config_steam + discovered_steam
+        custom = config_custom
+
         if self._search_text:
             q = self._search_text.lower()
-            result = [g for g in result if q in g.display_name.lower()]
+            steam = [g for g in steam if q in g.display_name.lower()]
+            custom = [g for g in custom if q in g.display_name.lower()]
 
-        return result
+        return steam, custom
 
     # -----------------------------------------------------------------------
     # Steam scan
     # -----------------------------------------------------------------------
 
     def _refresh_steam(self) -> None:
-        """Background: scan Steam library, update tile grid on main thread."""
         try:
-            from .steam_library import SteamLibrary, UEFilter
+            from .steam_library import SteamLibrary
             override = self._config.steam_library_override
             lib = SteamLibrary(override_vdf_path=override)
             all_games = lib.scan()
-            # Filter to UE games only
-            ue_games = [g for g in all_games if g.is_ue]
-            self._steam_games = ue_games
+            self._steam_games = [g for g in all_games if g.is_ue]
         except Exception:
             self._steam_games = []
         Clock.schedule_once(lambda dt: self.refresh(), 0)
@@ -437,7 +760,6 @@ class LibraryScreen(MDBoxLayout):
         cache = self._get_thumbnail_cache()
         if not cache or not profile.steam_app_id:
             return
-
         cached = cache.path(profile.steam_app_id)
         if cached:
             tile = self._tile_map.get(profile.game_id)
@@ -456,7 +778,7 @@ class LibraryScreen(MDBoxLayout):
     # UE4SS badge
     # -----------------------------------------------------------------------
 
-    def _check_ue4ss_badge(self, profile: "GameProfile", tile: "GameTile") -> None:
+    def _check_ue4ss_badge(self, profile: "GameProfile", tile: GameTile) -> None:
         from ...core.ue4ss import UE4SSDetector
         if not profile.game_root:
             status = "unknown"
@@ -464,7 +786,12 @@ class LibraryScreen(MDBoxLayout):
             status = "error"
         else:
             detection = UE4SSDetector.detect(profile.game_root)
-            status = "ok" if detection.valid else "warn"
+            if detection.valid:
+                status = "ok"
+            elif detection.content_paks_dir:
+                status = "warn"   # UE game but UE4SS not installed
+            else:
+                status = "error"  # not a UE game root
         Clock.schedule_once(lambda dt, s=status: tile.set_ue4ss_badge(s), 0)
 
     # -----------------------------------------------------------------------
@@ -475,7 +802,6 @@ class LibraryScreen(MDBoxLayout):
         from ...core.ue4ss import UE4SSDetector
         detection = UE4SSDetector.detect(profile.game_root)
         if detection.valid:
-            # Ensure profile is in config before navigating
             if profile.game_id not in self._config.games:
                 self._config.add_game(profile)
             self._host.navigate_to_game(profile)
@@ -487,10 +813,9 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _show_ue4ss_dialog(self, profile: "GameProfile", detection) -> None:
-        if detection.missing:
-            detail = "Missing: " + ", ".join(detection.missing)
-        else:
-            detail = "Could not locate UE4SS in the game folder."
+        detail = ("Missing: " + ", ".join(detection.missing)
+                  if detection.missing
+                  else "Could not locate UE4SS in the game folder.")
 
         def _dismiss(*_):
             if self._ue4ss_dialog:
@@ -505,42 +830,166 @@ class LibraryScreen(MDBoxLayout):
             MDDialogSupportingText(text=(
                 f"UE4SS was not found for {profile.display_name}.\n\n"
                 f"{detail}\n\n"
-                "Install UE4SS into the game's Binaries/Win64/ folder, "
-                "then try again."
+                "Install UE4SS into the game's Binaries/Win64/ folder, then try again."
             )),
             MDDialogButtonContainer(
                 Widget(),
                 MDButton(MDButtonText(text="Cancel"), style="text", on_release=_dismiss),
-                MDButton(MDButtonText(text="Download UE4SS"), style="filled", on_release=_download),
+                MDButton(MDButtonText(text="Download UE4SS"), style="filled",
+                         on_release=_download),
             ),
         )
         self._ue4ss_dialog.open()
 
     # -----------------------------------------------------------------------
-    # Add Custom Game dialog
+    # Add Custom Game — folder picker flow
     # -----------------------------------------------------------------------
 
-    def _open_add_dialog(self) -> None:
-        content = _AddGameContent()
+    def _open_add_folder_picker(self) -> None:
+        # Fix 32-E: try tkinter first (synchronous native dialog, most reliable)
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askdirectory(title="Select Game Folder")
+            root.destroy()
+            if path:
+                Clock.schedule_once(lambda dt: self._on_dir_chosen([path]), 0)
+            return
+        except Exception:
+            pass
+        try:
+            from plyer import filechooser
+            filechooser.choose_dir(
+                title="Select Game Folder",
+                on_selection=self._on_dir_chosen,
+            )
+        except Exception:
+            self._open_kivy_folder_picker()
 
-        def _confirm(*_):
-            name = content.name_field.text.strip()
-            path = content.path_field.text.strip()
-            if name and path:
-                from ...core.config import GameProfile
-                self._config.add_game(GameProfile.new(
-                    display_name=name, game_root=path
-                ))
-                self.refresh()
-            if self._add_dialog:
-                self._add_dialog.dismiss()
+    def _open_kivy_folder_picker(self) -> None:
+        from kivy.uix.filechooser import FileChooserIconView
+
+        picker = FileChooserIconView(
+            path=str(Path.home()),
+            filters=["*/"],
+            dirselect=True,
+        )
+        dialog: list = []
+
+        def _select(*_):
+            selection = picker.selection or [picker.path]
+            dialog[0].dismiss()
+            Clock.schedule_once(lambda dt: self._on_dir_chosen(selection), 0)
 
         def _cancel(*_):
-            if self._add_dialog:
-                self._add_dialog.dismiss()
+            dialog[0].dismiss()
 
-        self._add_dialog = MDDialog(
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Select Game Folder"),
+            MDDialogContentContainer(picker),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_cancel),
+                MDButton(MDButtonText(text="Select"), style="filled", on_release=_select),
+            ),
+        )
+        dialog.append(dlg)
+        dlg.open()
+
+    def _on_dir_chosen(self, selection: list) -> None:
+        if not selection:
+            return
+        selected = Path(selection[0])
+        game_root = _find_ue_root(selected)
+        if game_root is None:
+            self._show_snackbar("Not a recognized Unreal Engine game folder.")
+            return
+
+        # Duplicate check
+        existing_roots = {
+            str(Path(p.game_root).resolve())
+            for p in self._config.games.values()
+            if p.game_root
+        }
+        if str(game_root.resolve()) in existing_roots:
+            self._show_snackbar("This game is already in your library.")
+            return
+
+        self._open_add_details_dialog(game_root, _detect_game_name(game_root))
+
+    def _open_add_details_dialog(self, game_root: Path, auto_name: str) -> None:
+        chosen_image: list[Optional[str]] = [None]
+        dialog: list = []
+
+        image_status_lbl = MDLabel(
+            text="No image selected",
+            font_style="Label",
+            role="small",
+            halign="left",
+            size_hint_x=1,
+        )
+
+        content = MDBoxLayout(
+            orientation="vertical",
+            spacing=dp(8),
+            padding=[dp(4), dp(8)],
+            size_hint_y=None,
+            height=dp(156),
+        )
+        name_field = MDTextField(
+            text=auto_name,
+            hint_text="Game name",
+            mode="outlined",
+        )
+        warning_lbl = MDLabel(
+            text="Note: changing the name after deployment may cause issues.",
+            font_style="Label",
+            role="small",
+            theme_text_color="Custom",
+            text_color=(0.9, 0.7, 0.2, 1),
+            size_hint_y=None,
+            height=dp(36),
+        )
+        image_row = MDBoxLayout(
+            orientation="horizontal",
+            size_hint_y=None,
+            height=dp(40),
+            spacing=dp(8),
+        )
+        image_btn = MDButton(
+            MDButtonText(text="Pick Image…"),
+            style="text",
+            size_hint_x=None,
+            width=dp(120),
+            on_release=lambda *_: self._open_image_picker(chosen_image, image_status_lbl),
+        )
+        image_row.add_widget(image_status_lbl)
+        image_row.add_widget(image_btn)
+
+        content.add_widget(name_field)
+        content.add_widget(warning_lbl)
+        content.add_widget(image_row)
+
+        def _confirm(*_):
+            from ...core.config import GameProfile
+            name = name_field.text.strip() or auto_name
+            self._config.add_game(GameProfile.new(
+                display_name=name,
+                game_root=str(game_root),
+                custom_thumbnail=chosen_image[0],
+            ))
+            self.refresh()
+            dialog[0].dismiss()
+
+        def _cancel(*_):
+            dialog[0].dismiss()
+
+        dlg = MDDialog(
             MDDialogHeadlineText(text="Add Custom Game"),
+            MDDialogSupportingText(text=str(game_root)),
             MDDialogContentContainer(content),
             MDDialogButtonContainer(
                 Widget(),
@@ -548,7 +997,59 @@ class LibraryScreen(MDBoxLayout):
                 MDButton(MDButtonText(text="Add"), style="filled", on_release=_confirm),
             ),
         )
-        self._add_dialog.open()
+        dialog.append(dlg)
+        dlg.open()
+
+    # -----------------------------------------------------------------------
+    # Image picker
+    # -----------------------------------------------------------------------
+
+    def _open_image_picker(self, chosen_image: list, status_lbl: MDLabel) -> None:
+        try:
+            from plyer import filechooser
+            filechooser.open_file(
+                title="Select Thumbnail Image",
+                filters=[("Image files", "*.png", "*.jpg", "*.jpeg")],
+                on_selection=lambda sel: self._on_image_chosen(
+                    sel, chosen_image, status_lbl),
+            )
+        except Exception:
+            self._open_kivy_image_picker(chosen_image, status_lbl)
+
+    def _open_kivy_image_picker(self, chosen_image: list, status_lbl: MDLabel) -> None:
+        from kivy.uix.filechooser import FileChooserIconView
+
+        picker = FileChooserIconView(
+            path=str(Path.home()),
+            filters=["*.png", "*.jpg", "*.jpeg"],
+        )
+        dialog: list = []
+
+        def _select(*_):
+            selection = picker.selection or [picker.path]
+            dialog[0].dismiss()
+            self._on_image_chosen(selection, chosen_image, status_lbl)
+
+        def _cancel(*_):
+            dialog[0].dismiss()
+
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Select Thumbnail Image"),
+            MDDialogContentContainer(picker),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_cancel),
+                MDButton(MDButtonText(text="Select"), style="filled", on_release=_select),
+            ),
+        )
+        dialog.append(dlg)
+        dlg.open()
+
+    def _on_image_chosen(self, selection: list, chosen_image: list,
+                          status_lbl: MDLabel) -> None:
+        if selection:
+            chosen_image[0] = selection[0]
+            status_lbl.text = Path(selection[0]).name
 
     # -----------------------------------------------------------------------
     # Navigation
@@ -579,3 +1080,17 @@ class LibraryScreen(MDBoxLayout):
     def _on_search(self, _instance, value: str) -> None:
         self._search_text = value
         self.refresh()
+
+    # -----------------------------------------------------------------------
+    # Snackbar
+    # -----------------------------------------------------------------------
+
+    def _show_snackbar(self, text: str) -> None:
+        from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
+        MDSnackbar(
+            MDSnackbarText(text=text),
+            y=dp(24),
+            pos_hint={"center_x": 0.5},
+            size_hint_x=0.8,
+            duration=3,
+        ).open()
