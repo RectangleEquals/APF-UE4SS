@@ -128,6 +128,13 @@ class APFManagerApp(MDApp):
         h = max(self._config.window_height, 600)
         Window.size = (w, h)
 
+        if not self._config.window_maximized:
+            import ctypes
+            screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+            screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+            Window.left = (screen_w - w) // 2
+            Window.top = (screen_h - h) // 2
+
         Window.bind(on_maximize=self._on_window_maximize)
         Window.bind(on_restore=self._on_window_restore)
 

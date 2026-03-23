@@ -78,6 +78,7 @@ class SettingsScreen(MDScreen):
             padding="16dp",
             spacing="12dp",
         )
+        content.bind(minimum_height=content.setter("height"))
 
         content.add_widget(self._build_mode_section())
         content.add_widget(MDDivider())
@@ -85,9 +86,11 @@ class SettingsScreen(MDScreen):
         content.add_widget(MDDivider())
         content.add_widget(self._build_steam_section())
 
+        self._scroll_content = content
         scroll.add_widget(content)
         root.add_widget(scroll)
         self.add_widget(root)
+        Clock.schedule_once(lambda dt: self._scroll_content.do_layout(), 0)
 
     def _build_restart_banner(self) -> MDBoxLayout:
         banner = MDBoxLayout(
@@ -156,6 +159,7 @@ class SettingsScreen(MDScreen):
             adaptive_height=True,
             spacing="2dp",
         )
+        self._plugin_list_box.bind(minimum_height=self._plugin_list_box.setter("height"))
         self._refresh_plugin_list()
         section.add_widget(self._plugin_list_box)
 
@@ -287,9 +291,26 @@ class SettingsScreen(MDScreen):
         self._update_restart_banner()
 
     def _on_plugin_toggle(self, plugin_id: str, enabled: bool) -> None:
+        if not enabled:
+            # Block disabling the sole home_screen provider
+            home_contribs = self._host.get_contributions("home_screen")
+            if home_contribs and all(c.plugin_id == plugin_id for c in home_contribs):
+                self._show_snackbar("Library plugin is required. Enable another library plugin first.")
+                self._refresh_plugin_list()  # revert switch visually
+                return
         self._config.set_plugin_disabled(plugin_id, not enabled)
         self._update_restart_banner()
         self._refresh_plugin_list()
+
+    def _show_snackbar(self, text: str) -> None:
+        from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
+        MDSnackbar(
+            MDSnackbarText(text=text),
+            y=dp(24),
+            pos_hint={"center_x": 0.5},
+            size_hint_x=0.8,
+            duration=3,
+        ).open()
 
     def _update_restart_banner(self) -> None:
         dirty = (
