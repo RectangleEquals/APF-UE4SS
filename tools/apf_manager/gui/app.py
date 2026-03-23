@@ -68,8 +68,7 @@ class APFManagerApp(MDApp):
 
     def build(self):
         self.theme_cls.theme_style = "Dark"
-        self.theme_cls.primary_palette = "BlueGray"
-        self.theme_cls.material_style = "M3"
+        self.theme_cls.primary_palette = "#607D8B"  # Blue Grey 500
 
         self._config.load()
 

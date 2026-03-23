@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from kivy.clock import Clock
+from kivy.metrics import dp
+from kivy.properties import BooleanProperty, StringProperty
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDIconButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.scrollview import MDScrollView
-from kivy.properties import BooleanProperty, StringProperty
-from kivy.clock import Clock
 
 MAX_LINES = 500
 
@@ -37,7 +38,7 @@ class LogPanel(MDBoxLayout):
         )
         lbl = MDLabel(
             text="Log",
-            font_style="Caption",
+            font_style="Label", role="small",
             halign="left",
             size_hint_x=1,
         )
@@ -45,7 +46,7 @@ class LogPanel(MDBoxLayout):
             icon="chevron-down",
             on_release=self._toggle_collapse,
             size_hint_x=None,
-            width="36dp",
+            width=dp(36),
         )
         self._toggle_btn = toggle_btn
         header.add_widget(lbl)
@@ -95,7 +96,7 @@ class LogPanel(MDBoxLayout):
 
         lbl = MDLabel(
             text=line,
-            font_style="Caption",
+            font_style="Label", role="small",
             size_hint_y=None,
             height="16dp",
             halign="left",

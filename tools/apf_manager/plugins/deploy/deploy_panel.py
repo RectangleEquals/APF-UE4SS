@@ -133,7 +133,7 @@ class ModRow(MDBoxLayout):
             name_text += f"  v{mod.version}"
         name_lbl = MDLabel(
             text=name_text,
-            font_style="Body2",
+            font_style="Body",
             size_hint=(1, 1),
             halign="left",
             valign="middle",
@@ -160,8 +160,8 @@ class ModRow(MDBoxLayout):
             cb = MDCheckbox(
                 size_hint=(None, 1),
                 width=dp(40),
-                active=True,
             )
+            cb.active = True
             cb.bind(active=lambda inst, val: on_toggle(mod, val))
             self._checkbox = cb
             self.add_widget(cb)

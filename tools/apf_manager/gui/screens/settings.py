@@ -55,7 +55,7 @@ class SettingsScreen(MDScreen):
         )
         back_btn = MDIconButton(icon="arrow-left", on_release=self._go_back)
         bar.add_widget(back_btn)
-        bar.add_widget(MDLabel(text="Settings", font_style="H6", halign="left"))
+        bar.add_widget(MDLabel(text="Settings", font_style="Headline", role="small", halign="left"))
         root.add_widget(bar)
 
         # Restart required banner (hidden by default)
@@ -93,7 +93,8 @@ class SettingsScreen(MDScreen):
         )
         lbl = MDLabel(
             text="Restart required to apply changes",
-            font_style="Caption",
+            font_style="Label",
+            role="small",
             halign="left",
             size_hint_x=1,
         )
@@ -101,7 +102,7 @@ class SettingsScreen(MDScreen):
             MDButtonText(text="Restart"),
             style="filled",
             size_hint_x=None,
-            width="96dp",
+            width=dp(96),
             on_release=self._restart_app,
         )
         banner.add_widget(lbl)
@@ -116,16 +117,14 @@ class SettingsScreen(MDScreen):
             height="80dp",
             spacing="4dp",
         )
-        section.add_widget(MDLabel(text="Mode", font_style="Subtitle1",
+        section.add_widget(MDLabel(text="Mode", font_style="Title",
+                                   role="large",
                                    size_hint_y=None, height="28dp"))
         row = MDBoxLayout(orientation="horizontal", size_hint_y=None, height="40dp", spacing="8dp")
         player_lbl = MDLabel(text="Player", size_hint_x=None, width="60dp")
-        switch = MDSwitch(
-            active=(self._config.mode == "dev"),
-            size_hint_x=None,
-            width="60dp",
-            on_active=self._on_mode_toggle,
-        )
+        switch = MDSwitch()
+        switch.active = (self._config.mode == "dev")
+        switch.bind(active=self._on_mode_toggle)
         dev_lbl = MDLabel(text="Dev", size_hint_x=None, width="40dp")
         row.add_widget(player_lbl)
         row.add_widget(switch)
@@ -137,7 +136,8 @@ class SettingsScreen(MDScreen):
         section = MDBoxLayout(orientation="vertical", size_hint_y=None, spacing="4dp")
         section.add_widget(MDLabel(
             text="Plugins",
-            font_style="Subtitle1",
+            font_style="Title",
+            role="large",
             size_hint_y=None,
             height="28dp",
         ))
@@ -172,7 +172,8 @@ class SettingsScreen(MDScreen):
         )
         section.add_widget(MDLabel(
             text="Steam Library",
-            font_style="Subtitle1",
+            font_style="Title",
+            role="large",
             size_hint_y=None,
             height="28dp",
         ))
@@ -188,7 +189,7 @@ class SettingsScreen(MDScreen):
             MDButtonText(text="Save"),
             style="text",
             size_hint_x=None,
-            width="60dp",
+            width=dp(60),
             on_release=self._save_steam_override,
         )
         row.add_widget(self._steam_path_field)
@@ -226,7 +227,7 @@ class SettingsScreen(MDScreen):
             theme_icon_color="Custom",
             icon_color=icon_color,
             size_hint_x=None,
-            width="40dp",
+            width=dp(40),
             disabled=True,
         ))
 
@@ -234,14 +235,15 @@ class SettingsScreen(MDScreen):
         info_box = MDBoxLayout(orientation="vertical", size_hint_x=1)
         info_box.add_widget(MDLabel(
             text=f"{info.name}  v{info.version}  [{info.mode}]",
-            font_style="Body2",
+            font_style="Body",
             size_hint_y=None,
             height="22dp",
         ))
         if is_failed and info.error:
             info_box.add_widget(MDLabel(
                 text=info.error,
-                font_style="Caption",
+                font_style="Label",
+            role="small",
                 theme_text_color="Custom",
                 text_color=(1, 0.5, 0.5, 1),
                 size_hint_y=None,
@@ -250,11 +252,8 @@ class SettingsScreen(MDScreen):
         row.add_widget(info_box)
 
         # Enable/disable toggle (can't disable built-in required plugins)
-        switch = MDSwitch(
-            active=not is_disabled,
-            size_hint_x=None,
-            width="50dp",
-        )
+        switch = MDSwitch()
+        switch.active = not is_disabled
         switch.bind(active=lambda _, val, pid=info.plugin_id: self._on_plugin_toggle(pid, val))
         row.add_widget(switch)
 

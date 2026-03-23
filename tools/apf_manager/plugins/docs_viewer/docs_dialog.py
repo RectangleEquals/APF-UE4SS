@@ -57,7 +57,6 @@ class DocsDialog:
                 Widget(),
                 MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
             ),
-            size_hint=(0.92, 0.88),
         )
         self._dialog.open()
 
@@ -91,7 +90,7 @@ class _DocsContent(MDBoxLayout):
         )
         tree_panel.add_widget(MDLabel(
             text="Documents",
-            font_style="Subtitle2",
+            font_style="Title",
             size_hint=(1, None),
             height=dp(36),
             halign="center",

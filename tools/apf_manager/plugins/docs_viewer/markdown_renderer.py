@@ -66,8 +66,12 @@ def render_markdown(text: str) -> MDBoxLayout:
         if m:
             level = len(m.group(1))
             heading_text = m.group(2).strip()
-            style = {1: "H5", 2: "H6", 3: "Subtitle1"}[level]
-            container.add_widget(_label(heading_text, style))
+            style, role = {
+                1: ("Headline", "medium"),
+                2: ("Headline", "small"),
+                3: ("Title", "large"),
+            }[level]
+            container.add_widget(_label(heading_text, style, role))
             i += 1
             continue
 
@@ -117,12 +121,13 @@ def _inline(text: str) -> str:
     return text
 
 
-def _label(text: str, font_style: str) -> MDLabel:
+def _label(text: str, font_style: str, role: str = "medium") -> MDLabel:
     return MDLabel(
         text=text,
         font_style=font_style,
+        role=role,
         size_hint=(1, None),
-        height=dp(36) if font_style == "H5" else dp(30),
+        height=dp(36) if (font_style == "Headline" and role == "medium") else dp(30),
         halign="left",
         valign="middle",
     )
@@ -150,7 +155,7 @@ def _code_block(code: str) -> MDBoxLayout:
     )
     box.add_widget(MDLabel(
         text=code,
-        font_style="Body2",
+        font_style="Body",
         size_hint=(1, None),
         adaptive_height=True,
         theme_text_color="Custom",

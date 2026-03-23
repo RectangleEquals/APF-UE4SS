@@ -78,7 +78,6 @@ class GameTile(MDCard):
             orientation="vertical",
             size_hint=(None, None),
             size=(dp(200), dp(150)),
-            ripple_behavior=True,
             md_bg_color=(0.12, 0.12, 0.12, 1),
             **kwargs,
         )
@@ -104,7 +103,8 @@ class GameTile(MDCard):
         else:
             self._img_area.add_widget(MDLabel(
                 text="?",
-                font_style="H3",
+                font_style="Display",
+                role="small",
                 halign="center",
                 valign="middle",
                 theme_text_color="Custom",
@@ -121,7 +121,8 @@ class GameTile(MDCard):
         )
         name_bar.add_widget(MDLabel(
             text=self._profile.display_name,
-            font_style="Caption",
+            font_style="Label",
+            role="small",
             halign="left",
             valign="middle",
             shorten=True,
@@ -140,7 +141,8 @@ class GameTile(MDCard):
         )
         self._badge_lbl = MDLabel(
             text="UE4SS ?",
-            font_style="Overline",
+            font_style="Label",
+            role="small",
             halign="right",
             valign="middle",
             theme_text_color="Custom",
@@ -235,7 +237,7 @@ class LibraryScreen(MDBoxLayout):
             elevation=0,
             right_action_items=[
                 ["magnify", lambda x: self._toggle_search()],
-                ["steam", lambda x: threading.Thread(
+                ["refresh", lambda x: threading.Thread(
                     target=self._refresh_steam, daemon=True).start()],
                 ["plus", lambda x: self._open_add_dialog()],
                 ["cog", lambda x: self._go_settings()],

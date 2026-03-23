@@ -93,7 +93,7 @@ class GameHubScreen(MDScreen):
             orientation="horizontal",
             size_hint_y=None,
             height="56dp",
-            md_bg_color=self.theme_cls.primary_color if hasattr(self, "theme_cls") else (0.15, 0.2, 0.25, 1),
+            md_bg_color=(0.15, 0.2, 0.25, 1),
             padding=("8dp", 0),
             spacing="4dp",
         )
@@ -107,7 +107,8 @@ class GameHubScreen(MDScreen):
         # Game name label
         self._game_name_lbl = MDLabel(
             text="",
-            font_style="H6",
+            font_style="Headline",
+            role="small",
             halign="left",
             size_hint_x=1,
         )

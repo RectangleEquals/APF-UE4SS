@@ -31,7 +31,8 @@ class _SectionHeader(MDLabel):
     def __init__(self, text: str, **kwargs):
         super().__init__(
             text=text,
-            font_style="Subtitle1",
+            font_style="Title",
+            role="large",
             size_hint=(1, None),
             height=dp(36),
             padding=[dp(4), 0],
