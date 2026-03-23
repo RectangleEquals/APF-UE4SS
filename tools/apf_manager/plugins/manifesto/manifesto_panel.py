@@ -5,8 +5,8 @@ ManifestoPanel — stub placeholder for the future visual manifest editor.
 from __future__ import annotations
 
 from kivy.metrics import dp
+from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
-from kivymd.uix.toolbar import MDTopAppBar
 
 from ...gui.widgets.plugin_panel import PluginPanel
 
@@ -17,7 +17,11 @@ class ManifestoPanel(PluginPanel):
         self._host = host
         self.orientation = "vertical"
 
-        self.add_widget(MDTopAppBar(title="Manifesto Editor", elevation=0))
+        _bar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
+                           md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0))
+        _bar.add_widget(MDLabel(text="Manifesto Editor", font_style="Title", role="large",
+                                size_hint_x=1, halign="left"))
+        self.add_widget(_bar)
         self.add_widget(MDLabel(
             text=(
                 "Visual Manifest Editor\n\n"

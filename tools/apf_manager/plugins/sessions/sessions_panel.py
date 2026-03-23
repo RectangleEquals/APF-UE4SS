@@ -17,8 +17,6 @@ from kivymd.uix.dialog import (
 )
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
-from kivymd.uix.toolbar import MDTopAppBar
-
 from ...gui.widgets.plugin_panel import PluginPanel
 
 if TYPE_CHECKING:
@@ -56,15 +54,14 @@ class SessionsPanel(PluginPanel):
     def _build_ui(self) -> None:
         self.orientation = "vertical"
 
-        self._toolbar = MDTopAppBar(
-            title="Sessions",
-            elevation=0,
-            right_action_items=[
-                ["plus", lambda x: self._open_backup_dialog()],
-                ["refresh", lambda x: self._refresh()],
-            ],
-        )
-        self.add_widget(self._toolbar)
+        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
+                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
+        toolbar.add_widget(MDLabel(text="Sessions", font_style="Title", role="large",
+                                   size_hint_x=1, halign="left"))
+        toolbar.add_widget(MDIconButton(icon="plus", on_release=lambda *_: self._open_backup_dialog()))
+        toolbar.add_widget(MDIconButton(icon="refresh", on_release=lambda *_: self._refresh()))
+        self._toolbar = toolbar
+        self.add_widget(toolbar)
 
         self._scroll = ScrollView(size_hint=(1, 1))
         self._list_layout = MDBoxLayout(

@@ -116,8 +116,16 @@ class APFManagerApp(MDApp):
             self._home_screen = placeholder
             self._sm.add_widget(placeholder)
 
+        # Restore window size
+        from kivy.core.window import Window
+        Window.size = (self._config.window_width, self._config.window_height)
+        Window.bind(on_resize=self._on_window_resize)
+
         # Navigate: if any failures → settings (locked); otherwise → home
         if self._host.has_failures:
+            for info in self._host.get_all_plugins():
+                if info.status == "failed":
+                    print(f"[APFManager] Plugin load failure: '{info.name}' — {info.error}", file=sys.stderr)
             self._sm.current = "settings"
             self._settings_screen.refresh()
             # Lock all screens except settings
@@ -144,6 +152,11 @@ class APFManagerApp(MDApp):
     def navigate_to_library(self) -> None:
         self._sm.current = "home"
 
+    def _on_window_resize(self, window, width, height) -> None:
+        self._config.window_width = width
+        self._config.window_height = height
+        self._config.save()
+
     def navigate_back(self) -> None:
         if self._sm.current == "settings":
             self._sm.current = self._previous_screen if self._previous_screen != "settings" else "home"
@@ -167,17 +180,50 @@ class APFManagerApp(MDApp):
     # -----------------------------------------------------------------------
 
     def _lock_non_settings_screens(self) -> None:
-        """Overlay all non-settings screens with a lock message."""
+        """Overlay all non-settings screens with a lock message and navigation to Settings."""
+        from kivy.metrics import dp
+        from kivy.uix.widget import Widget
+        from kivymd.uix.button import MDIconButton, MDButton, MDButtonText
+
+        def _go_settings(*_):
+            self._sm.current = "settings"
+
         for screen in self._sm.screens:
             if screen.name != "settings":
                 overlay = MDBoxLayout(
                     orientation="vertical",
-                    md_bg_color=(0, 0, 0, 0.75),
+                    md_bg_color=(0, 0, 0, 0.85),
                 )
+                # Top bar with settings cog
+                top_bar = MDBoxLayout(
+                    orientation="horizontal",
+                    size_hint_y=None,
+                    height=dp(48),
+                    padding=[dp(8), 0],
+                )
+                top_bar.add_widget(Widget())
+                top_bar.add_widget(MDIconButton(icon="cog", on_release=_go_settings))
+                overlay.add_widget(top_bar)
+
+                # Non-clickable error heading
                 overlay.add_widget(MDLabel(
-                    text="Plugin errors detected.\nResolve them in Settings to continue.",
+                    text="Plugin errors detected.",
                     halign="center",
                     theme_text_color="Custom",
                     text_color=(1, 0.4, 0.4, 1),
+                    size_hint_y=None,
+                    height=dp(40),
                 ))
+
+                # Clickable resolve link
+                resolve_btn = MDButton(
+                    MDButtonText(text="Resolve them in Settings to continue."),
+                    style="text",
+                    size_hint_y=None,
+                    height=dp(40),
+                    on_release=_go_settings,
+                )
+                overlay.add_widget(resolve_btn)
+                overlay.add_widget(Widget())  # bottom spacer
+
                 screen.add_widget(overlay)

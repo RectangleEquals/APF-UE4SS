@@ -36,6 +36,8 @@ class SettingsScreen(MDScreen):
         self._host = host
         self._config = config
         self._restart_needed = False
+        self._original_mode = config.mode
+        self._original_disabled = set(config.disabled_plugins)
         self._build()
 
     # -----------------------------------------------------------------------
@@ -86,7 +88,8 @@ class SettingsScreen(MDScreen):
         banner = MDBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
-            height="0dp",  # hidden by default
+            height=0,
+            opacity=0,
             md_bg_color=(0.7, 0.1, 0.1, 1),
             padding=("16dp", "4dp"),
             spacing="8dp",
@@ -266,17 +269,26 @@ class SettingsScreen(MDScreen):
     def _on_mode_toggle(self, widget, value: bool) -> None:
         self._config.mode = "dev" if value else "player"
         self._config.save()
-        self._show_restart_banner()
+        self._update_restart_banner()
 
     def _on_plugin_toggle(self, plugin_id: str, enabled: bool) -> None:
         self._config.set_plugin_disabled(plugin_id, not enabled)
-        self._show_restart_banner()
+        self._update_restart_banner()
         self._refresh_plugin_list()
 
-    def _show_restart_banner(self) -> None:
-        if not self._restart_needed:
+    def _update_restart_banner(self) -> None:
+        dirty = (
+            self._config.mode != self._original_mode
+            or set(self._config.disabled_plugins) != self._original_disabled
+        )
+        if dirty and not self._restart_needed:
             self._restart_needed = True
-            self._restart_banner_widget.height = "44dp"
+            self._restart_banner_widget.height = dp(44)
+            self._restart_banner_widget.opacity = 1
+        elif not dirty and self._restart_needed:
+            self._restart_needed = False
+            self._restart_banner_widget.height = 0
+            self._restart_banner_widget.opacity = 0
 
     def _restart_app(self, *_) -> None:
         """Close and relaunch the application."""

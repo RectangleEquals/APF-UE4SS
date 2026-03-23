@@ -39,13 +39,11 @@ class _NavRailButton(MDIconButton):
 
     def __init__(self, label: str, icon: str, on_select, **kwargs):
         super().__init__(icon=icon, **kwargs)
-        self._label = label
+        self._nav_label = label
         self._on_select = on_select
-        self.size_hint = (None, None)
-        self.size = (dp(48), dp(48))
 
     def on_release(self):
-        self._on_select(self._label)
+        self._on_select(self._nav_label)
 
 
 class GameHubScreen(MDScreen):

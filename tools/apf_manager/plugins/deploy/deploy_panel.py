@@ -32,7 +32,6 @@ from kivymd.uix.dialog import (
 )
 from kivymd.uix.label import MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
-from kivymd.uix.toolbar import MDTopAppBar
 
 from ...gui.widgets.plugin_panel import PluginPanel
 
@@ -227,16 +226,15 @@ class DeployPanel(PluginPanel):
         self.orientation = "vertical"
 
         # Toolbar
-        self._toolbar = MDTopAppBar(
-            title="Mods",
-            elevation=0,
-            right_action_items=[
-                ["refresh", lambda x: self._on_rescan()],
-                ["rocket-launch", lambda x: self._on_deploy_all()],
-                ["check-circle", lambda x: self._on_validate()],
-            ],
-        )
-        self.add_widget(self._toolbar)
+        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
+                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
+        toolbar.add_widget(MDLabel(text="Mods", font_style="Title", role="large",
+                                   size_hint_x=1, halign="left"))
+        toolbar.add_widget(MDIconButton(icon="refresh", on_release=lambda *_: self._on_rescan()))
+        toolbar.add_widget(MDIconButton(icon="rocket-launch", on_release=lambda *_: self._on_deploy_all()))
+        toolbar.add_widget(MDIconButton(icon="check-circle", on_release=lambda *_: self._on_validate()))
+        self._toolbar = toolbar
+        self.add_widget(toolbar)
 
         # Scrollable mod list
         self._scroll = ScrollView(size_hint=(1, 1))

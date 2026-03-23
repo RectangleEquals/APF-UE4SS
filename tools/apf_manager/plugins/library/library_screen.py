@@ -20,7 +20,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.app import MDApp
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonText
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.card import MDCard
 from kivymd.uix.dialog import (
     MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
@@ -29,7 +29,6 @@ from kivymd.uix.dialog import (
 from kivymd.uix.gridlayout import MDGridLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
-from kivymd.uix.toolbar import MDTopAppBar
 
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost
@@ -232,18 +231,17 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _build(self) -> None:
-        self._toolbar = MDTopAppBar(
-            title="Game Library",
-            elevation=0,
-            right_action_items=[
-                ["magnify", lambda x: self._toggle_search()],
-                ["refresh", lambda x: threading.Thread(
-                    target=self._refresh_steam, daemon=True).start()],
-                ["plus", lambda x: self._open_add_dialog()],
-                ["cog", lambda x: self._go_settings()],
-            ],
-        )
-        self.add_widget(self._toolbar)
+        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
+                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
+        toolbar.add_widget(MDLabel(text="Game Library", font_style="Title", role="large",
+                                   size_hint_x=1, halign="left"))
+        toolbar.add_widget(MDIconButton(icon="magnify", on_release=lambda *_: self._toggle_search()))
+        toolbar.add_widget(MDIconButton(icon="refresh", on_release=lambda *_: threading.Thread(
+            target=self._refresh_steam, daemon=True).start()))
+        toolbar.add_widget(MDIconButton(icon="plus", on_release=lambda *_: self._open_add_dialog()))
+        toolbar.add_widget(MDIconButton(icon="cog", on_release=lambda *_: self._go_settings()))
+        self._toolbar = toolbar
+        self.add_widget(toolbar)
 
         # Collapsible search bar
         self._search_field = MDTextField(

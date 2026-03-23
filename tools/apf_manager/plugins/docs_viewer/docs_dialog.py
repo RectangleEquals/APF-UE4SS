@@ -23,8 +23,6 @@ from kivymd.uix.dialog import (
 )
 from kivymd.uix.label import MDLabel
 from kivymd.uix.list import MDList, MDListItem, MDListItemHeadlineText
-from kivymd.uix.toolbar import MDTopAppBar
-
 
 def _docs_root() -> Path:
     """Resolve the docs/public/dev/ directory relative to the project root."""

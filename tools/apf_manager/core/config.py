@@ -70,6 +70,8 @@ class GlobalSettings:
     last_game_id: Optional[str] = None
     steam_library_override: Optional[str] = None  # Override for Steam libraryfolders.vdf path
     disabled_plugins: list = field(default_factory=list)  # plugin IDs to skip loading
+    window_width: int = 1280
+    window_height: int = 720
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +93,8 @@ class APFConfig:
             s.last_game_id = data.get("last_game_id")
             s.steam_library_override = data.get("steam_library_override")
             s.disabled_plugins = data.get("disabled_plugins", [])
+            s.window_width = data.get("window_width", 1280)
+            s.window_height = data.get("window_height", 720)
             s.games = {
                 gid: GameProfile.from_dict(gdata)
                 for gid, gdata in data.get("games", {}).items()
@@ -106,6 +110,8 @@ class APFConfig:
             "last_game_id": s.last_game_id,
             "steam_library_override": s.steam_library_override,
             "disabled_plugins": s.disabled_plugins,
+            "window_width": s.window_width,
+            "window_height": s.window_height,
             "games": {gid: g.to_dict() for gid, g in s.games.items()},
         }
         self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -162,6 +168,22 @@ class APFConfig:
 
     def get_game(self, game_id: str) -> Optional[GameProfile]:
         return self._settings.games.get(game_id)
+
+    @property
+    def window_width(self) -> int:
+        return self._settings.window_width
+
+    @window_width.setter
+    def window_width(self, value: int) -> None:
+        self._settings.window_width = value
+
+    @property
+    def window_height(self) -> int:
+        return self._settings.window_height
+
+    @window_height.setter
+    def window_height(self, value: int) -> None:
+        self._settings.window_height = value
 
     def set_plugin_disabled(self, plugin_id: str, disabled: bool) -> None:
         if disabled and plugin_id not in self._settings.disabled_plugins:

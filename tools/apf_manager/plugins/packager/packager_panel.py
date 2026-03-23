@@ -14,7 +14,6 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
-from kivymd.uix.toolbar import MDTopAppBar
 
 from ...gui.widgets.plugin_panel import PluginPanel
 
@@ -38,8 +37,12 @@ class PackagerPanel(PluginPanel):
     def _build_ui(self) -> None:
         self.orientation = "vertical"
 
-        self._toolbar = MDTopAppBar(title="Package", elevation=0)
-        self.add_widget(self._toolbar)
+        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
+                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0))
+        toolbar.add_widget(MDLabel(text="Package", font_style="Title", role="large",
+                                   size_hint_x=1, halign="left"))
+        self._toolbar = toolbar
+        self.add_widget(toolbar)
 
         form = MDBoxLayout(
             orientation="vertical",
