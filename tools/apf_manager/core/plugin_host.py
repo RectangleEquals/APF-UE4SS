@@ -76,6 +76,7 @@ class PluginHost:
         self._log_fn: Optional[Callable[[str], None]] = None
         self._navigate_fn: Optional[Callable[["GameProfile"], None]] = None
         self._dialog_fn: Optional[Callable[[str, dict], None]] = None
+        self._failure_fn: Optional[Callable[[], None]] = None
         self.has_failures: bool = False
 
     # -----------------------------------------------------------------------
@@ -144,7 +145,10 @@ class PluginHost:
         for info in ordered:
             self._load_plugin(info)
 
-        self.has_failures = any(p.status == "failed" for p in self._plugins.values())
+        self.has_failures = any(
+            p.status == "failed" and p.error != "Disabled by user."
+            for p in self._plugins.values()
+        )
 
     def _topological_sort(self, plugins: list[PluginInfo]) -> list[PluginInfo]:
         """Sort plugins by requires/suggests dependencies. Marks circular deps as failed."""
@@ -343,6 +347,18 @@ class PluginHost:
 
     def set_dialog_fn(self, fn: Callable) -> None:
         self._dialog_fn = fn
+
+    def set_failure_fn(self, fn: Callable[[], None]) -> None:
+        self._failure_fn = fn
+
+    def report_failure(self, plugin_id: str, error: str) -> None:
+        """Called by a plugin at runtime to report a critical failure."""
+        if plugin_id in self._plugins:
+            self._plugins[plugin_id].status = "failed"
+            self._plugins[plugin_id].error = error
+        self.has_failures = True
+        if self._failure_fn:
+            self._failure_fn()
 
     # -----------------------------------------------------------------------
     # Introspection

@@ -17,12 +17,12 @@ from typing import TYPE_CHECKING
 
 from kivy.clock import Clock
 from kivy.metrics import dp
+from kivy.uix.scrollview import ScrollView
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.divider import MDDivider
 from kivymd.uix.label import MDLabel
 from kivymd.uix.screen import MDScreen
-from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.selectioncontrol import MDSwitch
 
 if TYPE_CHECKING:
@@ -65,14 +65,19 @@ class SettingsScreen(MDScreen):
         root.add_widget(self._restart_banner)
 
         # Scrollable content
-        scroll = MDScrollView()
+        scroll = ScrollView(
+            bar_width=dp(6),
+            bar_color=[0.5, 0.5, 0.5, 0.8],
+            do_scroll_x=False,
+            size_hint=(1, 1),
+        )
         content = MDBoxLayout(
             orientation="vertical",
             size_hint_y=None,
+            adaptive_height=True,
             padding="16dp",
             spacing="12dp",
         )
-        content.bind(minimum_height=content.setter("height"))
 
         content.add_widget(self._build_mode_section())
         content.add_widget(MDDivider())
@@ -136,7 +141,7 @@ class SettingsScreen(MDScreen):
         return section
 
     def _build_plugin_section(self) -> MDBoxLayout:
-        section = MDBoxLayout(orientation="vertical", size_hint_y=None, spacing="4dp")
+        section = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True, spacing="4dp")
         section.add_widget(MDLabel(
             text="Plugins",
             font_style="Title",
@@ -148,12 +153,11 @@ class SettingsScreen(MDScreen):
         self._plugin_list_box = MDBoxLayout(
             orientation="vertical",
             size_hint_y=None,
+            adaptive_height=True,
             spacing="2dp",
         )
-        self._plugin_list_box.bind(minimum_height=self._plugin_list_box.setter("height"))
         self._refresh_plugin_list()
         section.add_widget(self._plugin_list_box)
-        section.bind(minimum_height=section.setter("height"))
 
         # Install plugin button
         install_btn = MDButton(
@@ -210,53 +214,64 @@ class SettingsScreen(MDScreen):
             self._plugin_list_box.add_widget(self._make_plugin_row(info))
 
     def _make_plugin_row(self, info: "PluginInfo") -> MDBoxLayout:
-        is_failed = info.status == "failed"
-        is_disabled = info.plugin_id in self._config.disabled_plugins
+        is_user_disabled = info.plugin_id in self._config.disabled_plugins
+        is_actual_failure = info.status == "failed" and not is_user_disabled
 
         row = MDBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
-            height="48dp",
+            height="44dp",
             padding=("8dp", 0),
             spacing="8dp",
-            md_bg_color=(0.3, 0.05, 0.05, 1) if is_failed else (0.12, 0.12, 0.12, 1),
+            md_bg_color=(0.3, 0.05, 0.05, 1) if is_actual_failure else (0.12, 0.12, 0.12, 1),
         )
 
         # Status icon
-        icon = "alert-circle" if is_failed else ("toggle-switch-off" if is_disabled else "puzzle-check")
-        icon_color = (1, 0.3, 0.3, 1) if is_failed else (0.7, 0.7, 0.7, 1)
+        icon = "alert-circle" if is_actual_failure else ("toggle-switch-off" if is_user_disabled else "puzzle-check")
+        icon_color = (1, 0.3, 0.3, 1) if is_actual_failure else (0.7, 0.7, 0.7, 1)
         row.add_widget(MDIconButton(
             icon=icon,
             theme_icon_color="Custom",
             icon_color=icon_color,
-            size_hint_x=None,
+            size_hint=(None, None),
             width=dp(40),
+            height=dp(40),
+            pos_hint={"center_y": 0.5},
             disabled=True,
         ))
 
         # Name + version + error
         info_box = MDBoxLayout(orientation="vertical", size_hint_x=1)
-        info_box.add_widget(MDLabel(
-            text=f"{info.name}  v{info.version}  [{info.mode}]",
-            font_style="Body",
-            size_hint_y=None,
-            height="22dp",
-        ))
-        if is_failed and info.error:
+        if is_actual_failure and info.error:
+            info_box.add_widget(MDLabel(
+                text=f"{info.name}  v{info.version}  [{info.mode}]",
+                font_style="Body",
+                size_hint_y=None,
+                height=dp(22),
+                valign="middle",
+            ))
             info_box.add_widget(MDLabel(
                 text=info.error,
                 font_style="Label",
-            role="small",
+                role="small",
                 theme_text_color="Custom",
                 text_color=(1, 0.5, 0.5, 1),
                 size_hint_y=None,
-                height="18dp",
+                height=dp(18),
+            ))
+        else:
+            info_box.add_widget(MDLabel(
+                text=f"{info.name}  v{info.version}  [{info.mode}]",
+                font_style="Body",
+                size_hint_y=1,
+                valign="middle",
             ))
         row.add_widget(info_box)
 
-        # Enable/disable toggle (can't disable built-in required plugins)
+        # Enable/disable toggle
         switch = MDSwitch()
-        switch.active = not is_disabled
+        switch.active = not is_user_disabled
+        switch.pos_hint = {"center_y": 0.5}
         switch.bind(active=lambda _, val, pid=info.plugin_id: self._on_plugin_toggle(pid, val))
         row.add_widget(switch)
 
@@ -292,8 +307,14 @@ class SettingsScreen(MDScreen):
 
     def _restart_app(self, *_) -> None:
         """Close and relaunch the application."""
-        python = sys.executable
-        os.execv(python, [python] + sys.argv)
+        import subprocess
+        if getattr(sys, "frozen", False):
+            os.execv(sys.executable, [sys.executable])
+        else:
+            tools_dir = Path(__file__).parent.parent.parent
+            subprocess.Popen([sys.executable, "-m", "apf_manager"], cwd=str(tools_dir))
+            from kivymd.app import MDApp
+            MDApp.get_running_app().stop()
 
     def _save_steam_override(self, *_) -> None:
         val = self._steam_path_field.text.strip() or None

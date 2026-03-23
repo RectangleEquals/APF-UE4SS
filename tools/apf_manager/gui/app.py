@@ -61,6 +61,8 @@ class APFManagerApp(MDApp):
         self._settings_screen: Optional[SettingsScreen] = None
         self._home_screen: Optional[MDScreen] = None
         self._previous_screen: str = "home"
+        self._screens_locked: bool = False
+        self._is_maximized: bool = False
 
     # -----------------------------------------------------------------------
     # MDApp lifecycle
@@ -84,6 +86,7 @@ class APFManagerApp(MDApp):
         # Wire host callbacks
         self._host.set_navigate_fn(self._navigate_to_game)
         self._host.set_dialog_fn(self._show_dialog)
+        self._host.set_failure_fn(self._on_runtime_failure)
 
         # Build screen manager
         self._sm = ScreenManager(transition=FadeTransition(duration=0.15))
@@ -109,26 +112,35 @@ class APFManagerApp(MDApp):
             # Fallback: simple "no library plugin" placeholder
             placeholder = MDScreen(name="home")
             lbl = MDLabel(
-                text="Library plugin not loaded.\nConfigure a game in Settings.",
+                text="No game library available.\nEnable the Library plugin in Settings.",
                 halign="center",
             )
             placeholder.add_widget(lbl)
             self._home_screen = placeholder
             self._sm.add_widget(placeholder)
 
-        # Restore window size
+        # Restore window size and position
         from kivy.core.window import Window
-        Window.size = (self._config.window_width, self._config.window_height)
-        Window.bind(on_resize=self._on_window_resize)
+        Window.minimum_width = 900
+        Window.minimum_height = 600
 
-        # Navigate: if any failures → settings (locked); otherwise → home
-        if self._host.has_failures:
+        w = max(self._config.window_width, 900)
+        h = max(self._config.window_height, 600)
+        Window.size = (w, h)
+
+        Window.bind(on_maximize=self._on_window_maximize)
+        Window.bind(on_restore=self._on_window_restore)
+
+        if self._config.window_maximized:
+            Window.maximize()
+
+        # Navigate: if any failures OR no home screen → settings (locked); otherwise → home
+        if self._host.has_failures or not home_contribs:
             for info in self._host.get_all_plugins():
-                if info.status == "failed":
+                if info.status == "failed" and info.error != "Disabled by user.":
                     print(f"[APFManager] Plugin load failure: '{info.name}' — {info.error}", file=sys.stderr)
             self._sm.current = "settings"
             self._settings_screen.refresh()
-            # Lock all screens except settings
             self._lock_non_settings_screens()
         else:
             self._sm.current = "home"
@@ -152,10 +164,19 @@ class APFManagerApp(MDApp):
     def navigate_to_library(self) -> None:
         self._sm.current = "home"
 
-    def _on_window_resize(self, window, width, height) -> None:
-        self._config.window_width = width
-        self._config.window_height = height
+    def on_stop(self) -> None:
+        from kivy.core.window import Window
+        self._config.window_maximized = self._is_maximized
+        if not self._is_maximized:
+            self._config.window_width = max(Window.width, 900)
+            self._config.window_height = max(Window.height, 600)
         self._config.save()
+
+    def _on_window_maximize(self, window) -> None:
+        self._is_maximized = True
+
+    def _on_window_restore(self, window) -> None:
+        self._is_maximized = False
 
     def navigate_back(self) -> None:
         if self._sm.current == "settings":
@@ -179,8 +200,21 @@ class APFManagerApp(MDApp):
     # Plugin failure screen lock
     # -----------------------------------------------------------------------
 
+    def _on_runtime_failure(self) -> None:
+        Clock.schedule_once(lambda dt: self._handle_runtime_failure(), 0)
+
+    def _handle_runtime_failure(self) -> None:
+        self._settings_screen.refresh()
+        if not self._screens_locked:
+            self._lock_non_settings_screens()
+        self._sm.current = "settings"
+
     def _lock_non_settings_screens(self) -> None:
         """Overlay all non-settings screens with a lock message and navigation to Settings."""
+        if self._screens_locked:
+            return
+        self._screens_locked = True
+
         from kivy.metrics import dp
         from kivy.uix.widget import Widget
         from kivymd.uix.button import MDIconButton, MDButton, MDButtonText
@@ -215,7 +249,7 @@ class APFManagerApp(MDApp):
                     height=dp(40),
                 ))
 
-                # Clickable resolve link
+                # Clickable resolve link (centered)
                 resolve_btn = MDButton(
                     MDButtonText(text="Resolve them in Settings to continue."),
                     style="text",
@@ -223,7 +257,11 @@ class APFManagerApp(MDApp):
                     height=dp(40),
                     on_release=_go_settings,
                 )
-                overlay.add_widget(resolve_btn)
+                btn_row = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(40))
+                btn_row.add_widget(Widget())
+                btn_row.add_widget(resolve_btn)
+                btn_row.add_widget(Widget())
+                overlay.add_widget(btn_row)
                 overlay.add_widget(Widget())  # bottom spacer
 
                 screen.add_widget(overlay)

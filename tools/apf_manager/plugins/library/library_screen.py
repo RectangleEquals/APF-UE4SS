@@ -180,6 +180,66 @@ class GameTile(MDCard):
 
 
 # ---------------------------------------------------------------------------
+# Add Game Tile — always-first placeholder tile
+# ---------------------------------------------------------------------------
+
+class _AddGameTile(MDCard):
+    """Gray placeholder tile — always first in the grid — opens the Add dialog."""
+
+    def __init__(self, on_add, **kwargs):
+        super().__init__(
+            orientation="vertical",
+            size_hint=(None, None),
+            size=(dp(200), dp(150)),
+            md_bg_color=(0.2, 0.2, 0.2, 1),
+            **kwargs,
+        )
+        self._on_add = on_add
+        self._build()
+
+    def _build(self) -> None:
+        with self.canvas.before:
+            Color(0.2, 0.2, 0.2, 1)
+            self._bg = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._update_bg, size=self._update_bg)
+
+        plus_area = MDBoxLayout(size_hint=(1, 0.80), orientation="vertical")
+        plus_area.add_widget(MDLabel(
+            text="+",
+            font_style="Display",
+            role="large",
+            halign="center",
+            valign="middle",
+            theme_text_color="Custom",
+            text_color=(0.6, 0.6, 0.6, 1),
+        ))
+        self.add_widget(plus_area)
+
+        name_bar = MDBoxLayout(
+            orientation="horizontal",
+            size_hint=(1, 0.20),
+            padding=[dp(6), dp(2)],
+            md_bg_color=(0, 0, 0, 0.5),
+        )
+        name_bar.add_widget(MDLabel(
+            text="Add Custom Game",
+            font_style="Label",
+            role="small",
+            halign="left",
+            valign="middle",
+            size_hint=(1, 1),
+            theme_text_color="Custom",
+            text_color=(1, 1, 1, 0.9),
+        ))
+        self.add_widget(name_bar)
+        self.bind(on_release=lambda *_: self._on_add())
+
+    def _update_bg(self, *_) -> None:
+        self._bg.pos = self.pos
+        self._bg.size = self.size
+
+
+# ---------------------------------------------------------------------------
 # Add Custom Game — dialog content
 # ---------------------------------------------------------------------------
 
@@ -285,16 +345,12 @@ class LibraryScreen(MDBoxLayout):
         """Rebuild tile grid from config + cached steam games."""
         self._grid.clear_widgets()
         self._tile_map.clear()
-        games = self._build_game_list()
 
+        # Always-first tile
+        self._grid.add_widget(_AddGameTile(on_add=self._open_add_dialog))
+
+        games = self._build_game_list()
         if not games:
-            self._grid.add_widget(MDLabel(
-                text="No games found.\nPress the Steam icon to scan, or + to add manually.",
-                halign="center",
-                valign="middle",
-                size_hint=(1, None),
-                height=dp(120),
-            ))
             return
 
         for entry in games:

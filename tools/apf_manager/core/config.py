@@ -72,6 +72,9 @@ class GlobalSettings:
     disabled_plugins: list = field(default_factory=list)  # plugin IDs to skip loading
     window_width: int = 1280
     window_height: int = 720
+    window_x: Optional[int] = None
+    window_y: Optional[int] = None
+    window_maximized: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +98,9 @@ class APFConfig:
             s.disabled_plugins = data.get("disabled_plugins", [])
             s.window_width = data.get("window_width", 1280)
             s.window_height = data.get("window_height", 720)
+            s.window_x = data.get("window_x")
+            s.window_y = data.get("window_y")
+            s.window_maximized = data.get("window_maximized", False)
             s.games = {
                 gid: GameProfile.from_dict(gdata)
                 for gid, gdata in data.get("games", {}).items()
@@ -112,6 +118,9 @@ class APFConfig:
             "disabled_plugins": s.disabled_plugins,
             "window_width": s.window_width,
             "window_height": s.window_height,
+            "window_x": s.window_x,
+            "window_y": s.window_y,
+            "window_maximized": s.window_maximized,
             "games": {gid: g.to_dict() for gid, g in s.games.items()},
         }
         self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -184,6 +193,30 @@ class APFConfig:
     @window_height.setter
     def window_height(self, value: int) -> None:
         self._settings.window_height = value
+
+    @property
+    def window_x(self) -> Optional[int]:
+        return self._settings.window_x
+
+    @window_x.setter
+    def window_x(self, value: Optional[int]) -> None:
+        self._settings.window_x = value
+
+    @property
+    def window_y(self) -> Optional[int]:
+        return self._settings.window_y
+
+    @window_y.setter
+    def window_y(self, value: Optional[int]) -> None:
+        self._settings.window_y = value
+
+    @property
+    def window_maximized(self) -> bool:
+        return self._settings.window_maximized
+
+    @window_maximized.setter
+    def window_maximized(self, value: bool) -> None:
+        self._settings.window_maximized = value
 
     def set_plugin_disabled(self, plugin_id: str, disabled: bool) -> None:
         if disabled and plugin_id not in self._settings.disabled_plugins:
