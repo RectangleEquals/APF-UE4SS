@@ -123,6 +123,16 @@ class SessionManager:
         if backup.path.exists():
             backup.path.unlink()
 
+    def clear_sessions(self, game_id: Optional[str] = None) -> None:
+        """Delete all session backups for the given game (or current game if not specified)."""
+        import shutil
+        gid = game_id or self._game_id
+        if not gid:
+            return
+        folder = _SESSIONS_ROOT / gid
+        if folder.is_dir():
+            shutil.rmtree(folder)
+
     def rename(self, backup: SessionBackup, new_name: str) -> Optional[SessionBackup]:
         safe = re.sub(r'[\\/:*?"<>|]', "_", new_name).strip() or "backup"
         new_path = backup.path.parent / f"{backup.timestamp}_{safe}.json"

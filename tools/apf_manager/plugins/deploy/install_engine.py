@@ -24,11 +24,13 @@ Environment variables available in all path/content params:
 from __future__ import annotations
 
 import glob
+import json
 import re
 import shutil
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...core.config import GameProfile
@@ -63,6 +65,7 @@ class InstallEngine:
         self._detection = detection
         self._mods_txt = mods_txt
         self._log = log_fn or (lambda msg: None)
+        self._tracker: Optional[list[Path]] = None
 
     # -----------------------------------------------------------------------
     # Public
@@ -72,13 +75,19 @@ class InstallEngine:
         self,
         steps: list["InstallStep"],
         mod: "ModInfo",
+        manifest_path: Optional[Path] = None,
     ) -> list[StepResult]:
+        if manifest_path is not None:
+            self._tracker = []
         env = self._build_env(mod)
         results = []
         for step in steps:
             result = self._run_step(step, env)
             results.append(result)
             self._log(f"[{'OK' if result.ok else 'ERR'}] {step.step_type}: {result.message}")
+        if manifest_path is not None and self._tracker is not None:
+            self._write_manifest(manifest_path, self._tracker)
+        self._tracker = None
         return results
 
     def run_uninstall(
@@ -133,9 +142,9 @@ class InstallEngine:
             elif t == "create_file":
                 return self._create_file(p)
             elif t == "remove_tree":
-                return self._remove_tree(p)
+                return _remove_tree(p)
             elif t == "ensure_dir":
-                return self._ensure_dir(p)
+                return _ensure_dir(p)
             elif t == "ensure_mods_txt":
                 return self._ensure_mods_txt(p)
             else:
@@ -144,11 +153,10 @@ class InstallEngine:
             return StepResult(ok=False, message=str(exc))
 
     # -----------------------------------------------------------------------
-    # Step handlers
+    # Step handlers (instance methods to access _tracker)
     # -----------------------------------------------------------------------
 
-    @staticmethod
-    def _copy(p: dict, overwrite: bool) -> StepResult:
+    def _copy(self, p: dict, overwrite: bool) -> StepResult:
         src = Path(p.get("src", ""))
         dst = Path(p.get("dst", ""))
         if not src.exists():
@@ -157,10 +165,11 @@ class InstallEngine:
             return StepResult(ok=True, message=f"Preserved existing: {dst.name}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+        if self._tracker is not None:
+            self._tracker.append(dst)
         return StepResult(ok=True, message=f"{src.name} → {dst}")
 
-    @staticmethod
-    def _copy_glob(p: dict) -> StepResult:
+    def _copy_glob(self, p: dict) -> StepResult:
         pattern = p.get("pattern", "")
         src_dir = Path(p.get("src_dir", "."))
         dst_dir = Path(p.get("dst_dir", ""))
@@ -169,11 +178,13 @@ class InstallEngine:
             return StepResult(ok=False, message=f"No files matched: {pattern}")
         dst_dir.mkdir(parents=True, exist_ok=True)
         for f in matches:
-            shutil.copy2(f, dst_dir / Path(f).name)
+            dst = dst_dir / Path(f).name
+            shutil.copy2(f, dst)
+            if self._tracker is not None:
+                self._tracker.append(dst)
         return StepResult(ok=True, message=f"Copied {len(matches)} file(s) to {dst_dir}")
 
-    @staticmethod
-    def _copy_tree(p: dict) -> StepResult:
+    def _copy_tree(self, p: dict) -> StepResult:
         src = Path(p.get("src", ""))
         dst = Path(p.get("dst", ""))
         if not src.is_dir():
@@ -181,29 +192,20 @@ class InstallEngine:
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
+        if self._tracker is not None:
+            for f in dst.rglob("*"):
+                if f.is_file():
+                    self._tracker.append(f)
         return StepResult(ok=True, message=f"{src.name}/ → {dst}")
 
-    @staticmethod
-    def _create_file(p: dict) -> StepResult:
+    def _create_file(self, p: dict) -> StepResult:
         path = Path(p.get("path", ""))
         content = p.get("content", "")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        if self._tracker is not None:
+            self._tracker.append(path)
         return StepResult(ok=True, message=f"Created {path.name}")
-
-    @staticmethod
-    def _remove_tree(p: dict) -> StepResult:
-        path = Path(p.get("path", ""))
-        if not path.exists():
-            return StepResult(ok=True, message=f"Already absent: {path.name}")
-        shutil.rmtree(path)
-        return StepResult(ok=True, message=f"Removed {path}")
-
-    @staticmethod
-    def _ensure_dir(p: dict) -> StepResult:
-        path = Path(p.get("path", ""))
-        path.mkdir(parents=True, exist_ok=True)
-        return StepResult(ok=True, message=f"Directory ready: {path}")
 
     def _ensure_mods_txt(self, p: dict) -> StepResult:
         mod_name = p.get("mod_name", "")
@@ -212,3 +214,34 @@ class InstallEngine:
         self._mods_txt.ensure_entry(mod_name, enabled=True)
         self._mods_txt.save()
         return StepResult(ok=True, message=f"mods.txt: ensured {mod_name}")
+
+    # -----------------------------------------------------------------------
+    # Manifest
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _write_manifest(manifest_path: Path, files: list[Path]) -> None:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "files": [str(f) for f in files],
+        }
+        manifest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+# -----------------------------------------------------------------------
+# Pure static step handlers (no file tracking)
+# -----------------------------------------------------------------------
+
+def _remove_tree(p: dict) -> StepResult:
+    path = Path(p.get("path", ""))
+    if not path.exists():
+        return StepResult(ok=True, message=f"Already absent: {path.name}")
+    shutil.rmtree(path)
+    return StepResult(ok=True, message=f"Removed {path}")
+
+
+def _ensure_dir(p: dict) -> StepResult:
+    path = Path(p.get("path", ""))
+    path.mkdir(parents=True, exist_ok=True)
+    return StepResult(ok=True, message=f"Directory ready: {path}")

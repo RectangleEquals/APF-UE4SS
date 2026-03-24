@@ -242,7 +242,7 @@ class GameTile(MDCard):
         # Image area (flexible)
         self._img_area = MDBoxLayout(size_hint=(1, 1), orientation="vertical")
         thumb = self._profile.custom_thumbnail
-        if thumb and Path(thumb).exists():
+        if thumb and Path(thumb).is_file():
             self._set_thumbnail(Path(thumb))
         else:
             self._img_area.add_widget(MDLabel(
@@ -370,8 +370,7 @@ class GameTile(MDCard):
         self._img_area.clear_widgets()
         self._img_area.add_widget(Image(
             source=str(path),
-            allow_stretch=True,
-            keep_ratio=False,
+            fit_mode="fill",
         ))
 
     # --- Badge ---
@@ -552,7 +551,7 @@ class _CarouselSection(MDBoxLayout):
         """Fill visible area with placeholder tiles without overflowing. Fix 32-F."""
         slot_w = _TILE_W + dp(12)
         usable_w = max(self._scroll.width - dp(80), 0)
-        visible_slots = max(int(usable_w / slot_w), 0)
+        visible_slots = max(int(usable_w / slot_w) + 1, 0)
         n_needed = max(0, visible_slots - n_real)
 
         placeholders = [c for c in reversed(self._tiles_box.children)
@@ -822,24 +821,64 @@ class LibraryScreen(MDBoxLayout):
                 self._ue4ss_dialog.dismiss()
 
         def _download(*_):
-            webbrowser.open("https://github.com/UE4SS-RE/RE-UE4SS/releases/latest")
+            webbrowser.open("https://github.com/UE4SS-RE/RE-UE4SS/releases")
             _dismiss()
+
+        def _remove(*_):
+            _dismiss()
+            self._confirm_remove_game(profile)
+
+        in_config = profile.game_id in self._config.games
+
+        btn_widgets = [Widget()]
+        btn_widgets.append(MDButton(MDButtonText(text="Cancel"), style="text", on_release=_dismiss))
+        if in_config:
+            btn_widgets.append(MDButton(MDButtonText(text="Remove from Library"),
+                                        style="text", on_release=_remove))
+        btn_widgets.append(MDButton(MDButtonText(text="Download UE4SS"),
+                                    style="filled", on_release=_download))
 
         self._ue4ss_dialog = MDDialog(
             MDDialogHeadlineText(text="UE4SS Not Detected"),
             MDDialogSupportingText(text=(
                 f"UE4SS was not found for {profile.display_name}.\n\n"
                 f"{detail}\n\n"
-                "Install UE4SS into the game's Binaries/Win64/ folder, then try again."
+                "Follow the official UE4SS installation guide for your game. "
+                "Note: some games require a specific UE4SS version or fork — "
+                "check Nexus Mods, CurseForge, or Thunderstore. "
+                "AP Framework for UE4SS requires v3.0.1 or newer."
             )),
-            MDDialogButtonContainer(
-                Widget(),
-                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_dismiss),
-                MDButton(MDButtonText(text="Download UE4SS"), style="filled",
-                         on_release=_download),
-            ),
+            MDDialogButtonContainer(*btn_widgets),
         )
         self._ue4ss_dialog.open()
+
+    def _confirm_remove_game(self, profile: "GameProfile") -> None:
+        dialog: list = []
+
+        def _do_remove(*_):
+            self._config.remove_game(profile.game_id)
+            dialog[0].dismiss()
+            self.refresh()
+
+        def _cancel(*_):
+            dialog[0].dismiss()
+
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Remove from Library"),
+            MDDialogSupportingText(
+                text=(f"Remove \"{profile.display_name}\" from APF Manager?\n\n"
+                      "This only removes the tile from the library — it does not "
+                      "affect your game installation.")
+            ),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_cancel),
+                MDButton(MDButtonText(text="Remove"), style="filled",
+                         md_bg_color=(0.7, 0.1, 0.1, 1), on_release=_do_remove),
+            ),
+        )
+        dialog.append(dlg)
+        dlg.open()
 
     # -----------------------------------------------------------------------
     # Add Custom Game — folder picker flow
@@ -1006,12 +1045,28 @@ class LibraryScreen(MDBoxLayout):
 
     def _open_image_picker(self, chosen_image: list, status_lbl: MDLabel) -> None:
         try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askopenfilename(
+                title="Select Thumbnail Image",
+                filetypes=[("Image files", "*.png *.jpg *.jpeg"), ("All files", "*.*")],
+            )
+            root.destroy()
+            if path:
+                Clock.schedule_once(
+                    lambda dt: self._on_image_chosen([path], chosen_image, status_lbl), 0)
+            return
+        except Exception:
+            pass
+        try:
             from plyer import filechooser
             filechooser.open_file(
                 title="Select Thumbnail Image",
                 filters=[("Image files", "*.png", "*.jpg", "*.jpeg")],
-                on_selection=lambda sel: self._on_image_chosen(
-                    sel, chosen_image, status_lbl),
+                on_selection=lambda sel: self._on_image_chosen(sel, chosen_image, status_lbl),
             )
         except Exception:
             self._open_kivy_image_picker(chosen_image, status_lbl)
@@ -1026,9 +1081,9 @@ class LibraryScreen(MDBoxLayout):
         dialog: list = []
 
         def _select(*_):
-            selection = picker.selection or [picker.path]
-            dialog[0].dismiss()
-            self._on_image_chosen(selection, chosen_image, status_lbl)
+            if picker.selection:
+                dialog[0].dismiss()
+                self._on_image_chosen(picker.selection, chosen_image, status_lbl)
 
         def _cancel(*_):
             dialog[0].dismiss()
@@ -1047,7 +1102,7 @@ class LibraryScreen(MDBoxLayout):
 
     def _on_image_chosen(self, selection: list, chosen_image: list,
                           status_lbl: MDLabel) -> None:
-        if selection:
+        if selection and Path(selection[0]).is_file():
             chosen_image[0] = selection[0]
             status_lbl.text = Path(selection[0]).name
 

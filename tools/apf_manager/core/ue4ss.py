@@ -3,15 +3,17 @@ UE4SSDetector — detects an existing UE4SS installation under a given game root
 
 Works for any UE4/UE5 game that uses UE4SS. Does not depend on game-specific paths.
 Detection is based on:
-  - dwmapi.dll or winhttp.dll (UE4SS proxy DLL) in the binaries directory
-  - UE4SS.dll in the UE4SS folder
+  - ue4ss/UE4SS.dll (universal presence marker for all UE4SS versions)
   - Mods/ directory and mods.txt
   - Content/Paks/ (confirms UE4/UE5 packaging format)
+
+Path structure (typical):
+  <game_root>/<short_name>/Binaries/<arch>/ue4ss/UE4SS.dll
+                           ^binaries_dir   ^platform_dir  ^ue4ss_dir
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,7 +24,8 @@ MAX_SCAN_DEPTH = 6
 class UE4SSResult:
     valid: bool = False
     game_root: Path = field(default_factory=Path)
-    binaries_dir: Path = field(default_factory=Path)
+    binaries_dir: Path = field(default_factory=Path)   # Actual Binaries/ folder
+    platform_dir: Path = field(default_factory=Path)   # Arch dir (e.g. Win64/) — parent of ue4ss/
     ue4ss_dir: Path = field(default_factory=Path)
     mods_dir: Path = field(default_factory=Path)
     mods_txt: Path = field(default_factory=Path)
@@ -69,23 +72,21 @@ class UE4SSDetector:
         root = Path(game_root)
         result = UE4SSResult(game_root=root)
 
-        # --- Find binaries directory (contains dwmapi.dll or winhttp.dll) ---
-        binaries_dir = UE4SSDetector._find_binaries(root)
-        if binaries_dir is None:
-            result.missing.append("Binaries directory (Win64)")
-            return result
-        result.binaries_dir = binaries_dir
-
-        # --- Find UE4SS directory (ue4ss/ or UE4SS/) ---
-        ue4ss_dir = _find_dir_ci(binaries_dir, "ue4ss")
+        # --- Find ue4ss/ directory containing UE4SS.dll ---
+        ue4ss_dir = UE4SSDetector._find_ue4ss_dir(root)
         if ue4ss_dir is None:
-            result.missing.append("UE4SS folder")
+            result.missing.append("UE4SS not installed")
             return result
         result.ue4ss_dir = ue4ss_dir
 
-        # --- UE4SS.dll ---
-        if _find_file_ci(ue4ss_dir, "UE4SS.dll") is None:
-            result.missing.append("UE4SS.dll")
+        # platform_dir = the arch directory (e.g. Win64/) containing ue4ss/
+        result.platform_dir = ue4ss_dir.parent
+
+        # binaries_dir = the actual Binaries/ folder (parent of platform_dir),
+        # only set if the name confirms it (handles non-standard layouts gracefully)
+        parent_of_platform = ue4ss_dir.parent.parent
+        if parent_of_platform.name.lower() == "binaries":
+            result.binaries_dir = parent_of_platform
 
         # --- Mods directory ---
         mods_dir = _find_dir_ci(ue4ss_dir, "Mods")
@@ -112,27 +113,23 @@ class UE4SSDetector:
         return result
 
     @staticmethod
-    def _find_binaries(root: Path) -> Path | None:
+    def _find_ue4ss_dir(root: Path) -> Path | None:
         """
-        Recursively scan from root (up to MAX_SCAN_DEPTH) for a Win64 binaries directory
-        that contains dwmapi.dll or winhttp.dll (UE4SS proxy DLL markers).
+        Recursively scan from root (up to MAX_SCAN_DEPTH) for a ue4ss/ directory
+        containing UE4SS.dll — the universal presence marker for all UE4SS versions.
         """
         def scan(directory: Path, depth: int) -> Path | None:
             if depth > MAX_SCAN_DEPTH:
                 return None
+            candidate = _find_dir_ci(directory, "ue4ss")
+            if candidate and _find_file_ci(candidate, "UE4SS.dll"):
+                return candidate
             try:
                 for entry in directory.iterdir():
-                    if not entry.is_dir():
-                        continue
-                    if entry.name.lower() == "win64":
-                        if (
-                            _find_file_ci(entry, "dwmapi.dll") is not None
-                            or _find_file_ci(entry, "winhttp.dll") is not None
-                        ):
-                            return entry
-                    result = scan(entry, depth + 1)
-                    if result:
-                        return result
+                    if entry.is_dir():
+                        found = scan(entry, depth + 1)
+                        if found:
+                            return found
             except (PermissionError, OSError):
                 pass
             return None
@@ -153,9 +150,9 @@ class UE4SSDetector:
             try:
                 for entry in directory.iterdir():
                     if entry.is_dir() and entry.name.lower() != "content":
-                        result = scan(entry, depth + 1)
-                        if result:
-                            return result
+                        found = scan(entry, depth + 1)
+                        if found:
+                            return found
             except (PermissionError, OSError):
                 pass
             return None
