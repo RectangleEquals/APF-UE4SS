@@ -2,9 +2,10 @@
 DeployPanel — hub_panel UI for the deploy plugin.
 
 Layout:
-    [Top toolbar: Rescan | Deploy All | Validate | Clean]
+    [Top toolbar: Mods label | All switch | Rescan | Deploy All | Validate]
+    [Sticky header: Order | Status | Mod Name | (Steps) | Version | Enabled]
     [Mod list: scrollable rows]
-        Row: ▲▼ | name + version | status badge | enable toggle | action buttons
+        Row: ▲▼ | status icon | name | step buttons | version | enable toggle
     [LogPanel at bottom (shared via host)]
 
 Mod row color coding:
@@ -13,6 +14,9 @@ Mod row color coding:
     red      — error (missing dep, incompatible)
     grey     — disabled
     dim text — non-AP mod row (not managed by APF)
+
+Show All (default off): when off, only AP mods are shown.
+_SCAN_EXCLUDE: folder names always excluded from the list regardless of Show All.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from kivymd.uix.dialog import (
     MDDialogContentContainer, MDDialogButtonContainer,
 )
 from kivymd.uix.label import MDLabel
+from kivymd.uix.selectioncontrol import MDSwitch
 
 from ...gui.widgets.plugin_panel import PluginPanel
 from ...gui.widgets.tip_icon_button import TipIconButton
@@ -47,6 +52,16 @@ _ROW_BG_WARN     = (0.22, 0.18, 0.08, 1)
 _ROW_BG_ERROR    = (0.22, 0.10, 0.10, 1)
 _ROW_BG_DISABLED = (0.10, 0.10, 0.10, 1)
 _ROW_BG_NONAP    = (0.11, 0.11, 0.11, 1)
+
+# Folders excluded from the mod list regardless of Show All state
+_SCAN_EXCLUDE = {"shared"}
+
+# Fixed column widths
+_COL_REORDER = dp(64)   # ▲▼ buttons (or spacer)
+_COL_STATUS  = dp(28)   # status MDIcon
+_COL_STEPS   = dp(80)   # manual-step buttons container (or spacer)
+_COL_VERSION = dp(72)   # version string (right-aligned)
+_COL_TOGGLE  = dp(52)   # MDSwitch (or spacer)
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +97,7 @@ class ModRow(MDBoxLayout):
     def _apply_row_color(self, status: str, mod: "ModInfo") -> None:
         if not mod.is_ap_mod:
             self.md_bg_color = _ROW_BG_NONAP
-        elif not self._is_enabled():
+        elif not self._enabled:
             self.md_bg_color = _ROW_BG_DISABLED
         elif status == "error":
             self.md_bg_color = _ROW_BG_ERROR
@@ -91,13 +106,10 @@ class ModRow(MDBoxLayout):
         else:
             self.md_bg_color = _ROW_BG_NORMAL
 
-    def _is_enabled(self) -> bool:
-        return self._enabled
-
     def _build(self, on_toggle, on_move_up, on_move_down, on_manual_step) -> None:
         mod = self._mod
 
-        # Reorder buttons (only for AP mods)
+        # Column 1: Reorder buttons (AP mods) or spacer
         if mod.is_ap_mod:
             up_btn = MDIconButton(
                 icon="chevron-up",
@@ -114,15 +126,26 @@ class ModRow(MDBoxLayout):
             self.add_widget(up_btn)
             self.add_widget(down_btn)
         else:
-            # Spacer for alignment
-            self.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(64)))
+            self.add_widget(MDBoxLayout(size_hint=(None, 1), width=_COL_REORDER))
 
-        # Name + version
-        name_text = mod.display_name
-        if mod.version:
-            name_text += f"  v{mod.version}"
+        # Column 2: Status badge
+        from kivymd.uix.label import MDIcon
+        from ...gui.theme import STATUS_ICONS
+        icon_name, icon_color = STATUS_ICONS.get(self._status, STATUS_ICONS["unknown"])
+        badge = MDIcon(
+            icon=icon_name,
+            theme_icon_color="Custom",
+            icon_color=icon_color,
+            size_hint=(None, 1),
+            width=_COL_STATUS,
+            halign="center",
+            valign="middle",
+        )
+        self.add_widget(badge)
+
+        # Column 3: Mod name (flexible)
         name_lbl = MDLabel(
-            text=name_text,
+            text=mod.display_name,
             font_style="Body",
             size_hint=(1, 1),
             halign="left",
@@ -132,41 +155,92 @@ class ModRow(MDBoxLayout):
         )
         self.add_widget(name_lbl)
 
-        # Status badge (MDIcon)
-        from kivymd.uix.label import MDIcon
-        from ...gui.theme import STATUS_ICONS
-        icon_name, icon_color = STATUS_ICONS.get(self._status, STATUS_ICONS["unknown"])
-        badge = MDIcon(
-            icon=icon_name,
-            theme_icon_color="Custom",
-            icon_color=icon_color,
-            size_hint=(None, 1),
-            width=dp(24),
-            halign="center",
-            valign="middle",
-        )
-        self.add_widget(badge)
+        # Column 4: Manual step buttons (or spacer) — fixed width for column alignment
+        button_steps = [s for s in mod.manual_steps if s.when == "button" and s.caption]
+        if button_steps:
+            steps_box = MDBoxLayout(
+                orientation="horizontal",
+                size_hint=(None, 1),
+                width=_COL_STEPS,
+                spacing=dp(2),
+            )
+            for step in button_steps:
+                btn = MDButton(
+                    MDButtonText(text=step.caption),
+                    style="text",
+                    size_hint=(1, 1),
+                    on_release=lambda *_, s=step: on_manual_step(mod, s),
+                )
+                steps_box.add_widget(btn)
+            self.add_widget(steps_box)
+        else:
+            self.add_widget(Widget(size_hint=(None, 1), width=_COL_STEPS))
 
-        # Enable/disable toggle (only for AP mods)
+        # Column 5: Version (fixed width, right-aligned, small right padding)
+        version_lbl = MDLabel(
+            text=f"v{mod.version}" if mod.version else "",
+            font_style="Label",
+            role="small",
+            size_hint=(None, 1),
+            width=_COL_VERSION,
+            halign="right",
+            valign="middle",
+            theme_text_color="Custom",
+            text_color=(0.6, 0.6, 0.6, 1),
+            padding=[0, 0, dp(4), 0],
+        )
+        self.add_widget(version_lbl)
+
+        # Column 6: Enable/disable toggle (AP mods only)
         if mod.is_ap_mod:
-            from kivymd.uix.selectioncontrol import MDSwitch
             cb = MDSwitch(size_hint=(None, None), pos_hint={"center_y": 0.5})
             cb.active = self._enabled
             cb.bind(active=lambda inst, val, m=mod: on_toggle(m, val))
             self._checkbox = cb
             self.add_widget(cb)
+        else:
+            self.add_widget(MDBoxLayout(size_hint=(None, 1), width=_COL_TOGGLE))
 
-        # "button" manual step buttons
-        for step in mod.manual_steps:
-            if step.when == "button" and step.caption:
-                btn = MDButton(
-                    MDButtonText(text=step.caption),
-                    style="text",
-                    size_hint=(None, 1),
-                    width=dp(80),
-                    on_release=lambda *_, s=step: on_manual_step(mod, s),
-                )
-                self.add_widget(btn)
+
+# ---------------------------------------------------------------------------
+# Header row (sticky, above ScrollView)
+# ---------------------------------------------------------------------------
+
+class _HeaderRow(MDBoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(
+            orientation="horizontal",
+            size_hint=(1, None),
+            height=dp(28),
+            padding=[dp(4), 0],
+            spacing=dp(4),
+            md_bg_color=(0.12, 0.12, 0.12, 1),
+            **kwargs,
+        )
+
+        def _col(text: str, width=None, halign: str = "left"):
+            kw = dict(
+                text=text,
+                font_style="Label",
+                role="small",
+                valign="middle",
+                halign=halign,
+                theme_text_color="Custom",
+                text_color=(0.55, 0.55, 0.55, 1),
+            )
+            if width is not None:
+                kw["size_hint"] = (None, 1)
+                kw["width"] = width
+            else:
+                kw["size_hint"] = (1, 1)
+            return MDLabel(**kw)
+
+        self.add_widget(_col("Order", width=_COL_REORDER, halign="center"))
+        self.add_widget(_col("Status", width=_COL_STATUS, halign="center"))
+        self.add_widget(_col("Mod Name"))
+        self.add_widget(_col("", width=_COL_STEPS))
+        self.add_widget(_col("Version", width=_COL_VERSION, halign="right"))
+        self.add_widget(_col("Enabled", width=_COL_TOGGLE, halign="center"))
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +259,7 @@ class DeployPanel(PluginPanel):
         self._profile: Optional["GameProfile"] = None
         self._detection: Optional["UE4SSResult"] = None
         self._rows: list[ModRow] = []
+        self._show_all: bool = False
         self._validation_dialog: Optional[MDDialog] = None
         self._build_ui()
 
@@ -217,18 +292,58 @@ class DeployPanel(PluginPanel):
         self.orientation = "vertical"
 
         # Toolbar
-        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
-                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
-        toolbar.add_widget(MDLabel(text="Mods", font_style="Title", role="large",
-                                   size_hint_x=1, halign="left"))
-        toolbar.add_widget(TipIconButton(icon="refresh", tooltip_text="Rescan mods",
-                                         on_release=lambda *_: self._on_rescan()))
-        toolbar.add_widget(TipIconButton(icon="rocket-launch", tooltip_text="Deploy all mods",
-                                         on_release=lambda *_: self._on_deploy_all()))
-        toolbar.add_widget(TipIconButton(icon="check-circle", tooltip_text="Validate load order",
-                                         on_release=lambda *_: self._on_validate()))
+        toolbar = MDBoxLayout(
+            orientation="horizontal",
+            size_hint_y=None,
+            height=dp(56),
+            md_bg_color=(0.15, 0.2, 0.25, 1),
+            padding=(dp(8), 0),
+            spacing=dp(4),
+        )
+        toolbar.add_widget(MDLabel(
+            text="Mods",
+            font_style="Title",
+            role="large",
+            size_hint_x=1,
+            halign="left",
+        ))
+
+        # "Show All" toggle
+        toolbar.add_widget(MDLabel(
+            text="All",
+            size_hint=(None, 1),
+            width=dp(24),
+            halign="center",
+            theme_text_color="Custom",
+            text_color=(0.7, 0.7, 0.7, 1),
+        ))
+        self._show_all_switch = MDSwitch(size_hint=(None, None), pos_hint={"center_y": 0.5})
+        self._show_all_switch.active = False
+        self._show_all_switch.bind(active=lambda inst, val: self._on_show_all_toggle(val))
+        toolbar.add_widget(self._show_all_switch)
+
+        toolbar.add_widget(TipIconButton(
+            icon="refresh",
+            tooltip_text="Rescan mods",
+            on_release=lambda *_: self._on_rescan(),
+        ))
+        toolbar.add_widget(TipIconButton(
+            icon="rocket-launch",
+            tooltip_text="Deploy all mods",
+            on_release=lambda *_: self._on_deploy_all(),
+        ))
+        toolbar.add_widget(TipIconButton(
+            icon="check-circle",
+            tooltip_text="Validate load order",
+            on_release=lambda *_: self._on_validate(),
+        ))
         self._toolbar = toolbar
         self.add_widget(toolbar)
+
+        # Sticky header (hidden until mods are present)
+        self._header_row = _HeaderRow()
+        self._header_row.opacity = 0
+        self.add_widget(self._header_row)
 
         # Scrollable mod list
         self._scroll = ScrollView(size_hint=(1, 1))
@@ -237,7 +352,7 @@ class DeployPanel(PluginPanel):
             size_hint_y=None,
             adaptive_height=True,
             spacing=dp(2),
-            padding=[dp(8), dp(8)],
+            padding=[dp(8), dp(4)],
         )
         self._scroll.add_widget(self._list_layout)
         self.add_widget(self._scroll)
@@ -255,7 +370,16 @@ class DeployPanel(PluginPanel):
         self._rows = []
 
         mods = self._get_mods()
+
+        # Always exclude non-mod folders
+        mods = [m for m in mods if m.folder_name not in _SCAN_EXCLUDE]
+
+        # Filter to AP mods only unless Show All is on
+        if not self._show_all:
+            mods = [m for m in mods if m.is_ap_mod]
+
         if not mods:
+            self._header_row.opacity = 0
             self._list_layout.add_widget(MDLabel(
                 text="No mods found in this game's Mods directory.",
                 halign="center",
@@ -263,6 +387,8 @@ class DeployPanel(PluginPanel):
                 height=dp(60),
             ))
             return
+
+        self._header_row.opacity = 1
 
         # Sort mods by mods.txt order (mods not yet in mods.txt go at end)
         if self._mods_txt:
@@ -282,7 +408,6 @@ class DeployPanel(PluginPanel):
                 status = "unknown"
 
             # Sync enabled state from mods_txt
-            # Mods not yet in mods.txt (not deployed) default to enabled
             if self._mods_txt:
                 if self._mods_txt.contains(mod.folder_name):
                     enabled = self._mods_txt.is_enabled(mod.folder_name)
@@ -313,6 +438,10 @@ class DeployPanel(PluginPanel):
     # -----------------------------------------------------------------------
     # Toolbar actions
     # -----------------------------------------------------------------------
+
+    def _on_show_all_toggle(self, val: bool) -> None:
+        self._show_all = val
+        self._refresh()
 
     def _on_rescan(self) -> None:
         mods_svc = self._host.get_service("mods")
@@ -345,6 +474,7 @@ class DeployPanel(PluginPanel):
 
     def _on_validate(self) -> None:
         mods = self._get_mods()
+        mods = [m for m in mods if m.folder_name not in _SCAN_EXCLUDE]
         if not mods:
             return
         validator = self._build_validator(mods)
@@ -387,26 +517,54 @@ class DeployPanel(PluginPanel):
             svc.set_enabled(mod.folder_name, enabled)
 
     def _on_move_up(self, mod: "ModInfo") -> None:
-        svc = self._deploy_svc
-        if not svc:
+        idx = next(
+            (i for i, r in enumerate(self._rows) if r._mod.folder_name == mod.folder_name),
+            None,
+        )
+        if idx is None or idx == 0:
             return
-        order = svc.get_load_order()
-        idx = next((i for i, n in enumerate(order) if n == mod.folder_name), None)
-        if idx is not None and idx > 0:
-            order[idx], order[idx - 1] = order[idx - 1], order[idx]
-            svc.reorder(order)
-            self._refresh()
+        self._swap_displayed(idx, idx - 1)
 
     def _on_move_down(self, mod: "ModInfo") -> None:
+        idx = next(
+            (i for i, r in enumerate(self._rows) if r._mod.folder_name == mod.folder_name),
+            None,
+        )
+        if idx is None or idx >= len(self._rows) - 1:
+            return
+        self._swap_displayed(idx, idx + 1)
+
+    def _swap_displayed(self, i: int, j: int) -> None:
+        """Swap rows[i] and rows[j] in the display order, then rebuild and save mods.txt order."""
         svc = self._deploy_svc
         if not svc:
             return
-        order = svc.get_load_order()
-        idx = next((i for i, n in enumerate(order) if n == mod.folder_name), None)
-        if idx is not None and idx < len(order) - 1:
-            order[idx], order[idx + 1] = order[idx + 1], order[idx]
-            svc.reorder(order)
-            self._refresh()
+
+        # New display order after swap
+        rows = self._rows[:]
+        rows[i], rows[j] = rows[j], rows[i]
+        displayed_names_new = [r._mod.folder_name for r in rows]
+        displayed_names_set = {r._mod.folder_name for r in self._rows}
+
+        # Rebuild full mods.txt order: keep hidden mods in their original positions,
+        # replace displayed mods with the new display order.
+        full_order = svc.get_load_order()
+        new_full: list[str] = []
+        di = 0
+        for name in full_order:
+            if name in displayed_names_set:
+                new_full.append(displayed_names_new[di])
+                di += 1
+            else:
+                new_full.append(name)
+
+        # Append any displayed mods not yet in mods.txt (new/undeployed)
+        while di < len(displayed_names_new):
+            new_full.append(displayed_names_new[di])
+            di += 1
+
+        svc.reorder(new_full)
+        self._refresh()
 
     def _on_manual_step(self, mod: "ModInfo", step) -> None:
         title = step.title or step.caption or "Manual Step"
@@ -438,7 +596,7 @@ class DeployPanel(PluginPanel):
 
         self._step_dialog = MDDialog(
             MDDialogHeadlineText(text=title),
-            MDDialogSupportingText(text=content_text[:2000]),  # cap for dialog display
+            MDDialogSupportingText(text=content_text[:2000]),
             MDDialogButtonContainer(
                 Widget(),
                 MDButton(MDButtonText(text="OK"), style="text", on_release=_close),

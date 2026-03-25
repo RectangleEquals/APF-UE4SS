@@ -53,10 +53,10 @@ class LogPackager:
                     zf.write(ue4ss_log, "UE4SS.log")
                     included.append("UE4SS.log")
 
-            # session_state.json
+            # session_state.json (lives in APFrameworkMod/output/)
             if self._detection.mods_dir:
                 state_path = (
-                    self._detection.mods_dir / "APFrameworkMod" / "session_state.json"
+                    self._detection.mods_dir / "APFrameworkMod" / "output" / "session_state.json"
                 )
                 if state_path.exists():
                     zf.write(state_path, "session_state.json")

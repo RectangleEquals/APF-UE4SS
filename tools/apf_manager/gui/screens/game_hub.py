@@ -24,9 +24,10 @@ from typing import TYPE_CHECKING, Optional
 
 from kivy.clock import Clock
 from kivy.metrics import dp
+from kivy.uix.behaviors import ButtonBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDIconButton
-from kivymd.uix.label import MDLabel
+from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.screen import MDScreen
 
 from ..widgets.log_panel import LogPanel
@@ -39,26 +40,40 @@ if TYPE_CHECKING:
     from ...core.ue4ss import UE4SSResult
 
 
-class _NavRailButton(MDBoxLayout):
-    """Vertical icon + label button for the navigation rail."""
+class _NavRailButton(ButtonBehavior, MDBoxLayout):
+    """Vertical icon + label button for the navigation rail.
+
+    The entire container is the clickable region (via ButtonBehavior).
+    The inner MDIcon is non-interactive; touch events bubble up to this widget.
+    """
 
     def __init__(self, label: str, icon: str, on_select, **kwargs):
         super().__init__(
             orientation="vertical",
             size_hint=(1, None),
-            height=dp(60),
+            height=dp(72),
+            padding=[dp(4), dp(4)],
             spacing=0,
             **kwargs,
         )
         self._nav_label = label
-        self._on_select = on_select
+        self.bind(on_release=lambda *_: on_select(label))
 
-        self._icon_btn = MDIconButton(
-            icon=icon,
+        # Pill-shaped indicator container
+        self._indicator = MDBoxLayout(
             size_hint=(1, None),
-            height=dp(44),
-            on_release=lambda *_: self._on_select(label),
+            height=dp(40),
+            md_bg_color=(0, 0, 0, 0),
+            radius=[dp(20)],
+            padding=[dp(8), 0],
         )
+        self._icon = MDIcon(
+            icon=icon,
+            halign="center",
+            size_hint=(1, 1),
+        )
+        self._indicator.add_widget(self._icon)
+
         self._lbl = MDLabel(
             text=label,
             font_style="Label",
@@ -69,16 +84,12 @@ class _NavRailButton(MDBoxLayout):
             theme_text_color="Custom",
             text_color=(0.7, 0.7, 0.7, 1),
         )
-        self.add_widget(self._icon_btn)
+        self.add_widget(self._indicator)
         self.add_widget(self._lbl)
 
     def set_selected(self, selected: bool) -> None:
-        if selected:
-            self._icon_btn.md_bg_color = (0.2, 0.25, 0.35, 1)
-            self._lbl.opacity = 0
-        else:
-            self._icon_btn.md_bg_color = (0, 0, 0, 0)
-            self._lbl.opacity = 1
+        self._indicator.md_bg_color = (0.2, 0.28, 0.4, 1) if selected else (0, 0, 0, 0)
+        self._lbl.opacity = 0 if selected else 1
 
 
 class GameHubScreen(MDScreen):
@@ -181,7 +192,7 @@ class GameHubScreen(MDScreen):
         rail = MDBoxLayout(
             orientation="vertical",
             size_hint_x=None,
-            width="72dp",
+            width="88dp",
             md_bg_color=(0.1, 0.1, 0.1, 1),
             padding=(0, "8dp"),
             spacing="4dp",
@@ -234,6 +245,12 @@ class GameHubScreen(MDScreen):
 
     def _select_panel(self, label: str) -> None:
         if self._active_panel is not None:
+            # No-op if already on this panel
+            active_label = next(
+                (l for l, p in self._panel_map.items() if p is self._active_panel), None
+            )
+            if label == active_label:
+                return
             if not self._active_panel.can_deactivate():
                 self._pending_nav_label = label  # panel will call _trigger_pending_nav on resolve
                 return
@@ -281,6 +298,8 @@ class GameHubScreen(MDScreen):
         from kivymd.uix.selectioncontrol import MDSwitch
         from kivy.uix.widget import Widget
 
+        is_steam_game = bool(getattr(profile, "steam_app_id", None))
+
         # Determine which options are available
         deploy_svc = self._host.get_service("deploy")
         has_framework = (
@@ -305,7 +324,7 @@ class GameHubScreen(MDScreen):
         )
         content.bind(minimum_height=content.setter("height"))
 
-        def _add_row(key: str, text: str, active: bool = False, locked: bool = False) -> None:
+        def _add_row(key: str, text: str, active: bool = False, locked: bool = False) -> MDSwitch:
             row = MDBoxLayout(
                 orientation="horizontal",
                 size_hint_y=None,
@@ -321,16 +340,40 @@ class GameHubScreen(MDScreen):
             row.add_widget(lbl)
             content.add_widget(row)
             switches[key] = sw
+            return sw
 
-        _add_row("library", "Remove from library", active=True, locked=True)
+        # "Remove from library": custom games — toggleable (default OFF); Steam — locked off
+        if is_steam_game:
+            _add_row("library", "Remove from library (Steam tiles are managed automatically)",
+                     active=False, locked=True)
+        else:
+            _add_row("library", "Remove from library", active=False, locked=False)
+
         if has_mods_svc:
             _add_row("mods", "Remove deployed AP mods")
         if has_framework:
             _add_row("framework", "Remove AP Framework binaries")
+        # Session removal is split into two separate switches:
+        #   "deployed_session" — deletes output/session_state.json
+        #   "sessions"         — deletes all backups from ~/.apf_manager/sessions/<game_id>/
         if has_sessions_svc:
-            _add_row("sessions", "Remove session history")
+            deployed_session_sw = _add_row("deployed_session", "Remove deployed session")
+            sessions_sw = _add_row("sessions", "Remove session history (backups)")
         if has_ue4ss:
-            _add_row("ue4ss", "Uninstall UE4SS")
+            ue4ss_sw = _add_row("ue4ss", "Uninstall UE4SS")
+            # Uninstalling UE4SS removes ue4ss/Mods/ entirely, which encompasses
+            # AP mods, deployed session, and session history. Auto-check and lock all three.
+            mods_sw = switches.get("mods")
+            def _on_ue4ss_toggle(inst, val):
+                if mods_sw is not None:
+                    mods_sw.active = val
+                    mods_sw.disabled = val
+                if has_sessions_svc:
+                    deployed_session_sw.active = val
+                    deployed_session_sw.disabled = val
+                    sessions_sw.active = val
+                    sessions_sw.disabled = val
+            ue4ss_sw.bind(active=_on_ue4ss_toggle)
 
         dialog = [None]
 
@@ -393,7 +436,19 @@ class GameHubScreen(MDScreen):
                     except Exception as exc:
                         errors.append(str(exc))
 
-            # 3. Remove session history
+            # 3a. Remove deployed session file
+            if switches.get("deployed_session") and switches["deployed_session"].active:
+                if detection and detection.mods_dir:
+                    state_path = (
+                        Path(str(detection.mods_dir))
+                        / "APFrameworkMod" / "output" / "session_state.json"
+                    )
+                    try:
+                        state_path.unlink(missing_ok=True)
+                    except Exception as exc:
+                        errors.append(f"Could not remove deployed session: {exc}")
+
+            # 3b. Remove session history (backups)
             if switches.get("sessions") and switches["sessions"].active:
                 sessions_svc = self._host.get_service("sessions")
                 if sessions_svc:
@@ -446,13 +501,20 @@ class GameHubScreen(MDScreen):
     # -----------------------------------------------------------------------
 
     def _go_home(self, *_) -> None:
+        if self._active_panel and not self._active_panel.can_deactivate():
+            self._pending_nav_label = "__home__"
+            return
         app = self._get_app()
         if app:
             app.navigate_to_library()
 
     def _go_settings(self, *_) -> None:
+        if self._active_panel and not self._active_panel.can_deactivate():
+            self._pending_nav_label = "__settings__"
+            return
         app = self._get_app()
         if app:
+            app._previous_screen = "game_hub"
             app.root.current = "settings"
 
     def _get_app(self):

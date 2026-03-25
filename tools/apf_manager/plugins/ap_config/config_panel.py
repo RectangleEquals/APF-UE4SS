@@ -89,6 +89,7 @@ class APConfigPanel(PluginPanel):
         svc = self._host.get_service("ap_config")
         if svc:
             self._svc = svc
+            svc.load()  # always reload from disk on activate
             if not self._dirty:
                 Clock.schedule_once(lambda dt: self._populate(), 0)
         else:
@@ -191,12 +192,15 @@ class APConfigPanel(PluginPanel):
     # -----------------------------------------------------------------------
 
     def _populate(self) -> None:
-        if not self._svc or not self._svc.has_config:
-            self._set_status("No framework_config.json found for this game.")
+        if not self._svc:
             return
+        if not self._svc.has_config:
+            path_str = str(self._svc.config_path) if self._svc.config_path else "unknown"
+            self._set_status(f"No config found at: {path_str}")
+        else:
+            self._set_status("")
 
         cfg = self._svc.get_config()
-        self._set_status("")
 
         server = cfg.get("server", {})
         self._fields["server.host"].text = str(server.get("host", "localhost"))
@@ -231,6 +235,8 @@ class APConfigPanel(PluginPanel):
             f.bind(text=self._on_field_change)
         for sw in self._checks.values():
             sw.bind(active=self._on_field_change)
+        # Clear any spurious dirty caused by layout-induced events during this frame
+        self._dirty = False
 
     def _on_field_change(self, *_) -> None:
         self._dirty = True
@@ -274,10 +280,16 @@ class APConfigPanel(PluginPanel):
         if self._unsaved_dialog:
             return  # already open
 
+        def _on_dismissed(*_):
+            """Fired for any dismiss — button click OR outside-click."""
+            self._unsaved_dialog = None
+            # Outside-click = implicit cancel; clear pending nav so future nav works.
+            self._pending_nav_label = None
+
         def _dismiss(*_):
             if self._unsaved_dialog:
                 self._unsaved_dialog.dismiss()
-                self._unsaved_dialog = None
+                # _on_dismissed will fire automatically via on_dismiss binding
 
         def _save(*_):
             _dismiss()
@@ -302,18 +314,26 @@ class APConfigPanel(PluginPanel):
                 MDButton(MDButtonText(text="Save"), style="filled", on_release=_save),
             ),
         )
+        self._unsaved_dialog.bind(on_dismiss=_on_dismissed)
         self._unsaved_dialog.open()
 
     def _trigger_pending_nav(self) -> None:
-        """After resolving dirty state, force the nav rail to re-select pending panel."""
+        """After resolving dirty state, resume the pending navigation."""
         from kivymd.app import MDApp
         app = MDApp.get_running_app()
-        if app and hasattr(app, "_game_hub") and app._game_hub:
-            hub = app._game_hub
-            if hub._pending_nav_label:
-                label = hub._pending_nav_label
-                hub._pending_nav_label = None
-                hub._select_panel(label)
+        if not app or not hasattr(app, "_game_hub") or not app._game_hub:
+            return
+        hub = app._game_hub
+        label = hub._pending_nav_label
+        if not label:
+            return
+        hub._pending_nav_label = None
+        if label == "__home__":
+            hub._go_home()
+        elif label == "__settings__":
+            hub._go_settings()
+        else:
+            hub._select_panel(label)
 
     # -----------------------------------------------------------------------
     # Actions

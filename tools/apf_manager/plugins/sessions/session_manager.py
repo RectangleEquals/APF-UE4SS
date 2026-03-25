@@ -1,7 +1,7 @@
 """
 SessionManager — backup and restore AP session state.
 
-Session state file: <mods_dir>/APFrameworkMod/session_state.json
+Session state file: <mods_dir>/APFrameworkMod/output/session_state.json
 Backups stored at:  ~/.apf_manager/sessions/<game_id>/<timestamp>_<name>.json
 
 Registered as the "sessions" service.
@@ -53,7 +53,7 @@ class SessionManager:
         if profile and detection and detection.mods_dir:
             self._game_id = profile.game_id
             self._state_path = (
-                detection.mods_dir / "APFrameworkMod" / _SESSION_STATE_FILENAME
+                detection.mods_dir / "APFrameworkMod" / "output" / _SESSION_STATE_FILENAME
             )
         else:
             self._game_id = None
@@ -62,6 +62,21 @@ class SessionManager:
     # -----------------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------------
+
+    @property
+    def deployed_path(self) -> Optional[Path]:
+        return self._state_path
+
+    def get_deployed_info(self) -> Optional[dict]:
+        """Return metadata about the deployed session file, or None if absent."""
+        if not self._state_path or not self._state_path.exists():
+            return None
+        stat = self._state_path.stat()
+        return {
+            "path": str(self._state_path),
+            "mtime": stat.st_mtime,
+            "size": stat.st_size,
+        }
 
     def list_sessions(self, game_id: Optional[str] = None) -> list[SessionBackup]:
         gid = game_id or self._game_id

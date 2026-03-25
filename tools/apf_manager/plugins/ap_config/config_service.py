@@ -57,14 +57,22 @@ class APConfigService:
             self._data = {}
 
     def load(self) -> bool:
-        if not self._path or not self._path.exists():
-            self._data = {}
+        if not self._path:
+            return False
+        if not self._path.exists():
+            # File absent — seed _data with defaults if empty so the form shows
+            # something useful rather than empty hint-text fields.
+            if not self._data:
+                import copy
+                self._data = copy.deepcopy(_DEFAULT_CONFIG)
             return False
         try:
             self._data = json.loads(self._path.read_text(encoding="utf-8"))
             return True
         except Exception:
-            self._data = {}
+            if not self._data:
+                import copy
+                self._data = copy.deepcopy(_DEFAULT_CONFIG)
             return False
 
     def save(self) -> bool:

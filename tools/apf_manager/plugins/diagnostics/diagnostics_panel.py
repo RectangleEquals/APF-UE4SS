@@ -94,8 +94,11 @@ class DiagnosticsPanel(PluginPanel):
                                    size_hint_x=1, halign="left"))
 
         # Copy button — hidden until results are available
-        self._copy_btn = MDIconButton(
-            icon="content-copy",
+        from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText
+        self._copy_btn = MDButton(
+            MDButtonIcon(icon="content-copy"),
+            MDButtonText(text="Copy to Clipboard"),
+            style="tonal",
             on_release=lambda *_: self._on_copy(),
             opacity=0,
             disabled=True,
@@ -314,17 +317,41 @@ class DiagnosticsPanel(PluginPanel):
                 lambda dt: self._host.log("No game context — cannot package logs."), 0
             )
             return
+        # Open folder picker on the main thread, then save on a background thread.
+        Clock.schedule_once(lambda dt: self._prompt_and_save_logs(), 0)
 
+    def _prompt_and_save_logs(self) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder = filedialog.askdirectory(title="Save Log Package To...")
+            root.destroy()
+        except Exception:
+            # Fallback: save to Desktop
+            folder = str(Path.home() / "Desktop")
+        if not folder:
+            return  # user cancelled
+        import threading
+        threading.Thread(target=self._do_save_logs, args=(folder,), daemon=True).start()
+
+    def _do_save_logs(self, folder: str) -> None:
         from .log_packager import LogPackager
         packager = LogPackager(self._profile, self._detection)
         filename = LogPackager.suggested_filename(self._profile.display_name)
-
-        # Save to user's Desktop (or home if Desktop absent)
-        desktop = Path.home() / "Desktop"
-        if not desktop.is_dir():
-            desktop = Path.home()
-        out_path = desktop / filename
-
+        out_path = Path(folder) / filename
         included = packager.collect(out_path)
-        msg = f"Log package saved: {out_path.name}\n  Included: {', '.join(included)}"
-        Clock.schedule_once(lambda dt, m=msg: self._host.log(m), 0)
+        log_msg = f"Log package saved: {out_path}\n  Included: {', '.join(included)}"
+        Clock.schedule_once(lambda dt, m=log_msg: self._host.log(m), 0)
+        Clock.schedule_once(lambda dt: self._show_save_snackbar(out_path.name), 0)
+
+    def _show_save_snackbar(self, filename: str) -> None:
+        MDSnackbar(
+            MDSnackbarText(text=f"Saved: {filename}"),
+            y=dp(24),
+            pos_hint={"center_x": 0.5},
+            size_hint_x=0.8,
+            duration=3,
+        ).open()

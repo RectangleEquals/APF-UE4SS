@@ -1,9 +1,22 @@
 """
 SessionsPanel — hub_panel for session backup/restore.
+
+Layout:
+    [Toolbar: Sessions | Refresh]
+    [Deployed Session card]
+        Path: .../APFrameworkMod/output/session_state.json
+        Modified: YYYY-MM-DD HH:MM   Size: N KB     [Backup Now]
+        — or —
+        No deployed session found.
+        Path: ... (greyed)
+    [Backups section header]
+    [Scrollable backup list]
 """
 
 from __future__ import annotations
 
+import os
+from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 from kivy.metrics import dp
@@ -54,15 +67,55 @@ class SessionsPanel(PluginPanel):
     def _build_ui(self) -> None:
         self.orientation = "vertical"
 
-        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
-                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
-        toolbar.add_widget(MDLabel(text="Sessions", font_style="Title", role="large",
-                                   size_hint_x=1, halign="left"))
-        toolbar.add_widget(MDIconButton(icon="plus", on_release=lambda *_: self._open_backup_dialog()))
-        toolbar.add_widget(MDIconButton(icon="refresh", on_release=lambda *_: self._refresh()))
+        toolbar = MDBoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(56),
+            md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4),
+        )
+        toolbar.add_widget(MDLabel(
+            text="Sessions", font_style="Title", role="large",
+            size_hint_x=1, halign="left",
+        ))
+        toolbar.add_widget(MDIconButton(
+            icon="refresh", on_release=lambda *_: self._refresh(),
+        ))
         self._toolbar = toolbar
         self.add_widget(toolbar)
 
+        # Deployed session card (fixed, non-scrolling)
+        self._deployed_card = MDBoxLayout(
+            orientation="vertical",
+            size_hint=(1, None),
+            adaptive_height=True,
+            md_bg_color=(0.12, 0.16, 0.2, 1),
+            padding=[dp(16), dp(8)],
+            spacing=dp(4),
+        )
+        self.add_widget(self._deployed_card)
+
+        # Backups section header
+        backups_header = MDBoxLayout(
+            orientation="horizontal",
+            size_hint=(1, None),
+            height=dp(36),
+            padding=[dp(16), 0],
+            md_bg_color=(0.1, 0.1, 0.1, 1),
+        )
+        backups_header.add_widget(MDLabel(
+            text="Backups",
+            font_style="Title",
+            role="medium",
+            size_hint_x=1,
+            halign="left",
+        ))
+        self._add_backup_btn = MDButton(
+            MDButtonText(text="+ New Backup"),
+            style="text",
+            on_release=lambda *_: self._open_backup_dialog(),
+        )
+        backups_header.add_widget(self._add_backup_btn)
+        self.add_widget(backups_header)
+
+        # Scrollable backup list
         self._scroll = ScrollView(size_hint=(1, 1))
         self._list_layout = MDBoxLayout(
             orientation="vertical",
@@ -75,21 +128,84 @@ class SessionsPanel(PluginPanel):
         self.add_widget(self._scroll)
 
     def _refresh(self) -> None:
-        self._list_layout.clear_widgets()
         svc: Optional["SessionManager"] = self._host.get_service("sessions")
+
+        # -- Deployed session section --
+        self._deployed_card.clear_widgets()
+        self._deployed_card.add_widget(MDLabel(
+            text="Deployed Session",
+            font_style="Title",
+            role="medium",
+            size_hint=(1, None),
+            height=dp(28),
+            halign="left",
+        ))
+
         if not svc or not self._profile:
-            self._list_layout.add_widget(MDLabel(
+            self._deployed_card.add_widget(MDLabel(
                 text="Sessions service not available.",
-                halign="center",
+                halign="left",
                 size_hint=(1, None),
-                height=dp(48),
+                height=dp(28),
+                theme_text_color="Custom",
+                text_color=(0.5, 0.5, 0.5, 1),
             ))
+        else:
+            info = svc.get_deployed_info()
+            path_str = str(svc.deployed_path) if svc.deployed_path else "—"
+            # Path label (greyed)
+            self._deployed_card.add_widget(MDLabel(
+                text=f"Path: {path_str}",
+                halign="left",
+                size_hint=(1, None),
+                height=dp(20),
+                font_style="Label",
+                role="small",
+                theme_text_color="Custom",
+                text_color=(0.45, 0.45, 0.45, 1),
+            ))
+            if info:
+                dt_str = datetime.fromtimestamp(info["mtime"]).strftime("%Y-%m-%d %H:%M")
+                size_kb = info["size"] / 1024
+                meta_row = MDBoxLayout(
+                    orientation="horizontal",
+                    size_hint=(1, None),
+                    height=dp(36),
+                    spacing=dp(8),
+                )
+                meta_row.add_widget(MDLabel(
+                    text=f"Modified: {dt_str}    Size: {size_kb:.1f} KB",
+                    halign="left",
+                    size_hint=(1, 1),
+                    theme_text_color="Custom",
+                    text_color=(0.8, 0.8, 0.8, 1),
+                ))
+                meta_row.add_widget(MDButton(
+                    MDButtonText(text="Backup Now"),
+                    style="tonal",
+                    size_hint=(None, 1),
+                    on_release=lambda *_: self._open_backup_dialog(),
+                ))
+                self._deployed_card.add_widget(meta_row)
+            else:
+                self._deployed_card.add_widget(MDLabel(
+                    text="No deployed session found.",
+                    halign="left",
+                    size_hint=(1, None),
+                    height=dp(28),
+                    theme_text_color="Custom",
+                    text_color=(0.55, 0.55, 0.55, 1),
+                ))
+
+        # -- Backups list --
+        self._list_layout.clear_widgets()
+        if not svc or not self._profile:
             return
 
         backups = svc.list_sessions(self._profile.game_id)
         if not backups:
             self._list_layout.add_widget(MDLabel(
-                text="No session backups yet.\nPress + to create one.",
+                text="No session backups yet.\nPress '+ New Backup' to create one.",
                 halign="center",
                 size_hint=(1, None),
                 height=dp(80),
@@ -149,7 +265,7 @@ class SessionsPanel(PluginPanel):
                 if result:
                     self._host.log(f"Session backed up: {result.display_name}")
                 else:
-                    self._host.log("Backup failed — session_state.json not found.")
+                    self._host.log("Backup failed — deployed session file not found.")
             if self._backup_dialog:
                 self._backup_dialog.dismiss()
             self._refresh()
