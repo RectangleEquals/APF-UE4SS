@@ -12,12 +12,19 @@ from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
 
+from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDIconButton
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
+from ...gui.widgets.tip_icon_button import TipIconButton
+from kivymd.uix.dialog import (
+    MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+    MDDialogButtonContainer,
+)
 from kivymd.uix.label import MDLabel
-from kivymd.uix.selectioncontrol import MDCheckbox
+from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.textfield import MDTextField
 
 from ...gui.widgets.plugin_panel import PluginPanel
@@ -48,7 +55,7 @@ class _Row(MDBoxLayout):
         super().__init__(
             orientation="horizontal",
             size_hint=(1, None),
-            height=dp(56),
+            height=dp(64),
             spacing=dp(8),
             padding=[dp(4), 0],
             **kwargs,
@@ -68,7 +75,10 @@ class APConfigPanel(PluginPanel):
         self._host = host
         self._svc: Optional["APConfigService"] = None
         self._fields: dict[str, MDTextField] = {}
-        self._checks: dict[str, MDCheckbox] = {}
+        self._checks: dict[str, MDSwitch] = {}
+        self._dirty: bool = False
+        self._unsaved_dialog: Optional[MDDialog] = None
+        self._pending_nav_label: Optional[str] = None
         self._build_ui()
 
     # -----------------------------------------------------------------------
@@ -79,12 +89,19 @@ class APConfigPanel(PluginPanel):
         svc = self._host.get_service("ap_config")
         if svc:
             self._svc = svc
-            self._populate()
+            if not self._dirty:
+                Clock.schedule_once(lambda dt: self._populate(), 0)
         else:
             self._host.log("ap_config service not available.")
 
     def on_deactivate(self) -> None:
         pass
+
+    def can_deactivate(self) -> bool:
+        if self._dirty:
+            self._show_unsaved_dialog()
+            return False  # block nav; dialog will trigger nav itself on Save/Discard
+        return True
 
     # -----------------------------------------------------------------------
     # UI build
@@ -97,8 +114,10 @@ class APConfigPanel(PluginPanel):
                               md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
         toolbar.add_widget(MDLabel(text="Configure", font_style="Title", role="large",
                                    size_hint_x=1, halign="left"))
-        toolbar.add_widget(MDIconButton(icon="content-save", on_release=lambda *_: self._on_save()))
-        toolbar.add_widget(MDIconButton(icon="refresh", on_release=lambda *_: self._on_reload()))
+        toolbar.add_widget(TipIconButton(icon="content-save", tooltip_text="Save config",
+                                         on_release=lambda *_: self._on_save()))
+        toolbar.add_widget(TipIconButton(icon="refresh", tooltip_text="Reload from disk",
+                                         on_release=lambda *_: self._on_reload()))
         self._toolbar = toolbar
         self.add_widget(toolbar)
 
@@ -134,10 +153,10 @@ class APConfigPanel(PluginPanel):
         self._fields[key] = f
         return f
 
-    def _mk_check(self, key: str) -> MDCheckbox:
-        cb = MDCheckbox(size_hint=(None, 1), width=dp(40))
-        self._checks[key] = cb
-        return cb
+    def _mk_check(self, key: str) -> MDSwitch:
+        sw = MDSwitch(size_hint=(None, None), pos_hint={"center_y": 0.5})
+        self._checks[key] = sw
+        return sw
 
     def _build_form(self) -> None:
         f = self._form
@@ -179,14 +198,6 @@ class APConfigPanel(PluginPanel):
         cfg = self._svc.get_config()
         self._set_status("")
 
-        def _get(d, *keys):
-            cur = d
-            for k in keys:
-                if not isinstance(cur, dict):
-                    return ""
-                cur = cur.get(k, "")
-            return cur
-
         server = cfg.get("server", {})
         self._fields["server.host"].text = str(server.get("host", "localhost"))
         self._fields["server.port"].text = str(server.get("port", 38281))
@@ -207,6 +218,22 @@ class APConfigPanel(PluginPanel):
 
         threading_ = cfg.get("threading", {})
         self._fields["threading.poll_interval_ms"].text = str(threading_.get("poll_interval_ms", 100))
+
+        # Reset dirty BEFORE binding so populate assignments don't trigger it
+        self._dirty = False
+
+        # Bind fields to dirty flag (schedule to run after this frame completes)
+        Clock.schedule_once(lambda dt: self._bind_dirty(), 0)
+
+    def _bind_dirty(self) -> None:
+        """Bind all fields to mark dirty on user changes."""
+        for f in self._fields.values():
+            f.bind(text=self._on_field_change)
+        for sw in self._checks.values():
+            sw.bind(active=self._on_field_change)
+
+    def _on_field_change(self, *_) -> None:
+        self._dirty = True
 
     def _collect(self) -> dict:
         def _int(key: str, default: int) -> int:
@@ -240,6 +267,55 @@ class APConfigPanel(PluginPanel):
         }
 
     # -----------------------------------------------------------------------
+    # Unsaved changes dialog
+    # -----------------------------------------------------------------------
+
+    def _show_unsaved_dialog(self) -> None:
+        if self._unsaved_dialog:
+            return  # already open
+
+        def _dismiss(*_):
+            if self._unsaved_dialog:
+                self._unsaved_dialog.dismiss()
+                self._unsaved_dialog = None
+
+        def _save(*_):
+            _dismiss()
+            self._on_save()
+            # Navigate away after save — dirty is now False
+            self._trigger_pending_nav()
+
+        def _discard(*_):
+            _dismiss()
+            self._dirty = False
+            self._populate()
+            self._trigger_pending_nav()
+
+        # _cancel: do nothing — user stays on Configure
+        self._unsaved_dialog = MDDialog(
+            MDDialogHeadlineText(text="Unsaved Changes"),
+            MDDialogSupportingText(text="You have unsaved changes in Configure."),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_dismiss),
+                MDButton(MDButtonText(text="Discard"), style="text", on_release=_discard),
+                MDButton(MDButtonText(text="Save"), style="filled", on_release=_save),
+            ),
+        )
+        self._unsaved_dialog.open()
+
+    def _trigger_pending_nav(self) -> None:
+        """After resolving dirty state, force the nav rail to re-select pending panel."""
+        from kivymd.app import MDApp
+        app = MDApp.get_running_app()
+        if app and hasattr(app, "_game_hub") and app._game_hub:
+            hub = app._game_hub
+            if hub._pending_nav_label:
+                label = hub._pending_nav_label
+                hub._pending_nav_label = None
+                hub._select_panel(label)
+
+    # -----------------------------------------------------------------------
     # Actions
     # -----------------------------------------------------------------------
 
@@ -248,6 +324,7 @@ class APConfigPanel(PluginPanel):
             return
         self._svc.update(self._collect())
         if self._svc.save():
+            self._dirty = False
             self._set_status("Saved.")
             self._host.log("framework_config.json saved.")
         else:
@@ -258,6 +335,7 @@ class APConfigPanel(PluginPanel):
         if not self._svc:
             return
         self._svc.load()
+        self._dirty = False
         self._populate()
         self._set_status("Reloaded.")
 

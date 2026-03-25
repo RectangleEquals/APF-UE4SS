@@ -43,9 +43,10 @@ class Validator:
     def validate_mod(self, mod: "ModInfo") -> list[ValidationResult]:
         results: list[ValidationResult] = []
 
-        # Run install.json validate checks
+        # Run install.json validate checks (skip malformed entries with no check_type)
         for check in mod.validate_checks:
-            results.append(self._run_check(check, mod))
+            if check.check_type:
+                results.append(self._run_check(check, mod))
 
         # Dependency checks
         results.extend(self._check_depends(mod))

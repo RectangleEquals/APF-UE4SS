@@ -31,6 +31,7 @@ from kivymd.uix.screen import MDScreen
 
 from ..widgets.log_panel import LogPanel
 from ..widgets.plugin_panel import PluginPanel
+from ..widgets.tip_icon_button import TipIconButton
 
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost, PluginContribution
@@ -38,16 +39,46 @@ if TYPE_CHECKING:
     from ...core.ue4ss import UE4SSResult
 
 
-class _NavRailButton(MDIconButton):
-    """Icon button for the navigation rail with tooltip label."""
+class _NavRailButton(MDBoxLayout):
+    """Vertical icon + label button for the navigation rail."""
 
     def __init__(self, label: str, icon: str, on_select, **kwargs):
-        super().__init__(icon=icon, **kwargs)
+        super().__init__(
+            orientation="vertical",
+            size_hint=(1, None),
+            height=dp(60),
+            spacing=0,
+            **kwargs,
+        )
         self._nav_label = label
         self._on_select = on_select
 
-    def on_release(self):
-        self._on_select(self._nav_label)
+        self._icon_btn = MDIconButton(
+            icon=icon,
+            size_hint=(1, None),
+            height=dp(44),
+            on_release=lambda *_: self._on_select(label),
+        )
+        self._lbl = MDLabel(
+            text=label,
+            font_style="Label",
+            role="small",
+            halign="center",
+            size_hint=(1, None),
+            height=dp(16),
+            theme_text_color="Custom",
+            text_color=(0.7, 0.7, 0.7, 1),
+        )
+        self.add_widget(self._icon_btn)
+        self.add_widget(self._lbl)
+
+    def set_selected(self, selected: bool) -> None:
+        if selected:
+            self._icon_btn.md_bg_color = (0.2, 0.25, 0.35, 1)
+            self._lbl.opacity = 0
+        else:
+            self._icon_btn.md_bg_color = (0, 0, 0, 0)
+            self._lbl.opacity = 1
 
 
 class GameHubScreen(MDScreen):
@@ -61,6 +92,7 @@ class GameHubScreen(MDScreen):
         self._log_panel = LogPanel()
         self._current_profile: Optional["GameProfile"] = None
         self._current_detection: Optional["UE4SSResult"] = None
+        self._pending_nav_label: Optional[str] = None
 
         # Wire host log to our panel
         host.set_log_fn(self._log_panel.append)
@@ -102,8 +134,9 @@ class GameHubScreen(MDScreen):
             spacing="4dp",
         )
         # Back button
-        back_btn = MDIconButton(
+        back_btn = TipIconButton(
             icon="arrow-left",
+            tooltip_text="Back to library",
             on_release=self._go_home,
         )
         bar.add_widget(back_btn)
@@ -128,15 +161,17 @@ class GameHubScreen(MDScreen):
         bar.add_widget(self._action_bar)
 
         # Remove game button
-        remove_btn = MDIconButton(
+        remove_btn = TipIconButton(
             icon="trash-can-outline",
+            tooltip_text="Remove game",
             on_release=lambda *_: self._on_remove_game(),
         )
         bar.add_widget(remove_btn)
 
         # Settings button
-        settings_btn = MDIconButton(
+        settings_btn = TipIconButton(
             icon="cog",
+            tooltip_text="Settings",
             on_release=self._go_settings,
         )
         bar.add_widget(settings_btn)
@@ -146,7 +181,7 @@ class GameHubScreen(MDScreen):
         rail = MDBoxLayout(
             orientation="vertical",
             size_hint_x=None,
-            width="56dp",
+            width="72dp",
             md_bg_color=(0.1, 0.1, 0.1, 1),
             padding=(0, "8dp"),
             spacing="4dp",
@@ -199,6 +234,9 @@ class GameHubScreen(MDScreen):
 
     def _select_panel(self, label: str) -> None:
         if self._active_panel is not None:
+            if not self._active_panel.can_deactivate():
+                self._pending_nav_label = label  # panel will call _trigger_pending_nav on resolve
+                return
             self._active_panel.on_deactivate()
             self._panel_host.remove_widget(self._active_panel)
 
@@ -208,6 +246,10 @@ class GameHubScreen(MDScreen):
 
         self._active_panel = panel
         self._panel_host.add_widget(panel)
+
+        # Update nav rail selection indicator
+        for btn_label, btn in self._nav_buttons.items():
+            btn.set_selected(btn_label == label)
 
         profile = self._host.get_game_context()
         if profile:
@@ -270,7 +312,10 @@ class GameHubScreen(MDScreen):
                 height=dp(44),
                 spacing=dp(8),
             )
-            sw = MDSwitch(active=active, disabled=locked, pos_hint={"center_y": 0.5})
+            sw = MDSwitch(pos_hint={"center_y": 0.5})
+            sw.active = active
+            if locked:
+                sw.disabled = True
             lbl = MDLabel(text=text, size_hint_x=1)
             row.add_widget(sw)
             row.add_widget(lbl)

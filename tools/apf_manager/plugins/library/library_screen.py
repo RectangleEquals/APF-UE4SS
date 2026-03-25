@@ -39,7 +39,7 @@ from kivymd.uix.dialog import (
     MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
     MDDialogContentContainer, MDDialogButtonContainer,
 )
-from kivymd.uix.label import MDLabel
+from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.textfield import MDTextField
 
 if TYPE_CHECKING:
@@ -68,13 +68,8 @@ def _tile_color(name: str) -> tuple:
     return _TILE_COLORS[idx]
 
 
-# UE4SS badge: icon name + colour per status
-_BADGE_STATUS: dict[str, tuple[str, tuple]] = {
-    "ok":      ("check-circle",  (0.3,  0.8,  0.4,  1)),
-    "warn":    ("help-circle",   (0.9,  0.7,  0.1,  1)),
-    "error":   ("close-circle",  (0.85, 0.25, 0.25, 1)),
-    "unknown": ("help-circle",   (0.5,  0.5,  0.5,  1)),
-}
+# UE4SS badge: uses shared STATUS_ICONS from theme
+from ...gui.theme import STATUS_ICONS as _BADGE_STATUS
 
 _TILE_W = dp(200)
 _TILE_H = dp(150)
@@ -215,7 +210,7 @@ class GameTile(MDCard):
         self._translate_to: Optional[Translate] = None
         self._translate_back: Optional[Translate] = None
         self._scale_instr: Optional[Scale] = None
-        self._badge_icon: Optional[MDIconButton] = None
+        self._badge_icon: Optional[MDIcon] = None
         self._badge_lbl: Optional[MDLabel] = None
         self._hovered = False
         self._hover_anim: Optional[Animation] = None
@@ -288,14 +283,15 @@ class GameTile(MDCard):
         )
         badge_row.add_widget(Widget(size_hint_x=1))
 
-        self._badge_icon = MDIconButton(
+        self._badge_icon = MDIcon(
             icon="help-circle",
             theme_icon_color="Custom",
             icon_color=(0.5, 0.5, 0.5, 1),
+            font_size="16sp",
             size_hint=(None, None),
             size=(dp(20), dp(20)),
-            pos_hint={"center_y": 0.5},
-            disabled=True,
+            halign="center",
+            valign="middle",
         )
         self._badge_lbl = MDLabel(
             text="UE4SS",

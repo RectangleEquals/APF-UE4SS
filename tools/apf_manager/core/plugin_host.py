@@ -78,6 +78,7 @@ class PluginHost:
         self._dialog_fn: Optional[Callable[[str, dict], None]] = None
         self._failure_fn: Optional[Callable[[], None]] = None
         self.has_failures: bool = False
+        self.dev_mode: bool = False
 
     # -----------------------------------------------------------------------
     # Plugin discovery & loading
@@ -88,6 +89,7 @@ class PluginHost:
         Discover all plugins in the given directories, resolve dependencies,
         and load them in topological order.
         """
+        self.dev_mode = dev_mode
         raw: list[PluginInfo] = []
 
         for d in plugin_dirs:

@@ -32,3 +32,7 @@ class PluginPanel(MDBoxLayout):
 
     def on_deactivate(self) -> None:
         """Override to clean up when this panel is hidden."""
+
+    def can_deactivate(self) -> bool:
+        """Override to block panel switching (e.g. unsaved changes). Return False to stay."""
+        return True

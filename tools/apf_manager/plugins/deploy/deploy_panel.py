@@ -31,9 +31,9 @@ from kivymd.uix.dialog import (
     MDDialogContentContainer, MDDialogButtonContainer,
 )
 from kivymd.uix.label import MDLabel
-from kivymd.uix.selectioncontrol import MDCheckbox
 
 from ...gui.widgets.plugin_panel import PluginPanel
+from ...gui.widgets.tip_icon_button import TipIconButton
 
 if TYPE_CHECKING:
     from ...core.config import GameProfile
@@ -41,17 +41,6 @@ if TYPE_CHECKING:
     from ..mods.mod_service import ModInfo, ModService
     from .validator import ValidationResult
 
-
-# ---------------------------------------------------------------------------
-# Status badge colours
-# ---------------------------------------------------------------------------
-
-_STATUS_COLORS = {
-    "ok":      (0.3, 0.7, 0.4, 1),
-    "warn":    (0.9, 0.7, 0.1, 1),
-    "error":   (0.9, 0.3, 0.3, 1),
-    "unknown": (0.5, 0.5, 0.5, 1),
-}
 
 _ROW_BG_NORMAL   = (0.14, 0.14, 0.14, 1)
 _ROW_BG_WARN     = (0.22, 0.18, 0.08, 1)
@@ -69,6 +58,7 @@ class ModRow(MDBoxLayout):
         self,
         mod: "ModInfo",
         status: str,
+        enabled: bool,
         on_toggle,
         on_move_up,
         on_move_down,
@@ -85,6 +75,7 @@ class ModRow(MDBoxLayout):
         )
         self._mod = mod
         self._status = status
+        self._enabled = enabled
         self._build(on_toggle, on_move_up, on_move_down, on_manual_step)
         self._apply_row_color(status, mod)
 
@@ -101,7 +92,7 @@ class ModRow(MDBoxLayout):
             self.md_bg_color = _ROW_BG_NORMAL
 
     def _is_enabled(self) -> bool:
-        return getattr(self, "_checkbox", None) and self._checkbox.active
+        return self._enabled
 
     def _build(self, on_toggle, on_move_up, on_move_down, on_manual_step) -> None:
         mod = self._mod
@@ -141,27 +132,27 @@ class ModRow(MDBoxLayout):
         )
         self.add_widget(name_lbl)
 
-        # Status badge (coloured dot)
-        color = _STATUS_COLORS.get(self._status, _STATUS_COLORS["unknown"])
-        badge = MDLabel(
-            text="●",
+        # Status badge (MDIcon)
+        from kivymd.uix.label import MDIcon
+        from ...gui.theme import STATUS_ICONS
+        icon_name, icon_color = STATUS_ICONS.get(self._status, STATUS_ICONS["unknown"])
+        badge = MDIcon(
+            icon=icon_name,
+            theme_icon_color="Custom",
+            icon_color=icon_color,
             size_hint=(None, 1),
-            width=dp(20),
+            width=dp(24),
             halign="center",
             valign="middle",
-            theme_text_color="Custom",
-            text_color=color,
         )
         self.add_widget(badge)
 
-        # Enable/disable checkbox (only for AP mods)
+        # Enable/disable toggle (only for AP mods)
         if mod.is_ap_mod:
-            cb = MDCheckbox(
-                size_hint=(None, 1),
-                width=dp(40),
-            )
-            cb.active = True
-            cb.bind(active=lambda inst, val: on_toggle(mod, val))
+            from kivymd.uix.selectioncontrol import MDSwitch
+            cb = MDSwitch(size_hint=(None, None), pos_hint={"center_y": 0.5})
+            cb.active = self._enabled
+            cb.bind(active=lambda inst, val, m=mod: on_toggle(m, val))
             self._checkbox = cb
             self.add_widget(cb)
 
@@ -230,9 +221,12 @@ class DeployPanel(PluginPanel):
                               md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
         toolbar.add_widget(MDLabel(text="Mods", font_style="Title", role="large",
                                    size_hint_x=1, halign="left"))
-        toolbar.add_widget(MDIconButton(icon="refresh", on_release=lambda *_: self._on_rescan()))
-        toolbar.add_widget(MDIconButton(icon="rocket-launch", on_release=lambda *_: self._on_deploy_all()))
-        toolbar.add_widget(MDIconButton(icon="check-circle", on_release=lambda *_: self._on_validate()))
+        toolbar.add_widget(TipIconButton(icon="refresh", tooltip_text="Rescan mods",
+                                         on_release=lambda *_: self._on_rescan()))
+        toolbar.add_widget(TipIconButton(icon="rocket-launch", tooltip_text="Deploy all mods",
+                                         on_release=lambda *_: self._on_deploy_all()))
+        toolbar.add_widget(TipIconButton(icon="check-circle", tooltip_text="Validate load order",
+                                         on_release=lambda *_: self._on_validate()))
         self._toolbar = toolbar
         self.add_widget(toolbar)
 
@@ -270,6 +264,12 @@ class DeployPanel(PluginPanel):
             ))
             return
 
+        # Sort mods by mods.txt order (mods not yet in mods.txt go at end)
+        if self._mods_txt:
+            order = self._mods_txt.get_order()
+            order_idx = {name: i for i, name in enumerate(order)}
+            mods.sort(key=lambda m: order_idx.get(m.folder_name, len(order)))
+
         # Build validator if we have enough context
         validator = self._build_validator(mods)
 
@@ -282,14 +282,19 @@ class DeployPanel(PluginPanel):
                 status = "unknown"
 
             # Sync enabled state from mods_txt
+            # Mods not yet in mods.txt (not deployed) default to enabled
             if self._mods_txt:
-                enabled = self._mods_txt.is_enabled(mod.folder_name)
+                if self._mods_txt.contains(mod.folder_name):
+                    enabled = self._mods_txt.is_enabled(mod.folder_name)
+                else:
+                    enabled = True
             else:
                 enabled = True
 
             row = ModRow(
                 mod=mod,
                 status=status,
+                enabled=enabled,
                 on_toggle=self._on_toggle,
                 on_move_up=self._on_move_up,
                 on_move_down=self._on_move_down,
@@ -404,18 +409,28 @@ class DeployPanel(PluginPanel):
             self._refresh()
 
     def _on_manual_step(self, mod: "ModInfo", step) -> None:
-        content_text = step.content or f"Follow the instructions for: {step.caption}"
         title = step.title or step.caption or "Manual Step"
 
-        # If content is a file path (relative to source_project), try to read it
-        if step.type == "file" and self._profile and self._profile.source_project:
-            from pathlib import Path
-            file_path = Path(self._profile.source_project) / step.content
-            if file_path.exists():
-                try:
-                    content_text = file_path.read_text(encoding="utf-8")
-                except Exception:
-                    pass
+        if step.type == "file":
+            resolved = None
+            if self._profile and self._profile.source_project:
+                from pathlib import Path
+                p = Path(self._profile.source_project) / step.content
+                if p.exists():
+                    resolved = p
+
+            if resolved and self._host.has_service("docs_viewer"):
+                self._host.show_dialog("docs_viewer", path=str(resolved))
+                return
+
+            if not self._host.has_service("docs_viewer"):
+                self._show_enable_docs_notice()
+                return
+
+            # docs_viewer present but file not resolved — fall through to text
+            content_text = step.content or f"Follow the instructions for: {step.caption}"
+        else:
+            content_text = step.content or f"Follow the instructions for: {step.caption}"
 
         def _close(*_):
             if hasattr(self, "_step_dialog") and self._step_dialog:
@@ -430,3 +445,32 @@ class DeployPanel(PluginPanel):
             ),
         )
         self._step_dialog.open()
+
+    def _show_enable_docs_notice(self) -> None:
+        from kivymd.app import MDApp
+
+        def _go_settings(*_):
+            if dlg[0]:
+                dlg[0].dismiss()
+            app = MDApp.get_running_app()
+            if app:
+                app.root.current = "settings"
+
+        def _dismiss(*_):
+            if dlg[0]:
+                dlg[0].dismiss()
+
+        dlg = [None]
+        dlg[0] = MDDialog(
+            MDDialogHeadlineText(text="Feature Not Enabled"),
+            MDDialogSupportingText(
+                text="This feature isn't currently enabled.\nEnable the Docs Viewer plugin in Settings to enable."
+            ),
+            MDDialogButtonContainer(
+                Widget(),
+                MDButton(MDButtonText(text="OK"), style="text", on_release=_dismiss),
+                MDButton(MDButtonText(text="Go to Settings"), style="filled",
+                         on_release=_go_settings),
+            ),
+        )
+        dlg[0].open()

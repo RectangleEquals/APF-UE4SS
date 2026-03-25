@@ -121,6 +121,10 @@ class ModsTextManager:
     def get_order(self) -> list[str]:
         return [e.name for e in self._entries]
 
+    def contains(self, name: str) -> bool:
+        """True if the name appears in mods.txt (regardless of enabled state)."""
+        return self._find(name) is not None
+
     def is_enabled(self, name: str) -> bool:
         entry = self._find(name)
         return entry.enabled if entry else False
