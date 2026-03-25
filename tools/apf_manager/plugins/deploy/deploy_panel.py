@@ -58,7 +58,7 @@ _SCAN_EXCLUDE = {"shared"}
 
 # Fixed column widths
 _COL_REORDER = dp(64)   # ▲▼ buttons (or spacer)
-_COL_STATUS  = dp(28)   # status MDIcon
+_COL_STATUS  = dp(56)   # status MDIcon — wide enough for "Status" header text
 _COL_STEPS   = dp(80)   # manual-step buttons container (or spacer)
 _COL_VERSION = dp(72)   # version string (right-aligned)
 _COL_TOGGLE  = dp(52)   # MDSwitch (or spacer)
@@ -109,39 +109,39 @@ class ModRow(MDBoxLayout):
     def _build(self, on_toggle, on_move_up, on_move_down, on_manual_step) -> None:
         mod = self._mod
 
-        # Column 1: Reorder buttons (AP mods) or spacer
+        # Column 1: Reorder buttons (AP mods) or spacer — wrapped in fixed container
         if mod.is_ap_mod:
-            up_btn = MDIconButton(
+            reorder_box = MDBoxLayout(size_hint=(None, 1), width=_COL_REORDER)
+            reorder_box.add_widget(MDIconButton(
                 icon="chevron-up",
-                size_hint=(None, 1),
-                width=dp(32),
+                size_hint=(1, 1),
                 on_release=lambda *_: on_move_up(mod),
-            )
-            down_btn = MDIconButton(
+            ))
+            reorder_box.add_widget(MDIconButton(
                 icon="chevron-down",
-                size_hint=(None, 1),
-                width=dp(32),
+                size_hint=(1, 1),
                 on_release=lambda *_: on_move_down(mod),
-            )
-            self.add_widget(up_btn)
-            self.add_widget(down_btn)
+            ))
+            self.add_widget(reorder_box)
         else:
             self.add_widget(MDBoxLayout(size_hint=(None, 1), width=_COL_REORDER))
 
-        # Column 2: Status badge
+        # Column 2: Status badge — wrapped in fixed container for alignment
         from kivymd.uix.label import MDIcon
         from ...gui.theme import STATUS_ICONS
         icon_name, icon_color = STATUS_ICONS.get(self._status, STATUS_ICONS["unknown"])
+        status_box = MDBoxLayout(size_hint=(None, 1), width=_COL_STATUS)
         badge = MDIcon(
             icon=icon_name,
             theme_icon_color="Custom",
             icon_color=icon_color,
-            size_hint=(None, 1),
-            width=_COL_STATUS,
             halign="center",
             valign="middle",
+            size_hint=(1, 1),
         )
-        self.add_widget(badge)
+        badge.bind(size=badge.setter("text_size"))
+        status_box.add_widget(badge)
+        self.add_widget(status_box)
 
         # Column 3: Mod name (flexible)
         name_lbl = MDLabel(
@@ -191,15 +191,15 @@ class ModRow(MDBoxLayout):
         )
         self.add_widget(version_lbl)
 
-        # Column 6: Enable/disable toggle (AP mods only)
+        # Column 6: Enable/disable toggle — wrapped in fixed container for alignment
+        toggle_box = MDBoxLayout(size_hint=(None, 1), width=_COL_TOGGLE)
         if mod.is_ap_mod:
-            cb = MDSwitch(size_hint=(None, None), pos_hint={"center_y": 0.5})
+            cb = MDSwitch(size_hint=(None, None), pos_hint={"center_x": 0.5, "center_y": 0.5})
             cb.active = self._enabled
             cb.bind(active=lambda inst, val, m=mod: on_toggle(m, val))
             self._checkbox = cb
-            self.add_widget(cb)
-        else:
-            self.add_widget(MDBoxLayout(size_hint=(None, 1), width=_COL_TOGGLE))
+            toggle_box.add_widget(cb)
+        self.add_widget(toggle_box)
 
 
 # ---------------------------------------------------------------------------

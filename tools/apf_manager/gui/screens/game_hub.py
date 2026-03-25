@@ -45,34 +45,29 @@ class _NavRailButton(ButtonBehavior, MDBoxLayout):
 
     The entire container is the clickable region (via ButtonBehavior).
     The inner MDIcon is non-interactive; touch events bubble up to this widget.
+    Label is always visible; selection is indicated by background color on outer container.
     """
 
     def __init__(self, label: str, icon: str, on_select, **kwargs):
         super().__init__(
             orientation="vertical",
             size_hint=(1, None),
-            height=dp(72),
-            padding=[dp(4), dp(4)],
-            spacing=0,
+            height=dp(56),
+            padding=[dp(8), dp(6)],
+            spacing=dp(4),
+            radius=[dp(8)],
             **kwargs,
         )
         self._nav_label = label
         self.bind(on_release=lambda *_: on_select(label))
 
-        # Pill-shaped indicator container
-        self._indicator = MDBoxLayout(
-            size_hint=(1, None),
-            height=dp(40),
-            md_bg_color=(0, 0, 0, 0),
-            radius=[dp(20)],
-            padding=[dp(8), 0],
-        )
         self._icon = MDIcon(
             icon=icon,
             halign="center",
+            valign="middle",
             size_hint=(1, 1),
         )
-        self._indicator.add_widget(self._icon)
+        self._icon.bind(size=self._icon.setter("text_size"))
 
         self._lbl = MDLabel(
             text=label,
@@ -80,16 +75,16 @@ class _NavRailButton(ButtonBehavior, MDBoxLayout):
             role="small",
             halign="center",
             size_hint=(1, None),
-            height=dp(16),
+            height=dp(14),
             theme_text_color="Custom",
             text_color=(0.7, 0.7, 0.7, 1),
         )
-        self.add_widget(self._indicator)
+        self.add_widget(self._icon)
         self.add_widget(self._lbl)
 
     def set_selected(self, selected: bool) -> None:
-        self._indicator.md_bg_color = (0.2, 0.28, 0.4, 1) if selected else (0, 0, 0, 0)
-        self._lbl.opacity = 0 if selected else 1
+        # Background covers the entire button; label always visible
+        self.md_bg_color = (0.2, 0.28, 0.4, 1) if selected else (0, 0, 0, 0)
 
 
 class GameHubScreen(MDScreen):
@@ -465,10 +460,12 @@ class GameHubScreen(MDScreen):
                     except Exception as exc:
                         errors.append(f"Could not remove UE4SS: {exc}")
 
-            # 5. Remove from library (always — this is the committed action)
-            self._config.remove_game(profile.game_id)
-
-            Clock.schedule_once(lambda dt: self._after_remove(errors), 0)
+            # 5. Remove from library only if that switch is checked
+            if switches.get("library") and switches["library"].active:
+                self._config.remove_game(profile.game_id)
+                Clock.schedule_once(lambda dt: self._after_remove(errors), 0)
+            else:
+                Clock.schedule_once(lambda dt: self._after_partial_remove(errors), 0)
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -485,6 +482,16 @@ class GameHubScreen(MDScreen):
             self._show_snackbar(f"Removed ({len(errors)} error(s) — see console).")
         else:
             self._show_snackbar("Removed.")
+
+    def _after_partial_remove(self, errors: list[str]) -> None:
+        """Called when removal completed but game was NOT removed from library."""
+        if errors:
+            self._show_snackbar(f"Done ({len(errors)} error(s) — see console).")
+        else:
+            self._show_snackbar("Done.")
+        # Refresh active panel (e.g. Sessions panel) to reflect changes
+        if self._active_panel and hasattr(self._active_panel, "_refresh"):
+            self._active_panel._refresh()
 
     def _show_snackbar(self, text: str) -> None:
         from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText

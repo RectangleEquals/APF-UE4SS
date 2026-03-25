@@ -194,11 +194,13 @@ class APConfigPanel(PluginPanel):
     def _populate(self) -> None:
         if not self._svc:
             return
-        if not self._svc.has_config:
-            path_str = str(self._svc.config_path) if self._svc.config_path else "unknown"
-            self._set_status(f"No config found at: {path_str}")
+        path = self._svc.config_path
+        if path and path.exists():
+            self._set_status(f"Loaded from: {path.name}")
+        elif path:
+            self._set_status(f"No config found at: {path}  (showing defaults)")
         else:
-            self._set_status("")
+            self._set_status("No game context.")
 
         cfg = self._svc.get_config()
 
