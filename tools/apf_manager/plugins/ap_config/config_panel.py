@@ -58,11 +58,10 @@ class _CollapsibleSection(MDBoxLayout):
     """Header row that toggles visibility of a content MDBoxLayout."""
 
     def __init__(self, title: str, content: MDBoxLayout, collapsed: bool = False, **kwargs):
-        super().__init__(orientation="vertical", size_hint=(1, None), adaptive_height=True, **kwargs)
-        self._title = title
+        super().__init__(orientation="vertical", size_hint=(1, None), height=dp(40), **kwargs)
         self._collapsed = collapsed
 
-        # Header row — full-width clickable strip
+        # Header row
         header = MDBoxLayout(
             orientation="horizontal",
             size_hint=(1, None),
@@ -72,7 +71,7 @@ class _CollapsibleSection(MDBoxLayout):
             spacing=dp(4),
         )
         self._chevron = MDIconButton(
-            icon="chevron-down",
+            icon="chevron-right" if collapsed else "chevron-down",
             size_hint_x=None,
             width=dp(32),
             on_release=lambda *_: self._toggle(),
@@ -89,10 +88,21 @@ class _CollapsibleSection(MDBoxLayout):
         self.add_widget(header)
 
         self._content = content
+        content.size_hint_y = None  # height managed explicitly — no adaptive_height
+        # Update our height whenever content's minimum_height changes, but only if expanded
+        content.fbind("minimum_height", self._on_content_height)
         self.add_widget(content)
 
         if collapsed:
-            self._apply_state()
+            # Defer until after first layout pass so minimum_height values are real
+            Clock.schedule_once(lambda dt: self._apply_state(), 0)
+        # If not collapsed, _on_content_height fires after layout and sets self.height
+
+    def _on_content_height(self, content, min_h):
+        """Called when content's minimum_height changes. Only updates if expanded."""
+        if not self._collapsed:
+            content.height = min_h
+            self.height = dp(40) + min_h
 
     def _toggle(self):
         self._collapsed = not self._collapsed
@@ -101,15 +111,13 @@ class _CollapsibleSection(MDBoxLayout):
     def _apply_state(self):
         if self._collapsed:
             self._content.opacity = 0
-            self._content.disabled = True
-            self._content.size_hint_y = None
             self._content.height = 0
+            self.height = dp(40)
             self._chevron.icon = "chevron-right"
         else:
             self._content.opacity = 1
-            self._content.disabled = False
-            self._content.size_hint_y = None
             self._content.height = self._content.minimum_height
+            self.height = dp(40) + self._content.minimum_height
             self._chevron.icon = "chevron-down"
 
 
@@ -142,6 +150,7 @@ class APConfigPanel(PluginPanel):
         self._checks: dict[str, MDSwitch] = {}
         self._menus: dict[str, MDDropdownMenu] = {}
         self._dirty: bool = False
+        self._dirty_bound: bool = False
         self._unsaved_dialog: Optional[MDDialog] = None
         self._pending_nav_label: Optional[str] = None
         self._build_ui()
@@ -151,6 +160,8 @@ class APConfigPanel(PluginPanel):
     # -----------------------------------------------------------------------
 
     def on_activate(self, game_profile: "GameProfile") -> None:
+        for menu in self._menus.values():
+            menu.dismiss()
         svc = self._host.get_service("ap_config")
         if svc:
             self._svc = svc
@@ -165,7 +176,8 @@ class APConfigPanel(PluginPanel):
             self._host.log("ap_config service not available.")
 
     def on_deactivate(self) -> None:
-        pass
+        for menu in self._menus.values():
+            menu.dismiss()
 
     def can_deactivate(self) -> bool:
         if self._dirty:
@@ -229,9 +241,8 @@ class APConfigPanel(PluginPanel):
         return sw
 
     def _mk_dropdown(self, key: str, items: list, hint: str = "") -> MDTextField:
-        """Read-only text field that opens a dropdown on tap."""
+        """Text field that opens a dropdown on direct tap."""
         field = MDTextField(hint_text=hint, mode="outlined", size_hint=(0.6, 1))
-        field.readonly = True
         self._fields[key] = field
 
         menu_items = [
@@ -253,7 +264,7 @@ class APConfigPanel(PluginPanel):
 
         # ── AP Server (expanded) ──────────────────────────────────────────
         ap_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
-                                 adaptive_height=True, spacing=dp(4))
+                                 spacing=dp(4))
         ap_content.add_widget(_Row("Host",           self._mk_field("ap_server.host",      "archipelago.gg")))
         ap_content.add_widget(_Row("Port",           self._mk_field("ap_server.port",      "38281", "int")))
         ap_content.add_widget(_Row("Slot name",      self._mk_field("ap_server.slot_name", "Player1")))
@@ -263,7 +274,7 @@ class APConfigPanel(PluginPanel):
 
         # ── Logging (expanded) ───────────────────────────────────────────
         log_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
-                                  adaptive_height=True, spacing=dp(4))
+                                  spacing=dp(4))
         log_content.add_widget(_Row("Level",          self._mk_dropdown("logging.level", _LOG_LEVELS, "info")))
         log_content.add_widget(_Row("Log file",       self._mk_field("logging.file",    "ap_framework.log")))
         log_content.add_widget(_Row("Console output", self._mk_check("logging.console")))
@@ -272,7 +283,7 @@ class APConfigPanel(PluginPanel):
 
         # ── Timeouts (collapsed) ─────────────────────────────────────────
         to_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
-                                 adaptive_height=True, spacing=dp(4))
+                                 spacing=dp(4))
         to_content.add_widget(_Row("Connect (ms)",           self._mk_field("timeouts.connection_ms",             "30000", "int")))
         to_content.add_widget(_Row("Priority register (ms)", self._mk_field("timeouts.priority_registration_ms",  "30000", "int")))
         to_content.add_widget(_Row("Register (ms)",          self._mk_field("timeouts.registration_ms",           "60000", "int")))
@@ -287,7 +298,7 @@ class APConfigPanel(PluginPanel):
 
         # ── Threading (collapsed) ────────────────────────────────────────
         th_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
-                                 adaptive_height=True, spacing=dp(4))
+                                 spacing=dp(4))
         th_content.add_widget(_Row("Poll interval (ms)",  self._mk_field("threading.polling_interval_ms", "16",   "int")))
         th_content.add_widget(_Row("Queue max size",      self._mk_field("threading.queue_max_size",       "1000", "int")))
         th_content.add_widget(_Row("Shutdown (ms)",       self._mk_field("threading.shutdown_timeout_ms",  "5000", "int")))
@@ -355,7 +366,11 @@ class APConfigPanel(PluginPanel):
         Clock.schedule_once(lambda dt: self._bind_dirty(), 0)
 
     def _bind_dirty(self) -> None:
-        """Bind all fields to mark dirty on user changes."""
+        """Bind all fields to mark dirty on user changes (only binds once)."""
+        if self._dirty_bound:
+            self._dirty = False
+            return
+        self._dirty_bound = True
         for f in self._fields.values():
             f.bind(text=self._on_field_change)
         for sw in self._checks.values():
