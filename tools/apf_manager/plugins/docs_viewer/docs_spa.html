@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation</title>
+<style>
+/* ── Reset & base ───────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  display: flex; flex-direction: column;
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+}
+
+/* ── Title bar (draggable) ─────────────────────────────────────────────── */
+.apf-titlebar {
+  flex-shrink: 0; height: 40px; z-index: 9999;
+  background: #161b22; border-bottom: 1px solid #30363d;
+  display: flex; align-items: center; padding: 0 12px; gap: 8px;
+  -webkit-app-region: drag;
+}
+.apf-titlebar .apf-title {
+  flex: 1; font-size: 13px; color: #8b949e;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.apf-titlebar .apf-close {
+  -webkit-app-region: no-drag;
+  background: #c0392b; color: white; border: none; border-radius: 4px;
+  padding: 3px 10px; cursor: pointer; font-size: 13px; flex-shrink: 0;
+}
+.apf-titlebar .apf-close:hover { background: #e74c3c; }
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+.container {
+  flex: 1; display: flex; overflow: hidden;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────── */
+.sidebar {
+  width: 240px; flex-shrink: 0;
+  background: #161b22; border-right: 1px solid #30363d;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.search-wrap {
+  padding: 8px; flex-shrink: 0;
+  border-bottom: 1px solid #21262d;
+}
+.search-wrap input {
+  width: 100%; background: #21262d; border: 1px solid #30363d;
+  color: #e6edf3; border-radius: 6px; padding: 5px 8px; font-size: 12px;
+  outline: none;
+}
+.search-wrap input:focus { border-color: #58a6ff; }
+.sidebar-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+.sidebar-tree::-webkit-scrollbar { width: 6px; }
+.sidebar-tree::-webkit-scrollbar-track { background: transparent; }
+.sidebar-tree::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+.section-header {
+  padding: 8px 12px 4px;
+  font-size: 11px; color: #8b949e;
+  text-transform: uppercase; letter-spacing: 0.6px;
+  font-weight: 600;
+}
+.doc-item {
+  padding: 6px 12px 6px 20px;
+  cursor: pointer; font-size: 13px;
+  color: #c9d1d9;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 4px; margin: 1px 4px;
+  transition: background 0.1s;
+}
+.doc-item:hover { background: #21262d; }
+.doc-item.active { background: #1f6feb; color: #fff; }
+
+/* ── Content ───────────────────────────────────────────────────────────── */
+.content-wrap {
+  flex: 1; overflow-y: auto; padding: 24px 32px 48px;
+}
+.content-wrap::-webkit-scrollbar { width: 8px; }
+.content-wrap::-webkit-scrollbar-track { background: transparent; }
+.content-wrap::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+
+/* ── Loading / error states ────────────────────────────────────────────── */
+.state-msg {
+  color: #8b949e; padding: 48px; text-align: center; font-size: 14px;
+}
+.state-msg.error { color: #f85149; }
+
+/* ── GitHub Markdown CSS ───────────────────────────────────────────────── */
+.markdown-body a { color: #58a6ff; }
+.markdown-body a:hover { color: #79b8ff; }
+{GITHUB_CSS}
+</style>
+</head>
+<body>
+
+<div class="apf-titlebar" pywebview-drag-region>
+  <span class="apf-title">Documentation</span>
+  <button class="apf-close" onclick="window.pywebview && pywebview.api.close()">&#x2715;</button>
+</div>
+
+<div class="container">
+  <nav class="sidebar">
+    <div class="search-wrap">
+      <input id="search" type="text" placeholder="Search docs..." autocomplete="off"
+             oninput="filterTree(this.value)">
+    </div>
+    <div class="sidebar-tree" id="tree"></div>
+  </nav>
+
+  <div class="content-wrap">
+    <div class="markdown-body" id="content">
+      <div class="state-msg">Loading documentation&hellip;</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── Doc tree data (embedded by Python) ──────────────────────────────── */
+const TREE = {TREE_JSON};
+
+/* ── State ───────────────────────────────────────────────────────────── */
+let activeItem = null;
+let initialLoaded = false;
+
+/* ── Render sidebar ──────────────────────────────────────────────────── */
+function renderTree(items) {
+  const treeEl = document.getElementById('tree');
+  treeEl.innerHTML = '';
+
+  const sections = {};
+  for (const item of items) {
+    if (!sections[item.section]) sections[item.section] = [];
+    sections[item.section].push(item);
+  }
+
+  const sectionOrder = ['general', 'dev'];
+  const sectionLabels = { general: 'General', dev: 'Developer' };
+
+  for (const section of sectionOrder) {
+    const entries = sections[section];
+    if (!entries || entries.length === 0) continue;
+
+    const hdr = document.createElement('div');
+    hdr.className = 'section-header';
+    hdr.dataset.section = section;
+    hdr.textContent = sectionLabels[section] || section;
+    treeEl.appendChild(hdr);
+
+    for (const entry of entries) {
+      const item = document.createElement('div');
+      item.className = 'doc-item';
+      item.dataset.path = entry.path;
+      item.dataset.section = section;
+      item.textContent = entry.display_name;
+      item.title = entry.display_name;
+      item.onclick = () => loadDoc(entry);
+      treeEl.appendChild(item);
+    }
+  }
+}
+
+/* ── Load a document ─────────────────────────────────────────────────── */
+async function loadDoc(entry) {
+  // Update active state
+  if (activeItem) activeItem.classList.remove('active');
+  activeItem = document.querySelector(`.doc-item[data-path="${CSS.escape(entry.path)}"]`);
+  if (activeItem) activeItem.classList.add('active');
+
+  const contentEl = document.getElementById('content');
+  contentEl.innerHTML = '<div class="state-msg">Loading&hellip;</div>';
+  contentEl.scrollTop = 0;
+
+  try {
+    const html = await pywebview.api.get_doc_html(entry.path);
+    contentEl.innerHTML = html;
+    contentEl.scrollTop = 0;
+
+    // Re-open external links in system browser
+    contentEl.querySelectorAll('a[href]').forEach(a => {
+      const href = a.getAttribute('href');
+      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+        a.onclick = e => { e.preventDefault(); pywebview.api.open_url(href); };
+      }
+    });
+  } catch (e) {
+    contentEl.innerHTML =
+      '<div class="state-msg error">Failed to load document.<br>Check your connection and try again.</div>';
+  }
+}
+
+/* ── Search / filter ─────────────────────────────────────────────────── */
+function filterTree(query) {
+  const q = query.trim().toLowerCase();
+  const items = document.querySelectorAll('.doc-item');
+  const headers = document.querySelectorAll('.section-header');
+
+  items.forEach(item => {
+    const visible = !q || item.textContent.toLowerCase().includes(q);
+    item.style.display = visible ? '' : 'none';
+  });
+
+  headers.forEach(hdr => {
+    const section = hdr.dataset.section;
+    const anyVisible = Array.from(
+      document.querySelectorAll(`.doc-item[data-section="${section}"]`)
+    ).some(el => el.style.display !== 'none');
+    hdr.style.display = anyVisible ? '' : 'none';
+  });
+}
+
+/* ── Init: wait for pywebview bridge ─────────────────────────────────── */
+renderTree(TREE);
+
+window.addEventListener('pywebviewready', function () {
+  if (initialLoaded) return;
+  initialLoaded = true;
+
+  // Load the default entry (first in tree, pre-selected)
+  if (TREE.length > 0) {
+    loadDoc(TREE[0]);
+  } else {
+    document.getElementById('content').innerHTML =
+      '<div class="state-msg">No documentation available.</div>';
+  }
+});
+
+// Fallback: if pywebviewready never fires, try after a short delay
+setTimeout(function () {
+  if (!initialLoaded && typeof pywebview !== 'undefined' && TREE.length > 0) {
+    initialLoaded = true;
+    loadDoc(TREE[0]);
+  }
+}, 1000);
+</script>
+</body>
+</html>
