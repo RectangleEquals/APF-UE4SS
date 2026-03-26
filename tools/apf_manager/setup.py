@@ -150,10 +150,6 @@ executables = [
 # Post-build hook: copy plugins/ and data/ into build output
 # ---------------------------------------------------------------------------
 
-class _PostBuild(cx_Freeze.hooks.Module):
-    pass
-
-
 def _post_build():
     build_dir = Path(build_options["build_exe"])
     if not build_dir.exists():
