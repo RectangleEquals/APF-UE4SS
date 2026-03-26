@@ -114,7 +114,7 @@ body {
 
   <div class="content-wrap">
     <div class="markdown-body" id="content">
-      <div class="state-msg">Loading documentation&hellip;</div>
+      <div class="state-msg">Select a document to begin.</div>
     </div>
   </div>
 </div>
@@ -123,9 +123,11 @@ body {
 /* ── Doc tree data (embedded by Python) ──────────────────────────────── */
 const TREE = {TREE_JSON};
 
+/* ── Pre-rendered doc HTML (embedded by Python) ──────────────────────── */
+const DOCS_HTML = {DOCS_HTML_JSON};
+
 /* ── State ───────────────────────────────────────────────────────────── */
 let activeItem = null;
-let initialLoaded = false;
 
 /* ── Render sidebar ──────────────────────────────────────────────────── */
 function renderTree(items) {
@@ -164,32 +166,33 @@ function renderTree(items) {
   }
 }
 
-/* ── Load a document ─────────────────────────────────────────────────── */
-async function loadDoc(entry) {
+/* ── Load a document (synchronous — content is pre-rendered) ─────────── */
+function loadDoc(entry) {
   // Update active state
   if (activeItem) activeItem.classList.remove('active');
   activeItem = document.querySelector(`.doc-item[data-path="${CSS.escape(entry.path)}"]`);
   if (activeItem) activeItem.classList.add('active');
 
   const contentEl = document.getElementById('content');
-  contentEl.innerHTML = '<div class="state-msg">Loading&hellip;</div>';
-  contentEl.scrollTop = 0;
+  const html = DOCS_HTML[entry.path];
 
-  try {
-    const html = await pywebview.api.get_doc_html(entry.path);
+  if (html) {
     contentEl.innerHTML = html;
     contentEl.scrollTop = 0;
 
-    // Re-open external links in system browser
+    // Open external links in system browser via subprocess js_api
     contentEl.querySelectorAll('a[href]').forEach(a => {
       const href = a.getAttribute('href');
       if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
-        a.onclick = e => { e.preventDefault(); pywebview.api.open_url(href); };
+        a.onclick = e => {
+          e.preventDefault();
+          if (window.pywebview) pywebview.api.open_url(href);
+        };
       }
     });
-  } catch (e) {
+  } else {
     contentEl.innerHTML =
-      '<div class="state-msg error">Failed to load document.<br>Check your connection and try again.</div>';
+      '<div class="state-msg error">Document not available.</div>';
   }
 }
 
@@ -213,29 +216,11 @@ function filterTree(query) {
   });
 }
 
-/* ── Init: wait for pywebview bridge ─────────────────────────────────── */
+/* ── Init ────────────────────────────────────────────────────────────── */
 renderTree(TREE);
-
-window.addEventListener('pywebviewready', function () {
-  if (initialLoaded) return;
-  initialLoaded = true;
-
-  // Load the default entry (first in tree, pre-selected)
-  if (TREE.length > 0) {
-    loadDoc(TREE[0]);
-  } else {
-    document.getElementById('content').innerHTML =
-      '<div class="state-msg">No documentation available.</div>';
-  }
-});
-
-// Fallback: if pywebviewready never fires, try after a short delay
-setTimeout(function () {
-  if (!initialLoaded && typeof pywebview !== 'undefined' && TREE.length > 0) {
-    initialLoaded = true;
-    loadDoc(TREE[0]);
-  }
-}, 1000);
+if (TREE.length > 0) {
+  loadDoc(TREE[0]);
+}
 </script>
 </body>
 </html>

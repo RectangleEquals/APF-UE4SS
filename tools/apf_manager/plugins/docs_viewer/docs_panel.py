@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -132,10 +131,13 @@ class DocsPanel:
         """
         Build and open the SPA docs browser window.
 
-        Embeds the full doc tree as JSON and the GitHub CSS into the template,
-        then launches via html_viewer with inject_titlebar=False (the SPA has
-        its own title bar) and a _DocsAPI as extra_api.
+        Pre-renders ALL docs to HTML bodies before opening the window. This is
+        required because the viewer runs in a subprocess and cannot call back into
+        the parent Python process. All content is embedded into the SPA HTML at
+        launch time — no API calls from JS are needed for content loading.
         """
+        from .md_to_html import convert_body
+
         docs_svc = self._get_docs_svc()
 
         try:
@@ -144,7 +146,19 @@ class DocsPanel:
             self._host.log(f"[docs_viewer] Failed to fetch doc tree: {exc}")
             tree = []
 
-        # Serialize tree for JS embedding
+        # Pre-render all docs to HTML bodies
+        docs_html: dict[str, str] = {}
+        for entry in tree:
+            try:
+                md_text = docs_svc.fetch_content(entry)
+                docs_html[entry.path] = convert_body(md_text) if md_text else ""
+            except Exception as exc:
+                self._host.log(f"[docs_viewer] Failed to render {entry.path}: {exc}")
+                docs_html[entry.path] = (
+                    '<div class="state-msg error">Failed to load this document.</div>'
+                )
+
+        # Serialize for JS embedding; escape </ to prevent premature </script> closure
         tree_json = json.dumps(
             [
                 {
@@ -156,24 +170,24 @@ class DocsPanel:
                 for e in tree
             ],
             ensure_ascii=False,
-        )
+        ).replace("</", "<\\/")
+
+        docs_html_json = json.dumps(docs_html, ensure_ascii=False).replace("</", "<\\/")
 
         github_css = _load_github_css()
         template = _load_spa_template()
-        spa_html = template.replace("{TREE_JSON}", tree_json).replace("{GITHUB_CSS}", github_css)
-
-        docs_api = _DocsAPI(docs_svc, self._host)
-
-        def _on_refresh():
-            """Called when user clicks Refresh in the SPA."""
-            docs_svc.invalidate()
+        spa_html = (
+            template
+            .replace("{TREE_JSON}", tree_json)
+            .replace("{DOCS_HTML_JSON}", docs_html_json)
+            .replace("{GITHUB_CSS}", github_css)
+        )
 
         viewer.show(
             "Documentation",
             spa_html,
             width=1100,
             height=780,
-            extra_api=docs_api,
             inject_titlebar=False,
         )
 
@@ -216,58 +230,3 @@ class DocsPanel:
         self._host.log(f"[docs_viewer] [{level.upper()}] {message}")
         # TODO: wire up MDSnackbar notification when Snackbar service is available
 
-
-# ---------------------------------------------------------------------------
-# JavaScript API exposed to the SPA
-# ---------------------------------------------------------------------------
-
-class _DocsAPI:
-    """
-    Methods exposed to JavaScript via pywebview js_api.
-
-    html_viewer merges these with its own close() method.
-    JavaScript calls: await pywebview.api.get_doc_html(path)
-                      pywebview.api.open_url(url)
-                      pywebview.api.refresh()
-    """
-
-    def __init__(self, docs_svc, host) -> None:
-        self._svc = docs_svc
-        self._host = host
-
-    def get_doc_html(self, path: str) -> str:
-        """
-        Fetch a doc by its repo-relative path and return rendered HTML fragment.
-        Called by the SPA when the user clicks a sidebar entry.
-        """
-        from .md_to_html import convert_body
-
-        try:
-            entry = self._svc.get_entry_by_path(path)
-            if entry is None:
-                return f'<div class="state-msg error">Document not found: <code>{path}</code></div>'
-
-            md_text = self._svc.fetch_content(entry)
-            if not md_text:
-                return '<div class="state-msg error">Document is empty or unavailable.</div>'
-
-            return convert_body(md_text)
-
-        except Exception as exc:
-            self._host.log(f"[docs_viewer] get_doc_html error: {exc}")
-            return f'<div class="state-msg error">Failed to load document.<br><small>{exc}</small></div>'
-
-    def open_url(self, url: str) -> None:
-        """Open an external URL in the system's default browser."""
-        try:
-            if url.startswith("http://") or url.startswith("https://"):
-                webbrowser.open(url)
-        except Exception as exc:
-            self._host.log(f"[docs_viewer] open_url error: {exc}")
-
-    def refresh(self) -> None:
-        """Invalidate the cache so the next tree/content fetch goes to GitHub."""
-        try:
-            self._svc.invalidate()
-        except Exception as exc:
-            self._host.log(f"[docs_viewer] refresh error: {exc}")
