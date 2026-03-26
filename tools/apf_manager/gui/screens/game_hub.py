@@ -61,13 +61,11 @@ class _NavRailButton(ButtonBehavior, MDBoxLayout):
         self._nav_label = label
         self.bind(on_release=lambda *_: on_select(label))
 
-        self._icon = MDIcon(
-            icon=icon,
-            halign="center",
-            valign="middle",
-            size_hint=(1, 1),
-        )
-        self._icon.bind(size=self._icon.setter("text_size"))
+        # AnchorLayout centers MDIcon regardless of adaptive_size overriding size_hint
+        from kivy.uix.anchorlayout import AnchorLayout
+        icon_anchor = AnchorLayout(anchor_x="center", anchor_y="center", size_hint=(1, 1))
+        self._icon = MDIcon(icon=icon)
+        icon_anchor.add_widget(self._icon)
 
         self._lbl = MDLabel(
             text=label,
@@ -79,7 +77,7 @@ class _NavRailButton(ButtonBehavior, MDBoxLayout):
             theme_text_color="Custom",
             text_color=(0.7, 0.7, 0.7, 1),
         )
-        self.add_widget(self._icon)
+        self.add_widget(icon_anchor)
         self.add_widget(self._lbl)
 
     def set_selected(self, selected: bool) -> None:

@@ -1,15 +1,16 @@
 """
 APConfigPanel — hub_panel for editing framework_config.json.
 
-Sections:
-    AP Server   — host, port, slot_name, password
-    Logging     — level, file, console, append
-    Timeouts    — connect_timeout_ms, recv_timeout_ms, retry_delay_ms, max_retries
-    Threading   — poll_interval_ms
+Sections (collapsible):
+    AP Server   — host, port, slot_name, password, auto_reconnect  [expanded]
+    Logging     — level (dropdown), file, console, append           [expanded]
+    Timeouts    — connection/registration/ipc/action + retry        [collapsed]
+    Threading   — polling interval, queue size, shutdown timeout    [collapsed]
 """
 
 from __future__ import annotations
 
+import copy
 from typing import Optional, TYPE_CHECKING
 
 from kivy.clock import Clock
@@ -24,6 +25,7 @@ from kivymd.uix.dialog import (
     MDDialogButtonContainer,
 )
 from kivymd.uix.label import MDLabel
+from kivymd.uix.menu import MDDropdownMenu
 from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.textfield import MDTextField
 
@@ -32,6 +34,9 @@ from ...gui.widgets.plugin_panel import PluginPanel
 if TYPE_CHECKING:
     from ...core.config import GameProfile
     from .config_service import APConfigService
+
+
+_LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"]
 
 
 class _SectionHeader(MDLabel):
@@ -47,6 +52,65 @@ class _SectionHeader(MDLabel):
             text_color=(0.55, 0.75, 0.95, 1),
             **kwargs,
         )
+
+
+class _CollapsibleSection(MDBoxLayout):
+    """Header row that toggles visibility of a content MDBoxLayout."""
+
+    def __init__(self, title: str, content: MDBoxLayout, collapsed: bool = False, **kwargs):
+        super().__init__(orientation="vertical", size_hint=(1, None), adaptive_height=True, **kwargs)
+        self._title = title
+        self._collapsed = collapsed
+
+        # Header row — full-width clickable strip
+        header = MDBoxLayout(
+            orientation="horizontal",
+            size_hint=(1, None),
+            height=dp(40),
+            md_bg_color=(0.1, 0.14, 0.18, 1),
+            padding=(dp(4), 0),
+            spacing=dp(4),
+        )
+        self._chevron = MDIconButton(
+            icon="chevron-down",
+            size_hint_x=None,
+            width=dp(32),
+            on_release=lambda *_: self._toggle(),
+        )
+        header.add_widget(self._chevron)
+        header.add_widget(MDLabel(
+            text=title,
+            font_style="Title",
+            role="large",
+            theme_text_color="Custom",
+            text_color=(0.55, 0.75, 0.95, 1),
+            size_hint_x=1,
+        ))
+        self.add_widget(header)
+
+        self._content = content
+        self.add_widget(content)
+
+        if collapsed:
+            self._apply_state()
+
+    def _toggle(self):
+        self._collapsed = not self._collapsed
+        self._apply_state()
+
+    def _apply_state(self):
+        if self._collapsed:
+            self._content.opacity = 0
+            self._content.disabled = True
+            self._content.size_hint_y = None
+            self._content.height = 0
+            self._chevron.icon = "chevron-right"
+        else:
+            self._content.opacity = 1
+            self._content.disabled = False
+            self._content.size_hint_y = None
+            self._content.height = self._content.minimum_height
+            self._chevron.icon = "chevron-down"
 
 
 class _Row(MDBoxLayout):
@@ -76,6 +140,7 @@ class APConfigPanel(PluginPanel):
         self._svc: Optional["APConfigService"] = None
         self._fields: dict[str, MDTextField] = {}
         self._checks: dict[str, MDSwitch] = {}
+        self._menus: dict[str, MDDropdownMenu] = {}
         self._dirty: bool = False
         self._unsaved_dialog: Optional[MDDialog] = None
         self._pending_nav_label: Optional[str] = None
@@ -89,7 +154,11 @@ class APConfigPanel(PluginPanel):
         svc = self._host.get_service("ap_config")
         if svc:
             self._svc = svc
-            svc.load()  # always reload from disk on activate
+            ok = svc.load()
+            self._host.log(
+                f"[Configure] load()={ok}  path={svc.config_path}"
+                + (f"  error={svc.load_error!r}" if not ok else "")
+            )
             if not self._dirty:
                 Clock.schedule_once(lambda dt: self._populate(), 0)
         else:
@@ -159,33 +228,70 @@ class APConfigPanel(PluginPanel):
         self._checks[key] = sw
         return sw
 
+    def _mk_dropdown(self, key: str, items: list, hint: str = "") -> MDTextField:
+        """Read-only text field that opens a dropdown on tap."""
+        field = MDTextField(hint_text=hint, mode="outlined", size_hint=(0.6, 1))
+        field.readonly = True
+        self._fields[key] = field
+
+        menu_items = [
+            {"text": v, "on_release": lambda x=v, k=key: self._on_dropdown_select(k, x)}
+            for v in items
+        ]
+        menu = MDDropdownMenu(caller=field, items=menu_items, width_mult=3)
+        self._menus[key] = menu
+        field.bind(on_touch_down=lambda w, t: menu.open() if w.collide_point(*t.pos) else None)
+        return field
+
+    def _on_dropdown_select(self, key: str, value: str) -> None:
+        self._fields[key].text = value
+        if key in self._menus:
+            self._menus[key].dismiss()
+
     def _build_form(self) -> None:
         f = self._form
 
-        # AP Server
-        f.add_widget(_SectionHeader("AP Server"))
-        f.add_widget(_Row("Host", self._mk_field("server.host", "localhost")))
-        f.add_widget(_Row("Port", self._mk_field("server.port", "38281", "int")))
-        f.add_widget(_Row("Slot name", self._mk_field("server.slot_name", "Player1")))
-        f.add_widget(_Row("Password", self._mk_field("server.password", "(leave blank if none)")))
+        # ── AP Server (expanded) ──────────────────────────────────────────
+        ap_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
+                                 adaptive_height=True, spacing=dp(4))
+        ap_content.add_widget(_Row("Host",           self._mk_field("ap_server.host",      "archipelago.gg")))
+        ap_content.add_widget(_Row("Port",           self._mk_field("ap_server.port",      "38281", "int")))
+        ap_content.add_widget(_Row("Slot name",      self._mk_field("ap_server.slot_name", "Player1")))
+        ap_content.add_widget(_Row("Password",       self._mk_field("ap_server.password",  "(leave blank if none)")))
+        ap_content.add_widget(_Row("Auto reconnect", self._mk_check("ap_server.auto_reconnect")))
+        f.add_widget(_CollapsibleSection("AP Server", ap_content, collapsed=False))
 
-        # Logging
-        f.add_widget(_SectionHeader("Logging"))
-        f.add_widget(_Row("Level", self._mk_field("logging.level", "info / debug / warning / error")))
-        f.add_widget(_Row("Write to file", self._mk_check("logging.file")))
-        f.add_widget(_Row("Console output", self._mk_check("logging.console")))
-        f.add_widget(_Row("Append log", self._mk_check("logging.append")))
+        # ── Logging (expanded) ───────────────────────────────────────────
+        log_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
+                                  adaptive_height=True, spacing=dp(4))
+        log_content.add_widget(_Row("Level",          self._mk_dropdown("logging.level", _LOG_LEVELS, "info")))
+        log_content.add_widget(_Row("Log file",       self._mk_field("logging.file",    "ap_framework.log")))
+        log_content.add_widget(_Row("Console output", self._mk_check("logging.console")))
+        log_content.add_widget(_Row("Append log",     self._mk_check("logging.append")))
+        f.add_widget(_CollapsibleSection("Logging", log_content, collapsed=False))
 
-        # Timeouts
-        f.add_widget(_SectionHeader("Timeouts"))
-        f.add_widget(_Row("Connect (ms)", self._mk_field("timeouts.connect_timeout_ms", "5000", "int")))
-        f.add_widget(_Row("Receive (ms)", self._mk_field("timeouts.recv_timeout_ms", "10000", "int")))
-        f.add_widget(_Row("Retry delay (ms)", self._mk_field("timeouts.retry_delay_ms", "2000", "int")))
-        f.add_widget(_Row("Max retries", self._mk_field("timeouts.max_retries", "5", "int")))
+        # ── Timeouts (collapsed) ─────────────────────────────────────────
+        to_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
+                                 adaptive_height=True, spacing=dp(4))
+        to_content.add_widget(_Row("Connect (ms)",           self._mk_field("timeouts.connection_ms",             "30000", "int")))
+        to_content.add_widget(_Row("Priority register (ms)", self._mk_field("timeouts.priority_registration_ms",  "30000", "int")))
+        to_content.add_widget(_Row("Register (ms)",          self._mk_field("timeouts.registration_ms",           "60000", "int")))
+        to_content.add_widget(_Row("IPC message (ms)",       self._mk_field("timeouts.ipc_message_ms",            "5000",  "int")))
+        to_content.add_widget(_Row("Action exec (ms)",       self._mk_field("timeouts.action_execution_ms",       "5000",  "int")))
+        to_content.add_widget(_Row("Max conn retries",       self._mk_field("timeouts.retry.max_connection",      "3",     "int")))
+        to_content.add_widget(_Row("Max IPC retries",        self._mk_field("timeouts.retry.max_ipc_message",     "3",     "int")))
+        to_content.add_widget(_Row("Retry delay (ms)",       self._mk_field("timeouts.retry.initial_delay_ms",    "1000",  "int")))
+        to_content.add_widget(_Row("Backoff multiplier",     self._mk_field("timeouts.retry.backoff_multiplier",  "2.0")))
+        to_content.add_widget(_Row("Max retry delay (ms)",   self._mk_field("timeouts.retry.max_delay_ms",        "10000", "int")))
+        f.add_widget(_CollapsibleSection("Timeouts", to_content, collapsed=True))
 
-        # Threading
-        f.add_widget(_SectionHeader("Threading"))
-        f.add_widget(_Row("Poll interval (ms)", self._mk_field("threading.poll_interval_ms", "100", "int")))
+        # ── Threading (collapsed) ────────────────────────────────────────
+        th_content = MDBoxLayout(orientation="vertical", size_hint=(1, None),
+                                 adaptive_height=True, spacing=dp(4))
+        th_content.add_widget(_Row("Poll interval (ms)",  self._mk_field("threading.polling_interval_ms", "16",   "int")))
+        th_content.add_widget(_Row("Queue max size",      self._mk_field("threading.queue_max_size",       "1000", "int")))
+        th_content.add_widget(_Row("Shutdown (ms)",       self._mk_field("threading.shutdown_timeout_ms",  "5000", "int")))
+        f.add_widget(_CollapsibleSection("Threading", th_content, collapsed=True))
 
     # -----------------------------------------------------------------------
     # Populate / collect
@@ -196,34 +302,51 @@ class APConfigPanel(PluginPanel):
             return
         path = self._svc.config_path
         if path and path.exists():
-            self._set_status(f"Loaded from: {path.name}")
+            if self._svc.load_ok:
+                self._set_status(f"Loaded from: {path.name}")
+            else:
+                self._set_status(f"Error reading {path.name}: {self._svc.load_error}")
         elif path:
             self._set_status(f"No config found at: {path}  (showing defaults)")
         else:
             self._set_status("No game context.")
 
         cfg = self._svc.get_config()
+        ap = cfg.get("ap_server", {})
+        self._host.log(
+            f"[Configure] ap_server keys={list(ap.keys())}  "
+            f"host={ap.get('host', '?')}  port={ap.get('port', '?')}"
+        )
 
-        server = cfg.get("server", {})
-        self._fields["server.host"].text = str(server.get("host", "localhost"))
-        self._fields["server.port"].text = str(server.get("port", 38281))
-        self._fields["server.slot_name"].text = str(server.get("slot_name", ""))
-        self._fields["server.password"].text = str(server.get("password", ""))
+        self._fields["ap_server.host"].text      = str(ap.get("host",      "archipelago.gg"))
+        self._fields["ap_server.port"].text      = str(ap.get("port",      38281))
+        self._fields["ap_server.slot_name"].text = str(ap.get("slot_name", ""))
+        self._fields["ap_server.password"].text  = str(ap.get("password",  ""))
+        self._checks["ap_server.auto_reconnect"].active = bool(ap.get("auto_reconnect", True))
 
-        logging_ = cfg.get("logging", {})
-        self._fields["logging.level"].text = str(logging_.get("level", "info"))
-        self._checks["logging.file"].active = bool(logging_.get("file", True))
-        self._checks["logging.console"].active = bool(logging_.get("console", True))
-        self._checks["logging.append"].active = bool(logging_.get("append", False))
+        log = cfg.get("logging", {})
+        self._fields["logging.level"].text = str(log.get("level", "info"))
+        self._fields["logging.file"].text  = str(log.get("file",  "ap_framework.log"))
+        self._checks["logging.console"].active = bool(log.get("console", True))
+        self._checks["logging.append"].active  = bool(log.get("append",  False))
 
-        timeouts = cfg.get("timeouts", {})
-        self._fields["timeouts.connect_timeout_ms"].text = str(timeouts.get("connect_timeout_ms", 5000))
-        self._fields["timeouts.recv_timeout_ms"].text = str(timeouts.get("recv_timeout_ms", 10000))
-        self._fields["timeouts.retry_delay_ms"].text = str(timeouts.get("retry_delay_ms", 2000))
-        self._fields["timeouts.max_retries"].text = str(timeouts.get("max_retries", 5))
+        to = cfg.get("timeouts", {})
+        retry = to.get("retry", {})
+        self._fields["timeouts.connection_ms"].text            = str(to.get("connection_ms",            30000))
+        self._fields["timeouts.priority_registration_ms"].text = str(to.get("priority_registration_ms", 30000))
+        self._fields["timeouts.registration_ms"].text          = str(to.get("registration_ms",          60000))
+        self._fields["timeouts.ipc_message_ms"].text           = str(to.get("ipc_message_ms",           5000))
+        self._fields["timeouts.action_execution_ms"].text      = str(to.get("action_execution_ms",      5000))
+        self._fields["timeouts.retry.max_connection"].text     = str(retry.get("max_connection",        3))
+        self._fields["timeouts.retry.max_ipc_message"].text    = str(retry.get("max_ipc_message",       3))
+        self._fields["timeouts.retry.initial_delay_ms"].text   = str(retry.get("initial_delay_ms",      1000))
+        self._fields["timeouts.retry.backoff_multiplier"].text = str(retry.get("backoff_multiplier",    2.0))
+        self._fields["timeouts.retry.max_delay_ms"].text       = str(retry.get("max_delay_ms",          10000))
 
-        threading_ = cfg.get("threading", {})
-        self._fields["threading.poll_interval_ms"].text = str(threading_.get("poll_interval_ms", 100))
+        th = cfg.get("threading", {})
+        self._fields["threading.polling_interval_ms"].text = str(th.get("polling_interval_ms", 16))
+        self._fields["threading.queue_max_size"].text       = str(th.get("queue_max_size",       1000))
+        self._fields["threading.shutdown_timeout_ms"].text = str(th.get("shutdown_timeout_ms",  5000))
 
         # Reset dirty BEFORE binding so populate assignments don't trigger it
         self._dirty = False
@@ -244,35 +367,57 @@ class APConfigPanel(PluginPanel):
         self._dirty = True
 
     def _collect(self) -> dict:
+        # Deep-copy existing data to preserve game_name, version, and any unknown fields
+        data = copy.deepcopy(self._svc._data) if (self._svc and self._svc._data) else {}
+
         def _int(key: str, default: int) -> int:
             try:
                 return int(self._fields[key].text.strip())
             except (ValueError, KeyError):
                 return default
 
-        return {
-            "server": {
-                "host": self._fields["server.host"].text.strip(),
-                "port": _int("server.port", 38281),
-                "slot_name": self._fields["server.slot_name"].text.strip(),
-                "password": self._fields["server.password"].text.strip(),
-            },
-            "logging": {
-                "level": self._fields["logging.level"].text.strip() or "info",
-                "file": self._checks["logging.file"].active,
-                "console": self._checks["logging.console"].active,
-                "append": self._checks["logging.append"].active,
-            },
-            "timeouts": {
-                "connect_timeout_ms": _int("timeouts.connect_timeout_ms", 5000),
-                "recv_timeout_ms": _int("timeouts.recv_timeout_ms", 10000),
-                "retry_delay_ms": _int("timeouts.retry_delay_ms", 2000),
-                "max_retries": _int("timeouts.max_retries", 5),
-            },
-            "threading": {
-                "poll_interval_ms": _int("threading.poll_interval_ms", 100),
-            },
-        }
+        def _float(key: str, default: float) -> float:
+            try:
+                return float(self._fields[key].text.strip())
+            except (ValueError, KeyError):
+                return default
+
+        ap = data.setdefault("ap_server", {})
+        ap["host"]           = self._fields["ap_server.host"].text.strip()
+        ap["port"]           = _int("ap_server.port", 38281)
+        ap["slot_name"]      = self._fields["ap_server.slot_name"].text.strip()
+        ap["password"]       = self._fields["ap_server.password"].text.strip()
+        ap["auto_reconnect"] = self._checks["ap_server.auto_reconnect"].active
+
+        lg = data.setdefault("logging", {})
+        lg["level"]   = self._fields["logging.level"].text.strip() or "info"
+        lg["file"]    = self._fields["logging.file"].text.strip()
+        lg["console"] = self._checks["logging.console"].active
+        lg["append"]  = self._checks["logging.append"].active
+
+        to = data.setdefault("timeouts", {})
+        to["connection_ms"]            = _int("timeouts.connection_ms",            30000)
+        to["priority_registration_ms"] = _int("timeouts.priority_registration_ms", 30000)
+        to["registration_ms"]          = _int("timeouts.registration_ms",          60000)
+        to["ipc_message_ms"]           = _int("timeouts.ipc_message_ms",           5000)
+        to["action_execution_ms"]      = _int("timeouts.action_execution_ms",      5000)
+
+        r = to.setdefault("retry", {})
+        # Write correct C++ schema (flat max_connection, NOT legacy nested max.connection)
+        r["max_connection"]     = _int("timeouts.retry.max_connection",      3)
+        r["max_ipc_message"]    = _int("timeouts.retry.max_ipc_message",     3)
+        r["initial_delay_ms"]   = _int("timeouts.retry.initial_delay_ms",    1000)
+        r["backoff_multiplier"] = _float("timeouts.retry.backoff_multiplier", 2.0)
+        r["max_delay_ms"]       = _int("timeouts.retry.max_delay_ms",        10000)
+        # Remove legacy nested "max" key if present (schema bug in old files)
+        r.pop("max", None)
+
+        th = data.setdefault("threading", {})
+        th["polling_interval_ms"] = _int("threading.polling_interval_ms", 16)
+        th["queue_max_size"]      = _int("threading.queue_max_size",       1000)
+        th["shutdown_timeout_ms"] = _int("threading.shutdown_timeout_ms",  5000)
+
+        return data
 
     # -----------------------------------------------------------------------
     # Unsaved changes dialog
@@ -356,7 +501,11 @@ class APConfigPanel(PluginPanel):
     def _on_reload(self) -> None:
         if not self._svc:
             return
-        self._svc.load()
+        ok = self._svc.load()
+        self._host.log(
+            f"[Configure] reload: ok={ok}"
+            + (f"  error={self._svc.load_error!r}" if not ok else "")
+        )
         self._dirty = False
         self._populate()
         self._set_status("Reloaded.")

@@ -9,12 +9,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from kivy.clock import Clock
+from kivy.core.clipboard import Clipboard
 from kivy.metrics import dp
 from kivy.properties import BooleanProperty, StringProperty
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDIconButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.scrollview import MDScrollView
+from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 
 MAX_LINES = 500
 
@@ -42,6 +44,12 @@ class LogPanel(MDBoxLayout):
             halign="left",
             size_hint_x=1,
         )
+        copy_btn = MDIconButton(
+            icon="content-copy",
+            on_release=self._on_copy,
+            size_hint_x=None,
+            width=dp(36),
+        )
         toggle_btn = MDIconButton(
             icon="chevron-down",
             on_release=self._toggle_collapse,
@@ -50,6 +58,7 @@ class LogPanel(MDBoxLayout):
         )
         self._toggle_btn = toggle_btn
         header.add_widget(lbl)
+        header.add_widget(copy_btn)
         header.add_widget(toggle_btn)
         self.add_widget(header)
 
@@ -106,6 +115,17 @@ class LogPanel(MDBoxLayout):
 
     def _scroll_to_bottom(self):
         self._scroll.scroll_y = 0
+
+    def _on_copy(self, *_) -> None:
+        if self._lines:
+            Clipboard.copy("\n".join(self._lines))
+        MDSnackbar(
+            MDSnackbarText(text="Log copied to clipboard."),
+            y=dp(24),
+            pos_hint={"center_x": 0.5},
+            size_hint_x=0.6,
+            duration=2,
+        ).open()
 
     def clear(self) -> None:
         self._lines.clear()

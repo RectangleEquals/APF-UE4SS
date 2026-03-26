@@ -126,20 +126,20 @@ class ModRow(MDBoxLayout):
         else:
             self.add_widget(MDBoxLayout(size_hint=(None, 1), width=_COL_REORDER))
 
-        # Column 2: Status badge — wrapped in fixed container for alignment
+        # Column 2: Status badge — AnchorLayout centers MDIcon regardless of adaptive_size
+        from kivy.uix.anchorlayout import AnchorLayout
         from kivymd.uix.label import MDIcon
         from ...gui.theme import STATUS_ICONS
         icon_name, icon_color = STATUS_ICONS.get(self._status, STATUS_ICONS["unknown"])
-        status_box = MDBoxLayout(size_hint=(None, 1), width=_COL_STATUS)
+        status_box = AnchorLayout(
+            anchor_x="center", anchor_y="center",
+            size_hint=(None, 1), width=_COL_STATUS,
+        )
         badge = MDIcon(
             icon=icon_name,
             theme_icon_color="Custom",
             icon_color=icon_color,
-            halign="center",
-            valign="middle",
-            size_hint=(1, 1),
         )
-        badge.bind(size=badge.setter("text_size"))
         status_box.add_widget(badge)
         self.add_widget(status_box)
 
