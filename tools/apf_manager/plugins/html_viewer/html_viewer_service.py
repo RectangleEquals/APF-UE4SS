@@ -7,11 +7,17 @@ Features:
 - Kivy ModalView overlay dims the app while the window is open
 - on_top=True keeps the viewer above the Kivy app
 
-Why subprocess (not threading):
+Why multiprocessing (not threading or subprocess -c):
   pywebview.start() checks threading.current_thread().name != 'MainThread' and raises
   "pywebview must be run on a main thread." Kivy already owns the OS main thread, so
-  daemon threads (named 'Thread-N') always fail. The fix is subprocess.Popen: each
-  subprocess has its own 'MainThread', satisfying pywebview's check.
+  daemon threads (named 'Thread-N') always fail.
+
+  subprocess.Popen([sys.executable, "-c", code]) works in dev but fails in frozen builds
+  because sys.executable becomes APFManager.exe (not a Python interpreter).
+
+  Fix: multiprocessing.Process with a module-level target function. This works in both
+  dev and frozen cx_Freeze builds — freeze_support() in __main__.py intercepts the
+  multiprocessing respawn before the Kivy app loop starts.
 
   HTML is written to a temp file before spawning (avoids arg-length limits for large
   SPA content). The subprocess reads the file, opens the window, and exits when the
@@ -25,9 +31,8 @@ Usage:
 
 from __future__ import annotations
 
+import multiprocessing
 import os
-import subprocess
-import sys
 import tempfile
 import threading
 from typing import Callable, Optional
@@ -76,37 +81,46 @@ def _inject_titlebar(title: str, html: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Subprocess entry point
-# Runs as: python -c "_SUBPROCESS_CODE" <html_path> <title> <width> <height>
+# Multiprocessing worker — module-level so it's picklable for spawn
 # ---------------------------------------------------------------------------
 
-_SUBPROCESS_CODE = """\
-import sys, webview, webbrowser
-from pathlib import Path
+def _webview_process_main(html_path: str, title: str, width: int, height: int) -> None:
+    """
+    Runs in a separate process. Opens a frameless pywebview window and blocks
+    until the window is closed.
 
-html  = Path(sys.argv[1]).read_text(encoding='utf-8')
-title = sys.argv[2]
-width = int(sys.argv[3])
-height = int(sys.argv[4])
+    Must be module-level (not a nested function or lambda) to be picklable
+    for multiprocessing's 'spawn' start method used by cx_Freeze.
+    """
+    import webview
+    import webbrowser
+    from pathlib import Path
 
-win_ref = [None]
+    html = Path(html_path).read_text(encoding="utf-8")
+    win_ref = [None]
 
-class _API:
-    def close(self):
-        if win_ref[0]:
-            win_ref[0].destroy()
-    def open_url(self, url):
-        if url.startswith(('http://', 'https://')):
-            webbrowser.open(url)
+    class _API:
+        def close(self):
+            if win_ref[0]:
+                win_ref[0].destroy()
 
-api = _API()
-win = webview.create_window(
-    title, html=html, frameless=True, on_top=True,
-    easy_drag=False, js_api=api, width=width, height=height,
-)
-win_ref[0] = win
-webview.start(gui='edgechromium')
-"""
+        def open_url(self, url):
+            if url.startswith(("http://", "https://")):
+                webbrowser.open(url)
+
+    api = _API()
+    win = webview.create_window(
+        title,
+        html=html,
+        frameless=True,
+        on_top=True,
+        easy_drag=False,
+        js_api=api,
+        width=width,
+        height=height,
+    )
+    win_ref[0] = win
+    webview.start(gui="edgechromium")
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +139,7 @@ class HTMLViewerService:
         html: str,
         width: int = 1000,
         height: int = 750,
-        extra_api=None,           # Reserved; not used (subprocess boundary prevents this)
+        extra_api=None,           # Reserved; not used (process boundary prevents this)
         inject_titlebar: bool = True,
         on_closed: Optional[Callable[[], None]] = None,
     ) -> None:
@@ -135,7 +149,7 @@ class HTMLViewerService:
         title          — Window title + title bar label
         html           — Full HTML document string
         width/height   — Initial window size in pixels
-        extra_api      — Reserved; currently a no-op (subprocess boundary)
+        extra_api      — Reserved; currently a no-op (process boundary)
         inject_titlebar — If True (default), prepend a draggable title bar with
                           close button. Set False when the HTML already has its own.
         on_closed      — Callback fired (on Kivy main thread) when window closes
@@ -148,7 +162,7 @@ class HTMLViewerService:
 
         final_html = _inject_titlebar(title, html) if inject_titlebar else html
 
-        # Write HTML to a temp file to avoid subprocess arg-length limits
+        # Write HTML to a temp file to avoid process arg-length limits
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".html")
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
@@ -161,16 +175,16 @@ class HTMLViewerService:
 
         def _monitor():
             try:
-                proc = subprocess.Popen(
-                    [sys.executable, "-c", _SUBPROCESS_CODE,
-                     tmp_path, title, str(width), str(height)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                proc = multiprocessing.Process(
+                    target=_webview_process_main,
+                    args=(tmp_path, title, width, height),
+                    daemon=True,
                 )
-                proc.wait()
+                proc.start()
+                proc.join()
             except Exception as e:
                 Clock.schedule_once(
-                    lambda dt, err=e: print(f"[html_viewer] subprocess error: {err}")
+                    lambda dt, err=e: print(f"[html_viewer] webview error: {err}")
                 )
             finally:
                 try:

@@ -1,7 +1,8 @@
 """
 GitHubAPI — general-purpose GitHub REST client.
 
-Used for: docs fetching, release checks, and any future GitHub feature.
+Used for: docs fetching, release checks, and any future GitHub feature
+(update checker, CI/CD Actions plugin, mod registry, mod sets, plugin registry, etc.).
 
 Auth token resolution (priority order):
   1. User override  → ~/.apf_manager/github_token.json  {"token": "ghp_..."}
@@ -15,14 +16,16 @@ The on_status callback surfaces warnings and errors to the caller (e.g. for Snac
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
-import requests as _requests
+from githubkit import GitHub, TokenAuthStrategy
+from githubkit.exception import RequestFailed, RateLimitExceeded, RequestTimeout
+import httpx as _httpx
 
 from .github_cache import GitHubCache, TTL_CONTENTS, TTL_FILES, TTL_RELEASES
 
-_API_BASE = "https://api.github.com"
 _USER_AGENT = "APFManager/1.0"
 
 
@@ -46,7 +49,9 @@ class GitHubAPI:
         self._repo = repo_name
         self._cache = cache or GitHubCache(repo_owner, repo_name)
         self._on_status = on_status or (lambda level, msg: None)
+        self._bundled_token_path = token_file_path
         self._token, self._auth_source = self._resolve_token(token_file_path)
+        self._client: GitHub = self._make_client()
         self._rate_limit_remaining: Optional[int] = None
 
     # -----------------------------------------------------------------------
@@ -69,38 +74,42 @@ class GitHubAPI:
                 except Exception:
                     pass
 
-        url = f"{_API_BASE}/repos/{self._owner}/{self._repo}/contents/{path}"
         try:
-            resp = self._get(url)
-            self._update_rate_limit(resp)
-            data = resp.json()
+            resp = self._client.rest.repos.get_content(self._owner, self._repo, path)
+            self._update_rate_limit(resp.headers)
+            data = resp.parsed_data
             if not isinstance(data, list):
                 data = [data]
             result = [
                 {
-                    "name": item.get("name", ""),
-                    "path": item.get("path", ""),
-                    "type": item.get("type", ""),
-                    "download_url": item.get("download_url"),
-                    "size": item.get("size", 0),
+                    "name": item.name,
+                    "path": item.path,
+                    "type": item.type,
+                    "download_url": getattr(item, "download_url", None),
+                    "size": getattr(item, "size", 0),
                 }
                 for item in data
-                if isinstance(item, dict)
             ]
             self._cache.set(cache_key, json.dumps(result), TTL_CONTENTS)
             return result
 
-        except _RateLimitError:
-            self._on_status("warn", "GitHub rate limit reached — using cached content")
-            return self._load_stale_json(cache_key) or []
-        except (_NetworkError, Exception) as exc:
-            self._on_status("warn", f"GitHub unreachable — using cached content ({exc})")
+        except RateLimitExceeded as exc:
+            return self._handle_rate_limit(exc, cache_key, fallback=[])
+
+        except RequestFailed as exc:
+            return self._handle_request_failed(exc, cache_key, fallback=[])
+
+        except (RequestTimeout, _httpx.ConnectError, _httpx.TimeoutException) as exc:
+            return self._handle_network_error(exc, cache_key, fallback=[])
+
+        except Exception as exc:
+            self._on_status("warn", f"GitHub error listing {path}: {exc}")
             return self._load_stale_json(cache_key) or []
 
     def fetch_text(self, download_url: str, force_refresh: bool = False) -> str:
         """
         Fetch raw text from a download_url (e.g. raw.githubusercontent.com).
-        Uses a separate cache from the API cache. Falls back to stale on failure.
+        Uses a separate cache keyed by URL hash. Falls back to stale on failure.
         """
         cache_key = f"files/{_url_key(download_url)}"
 
@@ -110,19 +119,32 @@ class GitHubAPI:
                 return cached
 
         try:
-            # Raw GitHub CDN — auth token not required, but won't hurt
-            resp = _requests.get(download_url, headers=self._raw_headers(), timeout=15)
+            resp = _httpx.get(
+                download_url,
+                headers=self._cdn_headers(),
+                timeout=15,
+                follow_redirects=True,
+            )
             resp.raise_for_status()
             text = resp.text
             self._cache.set(cache_key, text, TTL_FILES)
             return text
 
-        except _requests.HTTPError as exc:
-            self._on_status("warn", f"Failed to fetch file ({exc}) — using cached version")
-            return self._cache.get_stale(cache_key) or ""
+        except (_httpx.HTTPStatusError, _httpx.ConnectError, _httpx.TimeoutException) as exc:
+            stale = self._cache.get_stale(cache_key)
+            if stale:
+                self._on_status("warn", f"Failed to fetch file — showing cached version ({exc})")
+                return stale
+            self._on_status("error", f"Failed to fetch file and no cached version available ({exc})")
+            return ""
+
         except Exception as exc:
-            self._on_status("warn", f"Network error fetching file — using cached version")
-            return self._cache.get_stale(cache_key) or ""
+            stale = self._cache.get_stale(cache_key)
+            if stale:
+                self._on_status("warn", f"Unexpected error fetching file — showing cached version ({exc})")
+                return stale
+            self._on_status("error", f"Unexpected error fetching file, no cache ({exc})")
+            return ""
 
     # -----------------------------------------------------------------------
     # Releases API
@@ -143,18 +165,45 @@ class GitHubAPI:
                 except Exception:
                     pass
 
-        url = f"{_API_BASE}/repos/{self._owner}/{self._repo}/releases/latest"
         try:
-            resp = self._get(url)
-            self._update_rate_limit(resp)
-            data = resp.json()
+            resp = self._client.rest.repos.get_latest_release(self._owner, self._repo)
+            self._update_rate_limit(resp.headers)
+            release = resp.parsed_data
+            data = {
+                "tag_name": release.tag_name,
+                "published_at": str(release.published_at),
+                "body": release.body or "",
+                "assets": [
+                    {
+                        "name": a.name,
+                        "browser_download_url": a.browser_download_url,
+                        "size": a.size,
+                    }
+                    for a in (release.assets or [])
+                ],
+            }
             self._cache.set(cache_key, json.dumps(data), TTL_RELEASES)
             return data
 
-        except _RateLimitError:
-            self._on_status("warn", "GitHub rate limit reached — using cached release info")
-            return self._load_stale_json(cache_key)
-        except Exception:
+        except RateLimitExceeded as exc:
+            return self._handle_rate_limit(exc, cache_key, fallback=None)
+
+        except RequestFailed as exc:
+            return self._handle_request_failed(exc, cache_key, fallback=None)
+
+        except (RequestTimeout, _httpx.ConnectError, _httpx.TimeoutException) as exc:
+            stale = self._cache.get_stale(cache_key)
+            if stale is not None:
+                self._on_status("warn", f"GitHub unreachable — using cached release info ({exc})")
+                try:
+                    return json.loads(stale)
+                except Exception:
+                    pass
+            self._on_status("error", f"GitHub unreachable and no cached release info ({exc})")
+            return None
+
+        except Exception as exc:
+            self._on_status("warn", f"Unexpected error fetching release info: {exc}")
             return self._load_stale_json(cache_key)
 
     def download_asset(
@@ -165,21 +214,22 @@ class GitHubAPI:
     ) -> bool:
         """Download a release asset to dest. Returns True on success."""
         try:
-            headers = dict(self._api_headers())
+            headers = self._cdn_headers()
             headers["Accept"] = "application/octet-stream"
-            resp = _requests.get(asset_url, headers=headers, stream=True, timeout=60)
-            resp.raise_for_status()
-            total = int(resp.headers.get("Content-Length", 0))
             dest.parent.mkdir(parents=True, exist_ok=True)
+            total = 0
             downloaded = 0
-            with open(dest, "wb") as f:
-                for chunk in resp.iter_content(65536):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_cb:
-                        progress_cb(downloaded, total)
+            with _httpx.stream(
+                "GET", asset_url, headers=headers, timeout=60, follow_redirects=True
+            ) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get("Content-Length", 0))
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_bytes(65536):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_cb:
+                            progress_cb(downloaded, total)
             return True
         except Exception:
             return False
@@ -205,8 +255,10 @@ class GitHubAPI:
         self.refresh_auth()
 
     def refresh_auth(self, token_file_path: Optional[Path] = None) -> None:
-        """Re-resolve token from disk."""
-        self._token, self._auth_source = self._resolve_token(token_file_path)
+        """Re-resolve token from disk and rebuild the GitHub client."""
+        path = token_file_path or self._bundled_token_path
+        self._token, self._auth_source = self._resolve_token(path)
+        self._client = self._make_client()
 
     def invalidate_cache(self) -> None:
         """Clear all cached data for this repo."""
@@ -231,8 +283,13 @@ class GitHubAPI:
         return self._auth_source
 
     # -----------------------------------------------------------------------
-    # Internals
+    # Internals — client construction
     # -----------------------------------------------------------------------
+
+    def _make_client(self) -> GitHub:
+        if self._token:
+            return GitHub(auth=TokenAuthStrategy(self._token))
+        return GitHub()
 
     def _resolve_token(self, bundled_path: Optional[Path]) -> tuple[Optional[str], str]:
         # 1. User override
@@ -258,38 +315,16 @@ class GitHubAPI:
         # 3. Unauthenticated
         return None, "unauthenticated"
 
-    def _api_headers(self) -> dict:
-        h = {
-            "Accept": "application/vnd.github+json",
-            "User-Agent": _USER_AGENT,
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        if self._token:
-            h["Authorization"] = f"Bearer {self._token}"
-        return h
-
-    def _raw_headers(self) -> dict:
+    def _cdn_headers(self) -> dict:
+        """Headers for raw CDN / asset downloads (not the API endpoint)."""
         h = {"User-Agent": _USER_AGENT}
         if self._token:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
-    def _get(self, url: str) -> _requests.Response:
+    def _update_rate_limit(self, headers) -> None:
         try:
-            resp = _requests.get(url, headers=self._api_headers(), timeout=10)
-        except _requests.ConnectionError as exc:
-            raise _NetworkError(str(exc)) from exc
-        except _requests.Timeout as exc:
-            raise _NetworkError(str(exc)) from exc
-
-        if resp.status_code in (403, 429):
-            raise _RateLimitError(f"HTTP {resp.status_code}")
-        resp.raise_for_status()
-        return resp
-
-    def _update_rate_limit(self, resp: _requests.Response) -> None:
-        try:
-            remaining = resp.headers.get("X-RateLimit-Remaining")
+            remaining = headers.get("X-RateLimit-Remaining")
             if remaining is not None:
                 self._rate_limit_remaining = int(remaining)
                 if self._rate_limit_remaining < 10:
@@ -299,6 +334,45 @@ class GitHubAPI:
                     )
         except Exception:
             pass
+
+    # -----------------------------------------------------------------------
+    # Internals — error handlers
+    # -----------------------------------------------------------------------
+
+    def _handle_rate_limit(self, exc: RateLimitExceeded, cache_key: str, fallback):
+        retry_secs = int(exc.retry_after.total_seconds()) if exc.retry_after else 0
+        reset_str = _format_reset_time(int(time.time()) + retry_secs) if retry_secs else "soon"
+        stale = self._load_stale_json(cache_key)
+        if stale is not None:
+            self._on_status("warn", f"GitHub rate limit hit (resets ~{reset_str}) — using cached content")
+            return stale
+        self._on_status("error", f"GitHub rate limit hit (resets ~{reset_str}) — no cached content available")
+        return fallback
+
+    def _handle_request_failed(self, exc: RequestFailed, cache_key: str, fallback):
+        sc = exc.response.status_code
+        url = str(exc.request.url)
+        remaining = exc.response.headers.get("X-RateLimit-Remaining", "")
+        if sc in (401, 403) and remaining != "0":
+            # Auth failure — downgrade to unauthenticated and rebuild client
+            self._on_status(
+                "warn",
+                f"GitHub token invalid or expired (HTTP {sc}) — switching to unauthenticated",
+            )
+            self._token = None
+            self._auth_source = "unauthenticated"
+            self._client = self._make_client()
+        else:
+            self._on_status("warn", f"GitHub API error (HTTP {sc}) for {url}")
+        return self._load_stale_json(cache_key) or fallback
+
+    def _handle_network_error(self, exc: Exception, cache_key: str, fallback):
+        stale = self._load_stale_json(cache_key)
+        if stale is not None:
+            self._on_status("warn", f"GitHub unreachable — using cached content ({exc})")
+            return stale
+        self._on_status("error", f"GitHub unreachable and no cached content available ({exc})")
+        return fallback
 
     def _load_stale_json(self, cache_key: str) -> Optional[dict | list]:
         stale = self._cache.get_stale(cache_key)
@@ -311,23 +385,22 @@ class GitHubAPI:
 
 
 # ---------------------------------------------------------------------------
-# Internal exception helpers
-# ---------------------------------------------------------------------------
-
-class _RateLimitError(Exception):
-    pass
-
-class _NetworkError(Exception):
-    pass
-
-
-# ---------------------------------------------------------------------------
 # Key helpers
 # ---------------------------------------------------------------------------
 
 def _safe_key(s: str) -> str:
     return s.replace("/", "_").replace(" ", "_")
 
+
 def _url_key(url: str) -> str:
     import hashlib
     return hashlib.md5(url.encode()).hexdigest()
+
+
+def _format_reset_time(unix_ts: int) -> str:
+    """Format a Unix timestamp as a human-readable local time string."""
+    import datetime
+    try:
+        return datetime.datetime.fromtimestamp(unix_ts).strftime("%H:%M:%S")
+    except Exception:
+        return str(unix_ts)

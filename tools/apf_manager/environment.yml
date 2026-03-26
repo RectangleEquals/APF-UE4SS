@@ -16,3 +16,11 @@ dependencies:
       - cx_Freeze>=6.15.0
       # Optional: plyer for file pickers (native OS dialogs)
       - plyer>=2.1.0
+      # HTML documentation viewer (pywebview frameless window)
+      - pywebview>=4.0
+      # Markdown → HTML rendering for docs viewer
+      - markdown>=3.5
+      # GitHub REST API client (typed; used by GitHubAPI for all GitHub features)
+      - githubkit>=0.14.0
+      # HTTP client (githubkit dep; used directly for raw CDN + asset downloads)
+      - httpx>=0.27.0

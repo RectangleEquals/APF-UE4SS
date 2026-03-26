@@ -5,13 +5,29 @@ Usage:
     cd tools/apf_manager
     python setup.py build_exe
 
-Output: build/exe.win-amd64-3.x/
+Prerequisites:
+    plugins/docs_viewer/.github_token must exist (fine-grained PAT, contents:read).
+    See Developer Setup in the plan for instructions.
+
+Output: build/APFManager/
     APFManager.exe
     APFManagerDebug.exe
     python3xx.dll
     lib/
         library.zip       (cx_Freeze bundled modules)
-    plugins/              (built-in plugin sources, copied post-build)
+        webview/          (pywebview package data — EdgeChromium backend helpers)
+    plugins/
+        ap_config/
+        deploy/
+        diagnostics/
+        docs_viewer/
+            assets/       (github-markdown-dark.css)
+        html_viewer/
+        library/
+        manifesto/
+        mods/
+        packager/
+        sessions/
     custom_plugins/       (empty — user drops .apfplugin files here)
     data/                 (icons, theme assets)
 
@@ -32,6 +48,18 @@ from cx_Freeze import setup, Executable
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent.parent  # ipc_2/
+
+# ---------------------------------------------------------------------------
+# Build prerequisite checks
+# ---------------------------------------------------------------------------
+
+token_file = HERE / "plugins" / "docs_viewer" / ".github_token"
+if "build_exe" in sys.argv and not token_file.exists():
+    raise FileNotFoundError(
+        f"Missing required build credential: {token_file}\n"
+        "Create a fine-grained GitHub PAT (permissions: contents=read, repo: APF-UE4SS)\n"
+        "and save the token (one line, no trailing newline) to that path."
+    )
 
 # ---------------------------------------------------------------------------
 # Build options
@@ -60,6 +88,14 @@ PACKAGES = [
     "kivy",
     "kivymd",
     "requests",
+    # HTML docs viewer
+    "webview",
+    "markdown",
+    # GitHub API client + HTTP
+    "githubkit",
+    "httpx",
+    "httpx._transports",
+    "anyio",        # githubkit internal async dep
 ]
 
 INCLUDE_FILES = [
@@ -67,12 +103,23 @@ INCLUDE_FILES = [
     # if needed on the target machine. Add paths as required.
 ]
 
+# pywebview — bundle EdgeChromium backend helpers into build/APFManager/lib/webview/
+try:
+    import webview as _wv
+    _wv_dir = Path(_wv.__file__).parent
+    if _wv_dir.exists():
+        INCLUDE_FILES.append((str(_wv_dir), "lib/webview"))
+except ImportError:
+    pass  # Not installed yet; will fail at runtime, but won't break the build script
+
+
 build_options = {
     "packages": PACKAGES,
     "excludes": EXCLUDES,
     "include_files": INCLUDE_FILES,
     "zip_include_packages": ["*"],
     "zip_exclude_packages": [],
+    "include_msvcr": True,
     "silent": True,
     "build_exe": str(HERE / "build" / "APFManager"),
 }
@@ -113,6 +160,7 @@ def _post_build():
         return
 
     # Copy built-in plugins → build/APFManager/plugins/
+    # Includes: docs_viewer/assets/, html_viewer/, docs_viewer/.github_token
     plugins_dst = build_dir / "plugins"
     plugins_src = HERE / "plugins"
     if plugins_dst.exists():
