@@ -26,7 +26,7 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -48,12 +48,15 @@ Source: "{#BuildDir}\lib\*"; DestDir: "{app}\lib"; Flags: ignoreversion recurses
 ; Built-in plugins (includes docs_viewer/assets/, html_viewer/, docs_viewer/.github_token)
 Source: "{#BuildDir}\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Data assets (icons, theme)
-Source: "{#BuildDir}\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: DataDirExists
+; Data assets (icons, theme) — optional; silently skipped if absent or empty
+Source: "{#BuildDir}\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
-; WebView2 bootstrapper — silent install if runtime not already present on target machine
-; Download MicrosoftEdgeWebview2Setup.exe from Microsoft and place it next to this .iss file.
+; WebView2 bootstrapper — optional; only bundled if redist\MicrosoftEdgeWebview2Setup.exe is present.
+; Download the Evergreen Bootstrapper from Microsoft and place it at redist\ before running ISCC.
+; See redist\README.txt for instructions.
+#if FileExists("redist\MicrosoftEdgeWebview2Setup.exe")
 Source: "redist\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsWebView2
+#endif
 
 [Dirs]
 ; Create empty custom_plugins directory for user plugins
@@ -67,17 +70,14 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 ; Install WebView2 runtime silently before app launches (only if not already present)
+#if FileExists("redist\MicrosoftEdgeWebview2Setup.exe")
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; \
   Description: "Installing WebView2 Runtime..."; \
   Flags: runhidden waituntilterminated; Check: NeedsWebView2
+#endif
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-function DataDirExists(): Boolean;
-begin
-  Result := DirExists(ExpandConstant('{src}\{#BuildDir}\data'));
-end;
-
 function NeedsWebView2(): Boolean;
 var
   Version: String;

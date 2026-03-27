@@ -34,11 +34,12 @@ def _builtin_plugins_dir() -> Path:
     """
     Returns the built-in plugins directory.
     In development: tools/apf_manager/plugins/ (relative to this file).
-    In frozen build: lib/plugins/ (relative to executable).
+    In frozen build: plugins/ (relative to executable).
     """
     if getattr(sys, "frozen", False):
-        # cx_Freeze frozen build
-        return Path(sys.executable).parent / "lib" / "plugins"
+        # cx_Freeze frozen build — setup.py _post_build and inno_setup.iss both
+        # place plugins at {exe_dir}/plugins/, NOT {exe_dir}/lib/plugins/.
+        return Path(sys.executable).parent / "plugins"
     else:
         return Path(__file__).parent.parent / "plugins"
 
