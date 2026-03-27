@@ -166,6 +166,18 @@ function renderTree(items) {
   }
 }
 
+/* ── Resolve a relative href to an absolute doc path ─────────────────── */
+function resolveDocLink(currentPath, href) {
+  var base = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+  var parts = (base + href).split('/');
+  var resolved = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] === '..') resolved.pop();
+    else if (parts[i] !== '.') resolved.push(parts[i]);
+  }
+  return resolved.join('/');
+}
+
 /* ── Load a document (synchronous — content is pre-rendered) ─────────── */
 function loadDoc(entry) {
   // Update active state
@@ -180,15 +192,32 @@ function loadDoc(entry) {
     contentEl.innerHTML = html;
     contentEl.scrollTop = 0;
 
-    // Open external links in system browser via subprocess js_api
+    // Wire link clicks — prevent all navigation out of the SPA
     contentEl.querySelectorAll('a[href]').forEach(a => {
       const href = a.getAttribute('href');
-      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+      if (!href) return;
+      if (href.startsWith('http://') || href.startsWith('https://')) {
+        // External: open in system browser via subprocess js_api
         a.onclick = e => {
           e.preventDefault();
           if (window.pywebview) pywebview.api.open_url(href);
         };
+      } else if (!href.startsWith('#')) {
+        // Internal doc link — prevent WebView2 navigation; resolve and load from tree
+        a.onclick = (function(h) {
+          return function(e) {
+            e.preventDefault();
+            var curPath = activeItem ? activeItem.dataset.path : null;
+            var resolved = curPath ? resolveDocLink(curPath, h) : h;
+            var target = null;
+            for (var i = 0; i < TREE.length; i++) {
+              if (TREE[i].path === resolved) { target = TREE[i]; break; }
+            }
+            if (target) loadDoc(target);
+          };
+        })(href);
       }
+      // Anchor (#section): default scroll behaviour — no handler needed
     });
   } else {
     contentEl.innerHTML =

@@ -14,15 +14,15 @@ Frozen entry:      APFManager.exe / APFManagerDebug.exe  (uses this file)
 """
 import multiprocessing
 
-from apf_manager.gui.app import APFManagerApp
-
 
 def main():
-    # Required for cx_Freeze + multiprocessing (no-op in dev).
-    # Must be called before APFManagerApp().run() so that frozen builds can
-    # intercept multiprocessing respawn (e.g. html_viewer subprocess) before
-    # the Kivy app loop starts.
+    # freeze_support() MUST be called before any Kivy import. The frozen
+    # multiprocessing child process runs module-level code first; if Kivy is
+    # imported at module level it initializes an SDL2 window before
+    # freeze_support() can intercept and exit. Import APFManagerApp here so the
+    # child process exits cleanly without ever touching Kivy.
     multiprocessing.freeze_support()
+    from apf_manager.gui.app import APFManagerApp
     APFManagerApp().run()
 
 

@@ -310,9 +310,9 @@ class DeployPanel(PluginPanel):
 
         # "Show All" toggle
         toolbar.add_widget(MDLabel(
-            text="All",
+            text="Show All",
             size_hint=(None, 1),
-            width=dp(24),
+            width=dp(64),
             halign="center",
             theme_text_color="Custom",
             text_color=(0.7, 0.7, 0.7, 1),
