@@ -33,6 +33,16 @@ body {
 }
 .apf-titlebar .apf-close:hover { background: #e74c3c; }
 
+/* ── Back / forward nav buttons ────────────────────────────────────────── */
+.apf-nav {
+  -webkit-app-region: no-drag;
+  background: transparent; color: #8b949e; border: none;
+  border-radius: 4px; padding: 3px 8px; cursor: pointer;
+  font-size: 16px; flex-shrink: 0; line-height: 1;
+}
+.apf-nav:hover:not(:disabled) { background: #21262d; color: #e6edf3; }
+.apf-nav:disabled { opacity: 0.3; cursor: default; }
+
 /* ── Layout ────────────────────────────────────────────────────────────── */
 .container {
   flex: 1; display: flex; overflow: hidden;
@@ -76,6 +86,29 @@ body {
 .doc-item:hover { background: #21262d; }
 .doc-item.active { background: #1f6feb; color: #fff; }
 
+/* ── Search results ────────────────────────────────────────────────────── */
+.search-result {
+  padding: 8px 12px; cursor: pointer; border-radius: 4px; margin: 2px 4px;
+  border-left: 2px solid #30363d; transition: background 0.1s;
+}
+.search-result:hover { background: #21262d; }
+.search-result .sr-title { font-size: 13px; color: #58a6ff; font-weight: 600; }
+.search-result .sr-snippet {
+  font-size: 11px; color: #8b949e; margin-top: 2px; line-height: 1.4;
+  white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.search-result .sr-snippet em { color: #f0c040; font-style: normal; }
+.search-no-results { padding: 20px 12px; color: #8b949e; font-size: 12px; text-align: center; }
+
+/* ── In-content search highlight ──────────────────────────────────────── */
+mark.search-hl {
+  background: rgba(240, 192, 64, 0.65); color: inherit;
+  border-radius: 2px; padding: 0 1px;
+  transition: background 2s ease-out;
+}
+mark.search-hl.fading { background: transparent; }
+
 /* ── Content ───────────────────────────────────────────────────────────── */
 .content-wrap {
   flex: 1; overflow-y: auto; padding: 24px 32px 48px;
@@ -99,6 +132,8 @@ body {
 <body>
 
 <div class="apf-titlebar" pywebview-drag-region>
+  <button class="apf-nav" id="btn-back"    onclick="goBack()"    disabled>&#8249;</button>
+  <button class="apf-nav" id="btn-forward" onclick="goForward()" disabled>&#8250;</button>
   <span class="apf-title">Documentation</span>
   <button class="apf-close" onclick="window.pywebview && pywebview.api.close()">&#x2715;</button>
 </div>
@@ -126,8 +161,71 @@ const TREE = {TREE_JSON};
 /* ── Pre-rendered doc HTML (embedded by Python) ──────────────────────── */
 const DOCS_HTML = {DOCS_HTML_JSON};
 
-/* ── State ───────────────────────────────────────────────────────────── */
-let activeItem = null;
+/* ── Search corpus: plain text of each doc, built once at init ───────── */
+const SEARCH_CORPUS = (function() {
+  var c = {}, tmp = document.createElement('div');
+  TREE.forEach(function(e) {
+    if (DOCS_HTML[e.path]) { tmp.innerHTML = DOCS_HTML[e.path]; c[e.path] = tmp.textContent; }
+  });
+  return c;
+})();
+
+/* ── Navigation history ──────────────────────────────────────────────── */
+// Each item: { entry, jumpTarget } where jumpTarget is null | '#id' | 'search:query'
+var _navHistory = [];
+var _navPos = -1;
+
+function _updateNavButtons() {
+  var b = document.getElementById('btn-back');
+  var f = document.getElementById('btn-forward');
+  if (b) b.disabled = (_navPos <= 0);
+  if (f) f.disabled = (_navPos >= _navHistory.length - 1);
+}
+
+function navigateTo(entry, jumpTarget) {
+  jumpTarget = jumpTarget || null;
+  var cur = _navPos >= 0 ? _navHistory[_navPos] : null;
+  if (cur && cur.entry.path === entry.path && cur.jumpTarget === jumpTarget) return;
+  _navPos++;
+  _navHistory = _navHistory.slice(0, _navPos);
+  _navHistory.push({ entry: entry, jumpTarget: jumpTarget });
+  _renderDoc(entry, jumpTarget);
+}
+
+function _pushJump(jumpTarget) {
+  var cur = _navPos >= 0 ? _navHistory[_navPos] : null;
+  if (!cur) return;
+  _navPos++;
+  _navHistory = _navHistory.slice(0, _navPos);
+  _navHistory.push({ entry: cur.entry, jumpTarget: jumpTarget });
+  _updateNavButtons();
+}
+
+function goBack() {
+  if (_navPos <= 0) return;
+  _navPos--;
+  var item = _navHistory[_navPos];
+  _renderDoc(item.entry, item.jumpTarget);
+}
+
+function goForward() {
+  if (_navPos >= _navHistory.length - 1) return;
+  _navPos++;
+  var item = _navHistory[_navPos];
+  _renderDoc(item.entry, item.jumpTarget);
+}
+
+/* ── Resolve a relative href to an absolute doc path ─────────────────── */
+function resolveDocLink(currentPath, href) {
+  var base = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+  var parts = (base + href).split('/');
+  var resolved = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] === '..') resolved.pop();
+    else if (parts[i] !== '.') resolved.push(parts[i]);
+  }
+  return resolved.join('/');
+}
 
 /* ── Render sidebar ──────────────────────────────────────────────────── */
 function renderTree(items) {
@@ -160,95 +258,174 @@ function renderTree(items) {
       item.dataset.section = section;
       item.textContent = entry.display_name;
       item.title = entry.display_name;
-      item.onclick = () => loadDoc(entry);
+      item.onclick = () => navigateTo(entry);
       treeEl.appendChild(item);
     }
   }
 }
 
-/* ── Resolve a relative href to an absolute doc path ─────────────────── */
-function resolveDocLink(currentPath, href) {
-  var base = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
-  var parts = (base + href).split('/');
-  var resolved = [];
-  for (var i = 0; i < parts.length; i++) {
-    if (parts[i] === '..') resolved.pop();
-    else if (parts[i] !== '.') resolved.push(parts[i]);
-  }
-  return resolved.join('/');
-}
-
-/* ── Load a document (synchronous — content is pre-rendered) ─────────── */
-function loadDoc(entry) {
-  // Update active state
-  if (activeItem) activeItem.classList.remove('active');
-  activeItem = document.querySelector(`.doc-item[data-path="${CSS.escape(entry.path)}"]`);
-  if (activeItem) activeItem.classList.add('active');
+/* ── Pure display function — called by navigateTo / goBack / goForward ── */
+function _renderDoc(entry, jumpTarget) {
+  // Update active state in sidebar
+  document.querySelectorAll('.doc-item').forEach(function(el) {
+    el.classList.toggle('active', el.dataset.path === entry.path);
+  });
 
   const contentEl = document.getElementById('content');
   const html = DOCS_HTML[entry.path];
 
-  if (html) {
-    contentEl.innerHTML = html;
-    contentEl.scrollTop = 0;
+  if (!html) {
+    contentEl.innerHTML = '<div class="state-msg error">Document not available.</div>';
+    _updateNavButtons();
+    return;
+  }
 
-    // Wire link clicks — prevent all navigation out of the SPA
-    contentEl.querySelectorAll('a[href]').forEach(a => {
-      const href = a.getAttribute('href');
-      if (!href) return;
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        // External: open in system browser via subprocess js_api
-        a.onclick = e => {
+  contentEl.innerHTML = html;
+  contentEl.scrollTop = 0;
+
+  // Wire link clicks — prevent all navigation out of the SPA
+  contentEl.querySelectorAll('a[href]').forEach(a => {
+    const href = a.getAttribute('href');
+    if (!href) return;
+    if (href.startsWith('http://') || href.startsWith('https://')) {
+      // External: open in system browser via subprocess js_api
+      a.onclick = e => {
+        e.preventDefault();
+        if (window.pywebview) pywebview.api.open_url(href);
+      };
+    } else if (href.startsWith('#')) {
+      // Within-doc anchor — scroll to heading; push as jump
+      a.onclick = (function(h) {
+        return function(e) {
           e.preventDefault();
-          if (window.pywebview) pywebview.api.open_url(href);
+          var el = document.getElementById(h.slice(1));
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          _pushJump(h);
         };
-      } else if (!href.startsWith('#')) {
-        // Internal doc link — prevent WebView2 navigation; resolve and load from tree
-        a.onclick = (function(h) {
-          return function(e) {
-            e.preventDefault();
-            var curPath = activeItem ? activeItem.dataset.path : null;
-            var resolved = curPath ? resolveDocLink(curPath, h) : h;
-            var target = null;
-            for (var i = 0; i < TREE.length; i++) {
-              if (TREE[i].path === resolved) { target = TREE[i]; break; }
-            }
-            if (target) loadDoc(target);
-          };
-        })(href);
-      }
-      // Anchor (#section): default scroll behaviour — no handler needed
-    });
-  } else {
-    contentEl.innerHTML =
-      '<div class="state-msg error">Document not available.</div>';
+      })(href);
+    } else {
+      // Internal doc link — resolve and load from tree
+      a.onclick = (function(h) {
+        return function(e) {
+          e.preventDefault();
+          var curPath = entry.path;
+          var resolved = resolveDocLink(curPath, h);
+          var target = null;
+          for (var i = 0; i < TREE.length; i++) {
+            if (TREE[i].path === resolved) { target = TREE[i]; break; }
+          }
+          if (target) navigateTo(target);
+        };
+      })(href);
+    }
+  });
+
+  // Restore jump target
+  if (jumpTarget) {
+    if (jumpTarget.startsWith('#')) {
+      var el = document.getElementById(jumpTarget.slice(1));
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (jumpTarget.startsWith('search:')) {
+      _highlightInContent(jumpTarget.slice(7));
+    }
+  }
+
+  _updateNavButtons();
+}
+
+/* ── Full-text search ────────────────────────────────────────────────── */
+function _buildSearchResults(query) {
+  var q = query.trim().toLowerCase(), results = [];
+  if (q.length < 2) return results;
+  TREE.forEach(function(entry) {
+    var corpus = (SEARCH_CORPUS[entry.path] || '').toLowerCase();
+    var idx = corpus.indexOf(q);
+    if (idx < 0) return;
+    var raw = SEARCH_CORPUS[entry.path];
+    var s = Math.max(0, idx - 45), e = Math.min(raw.length, idx + q.length + 90);
+    var snip = (s > 0 ? '\u2026' : '') + raw.slice(s, e).trim() + (e < raw.length ? '\u2026' : '');
+    var mi = snip.toLowerCase().indexOf(q);
+    if (mi >= 0)
+      snip = snip.slice(0, mi) + '<em>' + snip.slice(mi, mi + query.trim().length) + '</em>' + snip.slice(mi + query.trim().length);
+    results.push({ entry: entry, snippet: snip });
+  });
+  return results;
+}
+
+function _showSearchResults(results, query) {
+  var treeEl = document.getElementById('tree');
+  treeEl.innerHTML = '';
+  if (!results.length) {
+    var d = document.createElement('div');
+    d.className = 'search-no-results';
+    d.textContent = 'No results for "' + query + '"';
+    treeEl.appendChild(d);
+    return;
+  }
+  results.forEach(function(r) {
+    var item = document.createElement('div');
+    item.className = 'search-result';
+    item.innerHTML = '<div class="sr-title">' + r.entry.display_name + '</div>'
+                   + '<div class="sr-snippet">' + r.snippet + '</div>';
+    item.onclick = function() { navigateTo(r.entry, 'search:' + query); };
+    treeEl.appendChild(item);
+  });
+}
+
+function _highlightInContent(query) {
+  if (!query || query.trim().length < 2) return;
+  var q = query.trim(), ql = q.toLowerCase();
+  var contentEl = document.getElementById('content');
+  var walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, null, false);
+  var nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  var firstMark = null;
+  nodes.forEach(function(node) {
+    var text = node.textContent, idx = text.toLowerCase().indexOf(ql);
+    if (idx < 0) return;
+    var mark = document.createElement('mark');
+    mark.className = 'search-hl';
+    mark.textContent = text.slice(idx, idx + q.length);
+    var frag = document.createDocumentFragment();
+    frag.appendChild(document.createTextNode(text.slice(0, idx)));
+    frag.appendChild(mark);
+    frag.appendChild(document.createTextNode(text.slice(idx + q.length)));
+    node.parentNode.replaceChild(frag, node);
+    if (!firstMark) firstMark = mark;
+  });
+  if (firstMark) {
+    firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(function() {
+      contentEl.querySelectorAll('mark.search-hl').forEach(function(m) { m.classList.add('fading'); });
+    }, 2000);
   }
 }
 
 /* ── Search / filter ─────────────────────────────────────────────────── */
 function filterTree(query) {
-  const q = query.trim().toLowerCase();
-  const items = document.querySelectorAll('.doc-item');
-  const headers = document.querySelectorAll('.section-header');
-
-  items.forEach(item => {
-    const visible = !q || item.textContent.toLowerCase().includes(q);
-    item.style.display = visible ? '' : 'none';
-  });
-
-  headers.forEach(hdr => {
-    const section = hdr.dataset.section;
-    const anyVisible = Array.from(
-      document.querySelectorAll(`.doc-item[data-section="${section}"]`)
-    ).some(el => el.style.display !== 'none');
-    hdr.style.display = anyVisible ? '' : 'none';
-  });
+  var q = query.trim();
+  if (q.length >= 2) {
+    _showSearchResults(_buildSearchResults(q), q);
+  } else {
+    renderTree(TREE);
+    if (q.length > 0) {
+      var ql = q.toLowerCase();
+      document.querySelectorAll('.doc-item').forEach(function(i) {
+        i.style.display = i.textContent.toLowerCase().includes(ql) ? '' : 'none';
+      });
+      document.querySelectorAll('.section-header').forEach(function(h) {
+        var anyVis = Array.from(document.querySelectorAll('.doc-item[data-section="' + h.dataset.section + '"]'))
+          .some(function(el) { return el.style.display !== 'none'; });
+        h.style.display = anyVis ? '' : 'none';
+      });
+    }
+  }
 }
 
 /* ── Init ────────────────────────────────────────────────────────────── */
 renderTree(TREE);
 if (TREE.length > 0) {
-  loadDoc(TREE[0]);
+  navigateTo(TREE[0]);
 }
 </script>
 </body>
