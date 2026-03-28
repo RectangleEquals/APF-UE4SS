@@ -50,10 +50,6 @@ bool APConfig::load(const std::filesystem::path &config_path)
         {
             config_.game_name = j["game_name"].get<std::string>();
         }
-        if (j.contains("version"))
-        {
-            config_.version = j["version"].get<std::string>();
-        }
         // id_base is intentionally not read from config — it is a hardcoded framework
         // constant (6942067) that players should never need to adjust. Per-player ID
         // uniqueness is handled by the Python apworld via per-slot offsets in slot_data.
@@ -206,7 +202,6 @@ bool APConfig::save(const std::filesystem::path &config_path) const
 
     // Top-level fields
     j["game_name"] = config_.game_name;
-    j["version"] = config_.version;
     // id_base intentionally omitted — hardcoded constant, not user-configurable
 
     // Logging section (nested)

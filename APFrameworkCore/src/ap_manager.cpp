@@ -338,10 +338,11 @@ bool APManager::register_mod(const std::string &mod_id, const std::string &versi
     response.type = IPCMessageType::REGISTRATION_RESPONSE;
     response.source = IPCTarget::FRAMEWORK;
     response.target = mod_id;
-    response.payload = {{"success",   true},
-                        {"mod_id",    mod_id},
-                        {"locations", std::move(locations_json)},
-                        {"items",     std::move(items_json)}};
+    response.payload = {{"success",           true},
+                        {"mod_id",            mod_id},
+                        {"framework_version", APF_FRAMEWORK_VERSION},
+                        {"locations",         std::move(locations_json)},
+                        {"items",             std::move(items_json)}};
     APIPCServer::get()->send_message(mod_id, response);
 
     // Send current AP server connection status so the mod is never left guessing

@@ -328,6 +328,7 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
                     ctx->item_by_name[entry.name] = entry.id;
                 }
             }
+            ctx->framework_version = msg.payload.value("framework_version", "");
             APLogger::get()->log(LogLevel::Debug, "APClientManager",
                                  "Lookup maps populated: " +
                                  std::to_string(ctx->location_by_id.size()) + " locations, " +
@@ -499,7 +500,8 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
 
     module["is_connected"] = [ctx]() -> bool { return ctx->ipc_client->is_connected(); };
 
-    module["get_current_state"] = [ctx]() -> std::string { return ctx->lifecycle_state; };
+    module["get_current_state"]    = [ctx]() -> std::string { return ctx->lifecycle_state; };
+    module["get_framework_version"] = [ctx]() -> std::string { return ctx->framework_version; };
 
     module["update"] = []() { APClientManager::get()->update(); };
 

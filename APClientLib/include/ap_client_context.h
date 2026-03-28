@@ -54,7 +54,8 @@ struct APClientContext
     // Lifecycle State (updated from IPC LIFECYCLE messages broadcast to all contexts)
     // =========================================================================
 
-    std::string lifecycle_state = "UNINITIALIZED";
+    std::string lifecycle_state   = "UNINITIALIZED";
+    std::string framework_version;  // populated from REGISTRATION_RESPONSE
 
     // =========================================================================
     // Bidirectional Location/Item Lookup Maps
