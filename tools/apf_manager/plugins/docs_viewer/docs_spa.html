@@ -42,6 +42,13 @@ body {
 }
 .apf-nav:hover:not(:disabled) { background: #21262d; color: #e6edf3; }
 .apf-nav:disabled { opacity: 0.3; cursor: default; }
+.apf-commit-chip {
+  -webkit-app-region: no-drag;
+  font-size: 11px; color: #58a6ff; cursor: default;
+  font-family: monospace; margin-left: 4px; flex-shrink: 0;
+}
+.apf-commit-chip.clickable { cursor: pointer; }
+.apf-commit-chip.clickable:hover { text-decoration: underline; }
 
 /* ── Layout ────────────────────────────────────────────────────────────── */
 .container {
@@ -134,7 +141,7 @@ mark.search-hl.fading { background: transparent; }
 <div class="apf-titlebar" pywebview-drag-region>
   <button class="apf-nav" id="btn-back"    onclick="goBack()"    disabled>&#8249;</button>
   <button class="apf-nav" id="btn-forward" onclick="goForward()" disabled>&#8250;</button>
-  <span class="apf-title">Documentation</span>
+  <span class="apf-title" id="apf-title-text">Documentation</span>
   <button class="apf-close" onclick="window.pywebview && pywebview.api.close()">&#x2715;</button>
 </div>
 
@@ -160,6 +167,9 @@ const TREE = {TREE_JSON};
 
 /* ── Pre-rendered doc HTML (embedded by Python) ──────────────────────── */
 const DOCS_HTML = {DOCS_HTML_JSON};
+
+/* ── Framework version (embedded by Python at SPA build time) ─────────── */
+const FRAMEWORK_VERSION = "{FRAMEWORK_VERSION}";
 
 /* ── Search corpus: plain text of each doc, built once at init ───────── */
 const SEARCH_CORPUS = (function() {
@@ -270,6 +280,26 @@ function _renderDoc(entry, jumpTarget) {
   document.querySelectorAll('.doc-item').forEach(function(el) {
     el.classList.toggle('active', el.dataset.path === entry.path);
   });
+
+  // Update title bar — show framework version + per-doc commit chip (dev mode)
+  var titleEl = document.getElementById('apf-title-text');
+  if (titleEl) {
+    var baseTitle = FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?'
+      ? 'Documentation \u2014 v' + FRAMEWORK_VERSION
+      : 'Documentation';
+    titleEl.textContent = baseTitle;
+    if (entry.commit) {
+      var chip = document.createElement('span');
+      chip.className = 'apf-commit-chip' + (entry.commit_url ? ' clickable' : '');
+      chip.textContent = ' (' + entry.commit + ')';
+      if (entry.commit_url) {
+        chip.onclick = (function(url) {
+          return function() { if (window.pywebview) pywebview.api.open_url(url); };
+        })(entry.commit_url);
+      }
+      titleEl.appendChild(chip);
+    }
+  }
 
   const contentEl = document.getElementById('content');
   const html = DOCS_HTML[entry.path];
@@ -423,6 +453,14 @@ function filterTree(query) {
 }
 
 /* ── Init ────────────────────────────────────────────────────────────── */
+// Set initial title bar text (commit chip added per-doc in _renderDoc)
+(function() {
+  var titleEl = document.getElementById('apf-title-text');
+  if (titleEl && FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?') {
+    titleEl.textContent = 'Documentation \u2014 v' + FRAMEWORK_VERSION;
+  }
+})();
+
 renderTree(TREE);
 if (TREE.length > 0) {
   navigateTo(TREE[0]);

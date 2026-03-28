@@ -54,7 +54,15 @@ def _custom_plugins_dir() -> Path:
 class APFManagerApp(MDApp):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.title = "APF Manager"
+        try:
+            from ..__version__ import __version__, __build_id__, __is_dev__
+        except Exception:
+            __version__, __build_id__, __is_dev__ = "?.?.?", "dev", True
+        self.title = (
+            f"APF Manager v{__version__} ({__build_id__})"
+            if __is_dev__
+            else f"APF Manager v{__version__}"
+        )
         self._config = APFConfig()
         self._host = PluginHost()
         self._sm: Optional[ScreenManager] = None

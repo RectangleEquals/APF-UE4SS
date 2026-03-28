@@ -17,6 +17,9 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,6 +27,29 @@ if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost
 
 _HERE = Path(__file__).parent
+_REPO_ROOT = _HERE.parent.parent.parent.parent  # tools/apf_manager/plugins/docs_viewer → ipc_2/
+
+
+def _get_framework_version() -> str:
+    """Read framework version from CMakeLists.txt, fall back to __version__ in frozen builds."""
+    cmake_path = _REPO_ROOT / "CMakeLists.txt"
+    try:
+        m = re.search(
+            r'project\s*\(\s*APFramework\s+VERSION\s+([\d.]+)',
+            cmake_path.read_text(encoding="utf-8"),
+        )
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    # Frozen fallback: setup.py bakes __framework_version__ into __version__.py
+    try:
+        from ...__version__ import __framework_version__
+        if __framework_version__ and __framework_version__ != "?":
+            return __framework_version__
+    except Exception:
+        pass
+    return "?"
 
 
 def _load_plugin_meta() -> dict:
@@ -158,6 +184,29 @@ class DocsPanel:
                     '<div class="state-msg error">Failed to load this document.</div>'
                 )
 
+        # In dev mode, populate per-doc commit hashes via git log
+        is_frozen = getattr(sys, "frozen", False)
+        _owner = self._meta.get("repo_owner", "")
+        _name  = self._meta.get("repo_name", "")
+        repo_url = f"https://github.com/{_owner}/{_name}" if _owner and _name else ""
+        if not is_frozen and (_REPO_ROOT / ".git").exists():
+            for entry in tree:
+                try:
+                    h = subprocess.run(
+                        ["git", "log", "-1", "--format=%H", "--", entry.path],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(_REPO_ROOT),
+                    ).stdout.strip()
+                    if h:
+                        entry.commit = h[:7]
+                        entry.commit_url = f"{repo_url}/commit/{h}" if repo_url else ""
+                except Exception:
+                    pass
+
+        # Read framework version for title display
+        fw_version = _get_framework_version()
+
         # Serialize for JS embedding; escape </ to prevent premature </script> closure
         tree_json = json.dumps(
             [
@@ -166,6 +215,8 @@ class DocsPanel:
                     "path": e.path,
                     "download_url": e.download_url,
                     "section": e.section,
+                    "commit": e.commit,
+                    "commit_url": e.commit_url,
                 }
                 for e in tree
             ],
@@ -181,6 +232,7 @@ class DocsPanel:
             .replace("{TREE_JSON}", tree_json)
             .replace("{DOCS_HTML_JSON}", docs_html_json)
             .replace("{GITHUB_CSS}", github_css)
+            .replace("{FRAMEWORK_VERSION}", fw_version)
         )
 
         viewer.show(

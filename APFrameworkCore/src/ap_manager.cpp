@@ -1,4 +1,5 @@
 #include "ap_manager.h"
+#include "apf_version_info.h"
 #include "ap_capabilities.h"
 #include "ap_client.h"
 #include "ap_config.h"
@@ -64,7 +65,9 @@ int APManager::init(lua_State *L)
         << ")";
     APLogger::get()->log(LogLevel::Trace, "APManager", oss.str());
 
-    APLogger::get()->log(LogLevel::Info, "APManager", "AP Framework initializing...");
+    APLogger::get()->log(LogLevel::Info, "APManager",
+        std::string("AP Framework v") + APF_FRAMEWORK_VERSION +
+        " (build " + APF_BUILD_ID + ") initializing...");
 
     // Create owned components (all other components are singletons)
     polling_thread_ = std::make_unique<APPollingThread>();

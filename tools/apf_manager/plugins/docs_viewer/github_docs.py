@@ -35,6 +35,8 @@ class DocEntry:
     path: str            # Full path from repo root (e.g. "docs/public/README.md")
     download_url: str    # Raw content URL
     section: str         # "general" or "dev"
+    commit: str = ""     # Short git hash of last commit (dev mode only)
+    commit_url: str = "" # Full GitHub commit URL (dev mode only)
 
 
 def _prettify(filename: str) -> str:
