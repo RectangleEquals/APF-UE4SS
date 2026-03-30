@@ -1,0 +1,78 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "**.cpp"
+      - "**.h"
+      - "CMakeLists.txt"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: C++ Framework (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_INSTALLATION_ROOT }}/installed
+          key: vcpkg-openssl-x64-windows-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            vcpkg-openssl-x64-windows-
+
+      - name: Install OpenSSL via vcpkg
+        run: vcpkg install openssl:x64-windows
+        shell: pwsh
+
+      - name: Download SQLite3 amalgamation
+        shell: pwsh
+        run: |
+          # Parse sqlite.org download page to find the current amalgamation URL
+          $page = Invoke-WebRequest "https://www.sqlite.org/download.html" -UseBasicParsing
+          $match = [regex]::Match($page.Content, '(\d{4}/sqlite-amalgamation-\d+\.zip)')
+          if (-not $match.Success) { throw "Could not locate SQLite amalgamation URL on sqlite.org/download.html" }
+          $url = "https://www.sqlite.org/$($match.Value)"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest $url -OutFile sqlite.zip
+          Expand-Archive sqlite.zip -DestinationPath sqlite_tmp
+          $dir = Get-ChildItem sqlite_tmp | Select-Object -First 1
+          Copy-Item "$($dir.FullName)/sqlite3.c" third_party/sqlite3/sqlite3.c
+          Copy-Item "$($dir.FullName)/sqlite3.h" third_party/sqlite3/sqlite3.h
+
+      - name: CMake configure
+        shell: pwsh
+        run: |
+          cmake -B build/Release -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: CMake build
+        run: cmake --build build/Release --config Release
+
+      - name: Upload DLL artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apf-binaries-${{ github.sha }}
+          path: |
+            build/Release/APFrameworkCore.dll
+            build/Release/APClientLib.dll
+          if-no-files-found: warn

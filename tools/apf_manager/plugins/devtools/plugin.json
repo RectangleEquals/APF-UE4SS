@@ -1,0 +1,14 @@
+{
+  "id": "apf.builtin.devtools",
+  "name": "Developer Tools",
+  "version": "1.0.0",
+  "description": "Version management, CI, and release tools for repo contributors.",
+  "mode": "devtools",
+  "repo_owner": "RectangleEquals",
+  "repo_name": "APF-UE4SS",
+  "requires": [],
+  "suggests": ["apf.builtin.mods"],
+  "contributions": [
+    {"type": "hub_panel", "label": "Dev Tools", "icon": "wrench-cog", "priority": 99}
+  ]
+}

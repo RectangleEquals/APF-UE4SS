@@ -86,10 +86,12 @@ class APFManagerApp(MDApp):
         # Load plugins
         builtin = _builtin_plugins_dir()
         custom = _custom_plugins_dir()
+        devtools_mode = "--devtools" in sys.argv
         self._host.discover_and_load(
             plugin_dirs=[builtin, custom],
             disabled_ids=self._config.disabled_plugins,
             dev_mode=self._config.is_dev,
+            devtools_mode=devtools_mode,
         )
 
         # Wire host callbacks

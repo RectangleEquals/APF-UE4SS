@@ -1,0 +1,244 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "framework/v*"
+      - "manager/v*"
+      - "apworld/v*"
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Component to release"
+        required: true
+        type: choice
+        options: [framework, manager, apworld]
+      version:
+        description: "Version (e.g. 0.2.7) — must match the source file"
+        required: true
+
+# ---------------------------------------------------------------------------
+# Helpers — shared across all jobs
+# ---------------------------------------------------------------------------
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+
+  # -------------------------------------------------------------------------
+  # Framework: build Windows x64 DLLs → apf_binaries_v{ver}.zip → release
+  # -------------------------------------------------------------------------
+
+  release-framework:
+    name: Release Framework Binaries
+    runs-on: windows-latest
+    if: >
+      startsWith(github.ref, 'refs/tags/framework/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.component == 'framework')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $v = "${{ inputs.version }}"
+          } else {
+            $v = "${{ github.ref_name }}" -replace '^framework/v', ''
+          }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          echo "tag=framework/v$v" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_INSTALLATION_ROOT }}/installed
+          key: vcpkg-openssl-x64-windows-release-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            vcpkg-openssl-x64-windows-
+
+      - name: Install OpenSSL via vcpkg
+        run: vcpkg install openssl:x64-windows
+        shell: pwsh
+
+      - name: Download SQLite3 amalgamation
+        shell: pwsh
+        run: |
+          $page = Invoke-WebRequest "https://www.sqlite.org/download.html" -UseBasicParsing
+          $match = [regex]::Match($page.Content, '(\d{4}/sqlite-amalgamation-\d+\.zip)')
+          if (-not $match.Success) { throw "Could not locate SQLite amalgamation URL" }
+          $url = "https://www.sqlite.org/$($match.Value)"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest $url -OutFile sqlite.zip
+          Expand-Archive sqlite.zip -DestinationPath sqlite_tmp
+          $dir = Get-ChildItem sqlite_tmp | Select-Object -First 1
+          Copy-Item "$($dir.FullName)/sqlite3.c" third_party/sqlite3/sqlite3.c
+          Copy-Item "$($dir.FullName)/sqlite3.h" third_party/sqlite3/sqlite3.h
+
+      - name: CMake configure
+        shell: pwsh
+        run: |
+          cmake -B build/Release -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: CMake build
+        run: cmake --build build/Release --config Release
+
+      - name: Package binaries
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          $zip = "apf_binaries_v$ver.zip"
+          Compress-Archive -Path build/Release/APFrameworkCore.dll, build/Release/APClientLib.dll `
+            -DestinationPath $zip
+          echo "ASSET_PATH=$zip" >> $env:GITHUB_ENV
+          echo "ASSET_NAME=$zip" >> $env:GITHUB_ENV
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "Framework v${{ steps.ver.outputs.version }}"
+          body: "AP Framework C++ binaries (APFrameworkCore.dll + APClientLib.dll) for Windows x64."
+          files: ${{ env.ASSET_PATH }}
+          draft: false
+          prerelease: false
+
+  # -------------------------------------------------------------------------
+  # APWorld: zip worlds/apf/ → apf.apworld → release
+  # -------------------------------------------------------------------------
+
+  release-apworld:
+    name: Release APWorld
+    runs-on: windows-latest
+    if: >
+      startsWith(github.ref, 'refs/tags/apworld/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.component == 'apworld')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $v = "${{ inputs.version }}"
+          } else {
+            $v = "${{ github.ref_name }}" -replace '^apworld/v', ''
+          }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          echo "tag=apworld/v$v" >> $env:GITHUB_OUTPUT
+
+      - name: Package apworld
+        shell: pwsh
+        run: |
+          # .apworld files are ZIP archives of the world directory contents
+          # (not the directory itself — Archipelago expects files at root of zip)
+          $out = "apf.apworld"
+          Push-Location worlds/apf
+          Compress-Archive -Path * -DestinationPath "../../$out"
+          Pop-Location
+          echo "ASSET_PATH=$out" >> $env:GITHUB_ENV
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "APWorld v${{ steps.ver.outputs.version }}"
+          body: |
+            AP Framework Archipelago world (`apf.apworld`).
+
+            **Installation:** place `apf.apworld` in your Archipelago `custom_worlds/` folder.
+          files: ${{ env.ASSET_PATH }}
+          draft: false
+          prerelease: false
+
+  # -------------------------------------------------------------------------
+  # Manager: build cx_Freeze installer → APFManager-Setup-{ver}.exe → release
+  # -------------------------------------------------------------------------
+
+  release-manager:
+    name: Release APF Manager Installer
+    runs-on: windows-latest
+    if: >
+      startsWith(github.ref, 'refs/tags/manager/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.component == 'manager')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $v = "${{ inputs.version }}"
+          } else {
+            $v = "${{ github.ref_name }}" -replace '^manager/v', ''
+          }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          echo "tag=manager/v$v" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.12"
+          activate-environment: apf_manager
+          environment-file: tools/apf_manager/environment.yml
+          auto-activate-base: false
+
+      - name: Install Kivy + KivyMD
+        shell: pwsh
+        run: |
+          conda activate apf_manager
+          conda install kivy pillow -y -c conda-forge
+          pip install "https://github.com/kivymd/KivyMD/archive/master.zip"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+        shell: pwsh
+
+      - name: Build cx_Freeze distribution
+        shell: pwsh
+        run: |
+          conda activate apf_manager
+          cd tools
+          python apf_manager/setup.py build_exe
+
+      - name: Run Inno Setup
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          # Pass version override so OutputBaseFilename uses the correct tag version
+          & $iscc "/DMyAppVersion=$ver" tools/apf_manager/inno_setup.iss
+          echo "ASSET_PATH=tools/apf_manager/APFManager-Setup-$ver.exe" >> $env:GITHUB_ENV
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: "APF Manager v${{ steps.ver.outputs.version }}"
+          body: |
+            APF Manager installer for Windows.
+
+            **Installation:** run `APFManager-Setup-${{ steps.ver.outputs.version }}.exe`.
+          files: ${{ env.ASSET_PATH }}
+          draft: false
+          prerelease: false

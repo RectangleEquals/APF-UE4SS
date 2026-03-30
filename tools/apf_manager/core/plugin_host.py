@@ -79,17 +79,19 @@ class PluginHost:
         self._failure_fn: Optional[Callable[[], None]] = None
         self.has_failures: bool = False
         self.dev_mode: bool = False
+        self.devtools_mode: bool = False
 
     # -----------------------------------------------------------------------
     # Plugin discovery & loading
     # -----------------------------------------------------------------------
 
-    def discover_and_load(self, plugin_dirs: list[Path], disabled_ids: list[str], dev_mode: bool) -> None:
+    def discover_and_load(self, plugin_dirs: list[Path], disabled_ids: list[str], dev_mode: bool, devtools_mode: bool = False) -> None:
         """
         Discover all plugins in the given directories, resolve dependencies,
         and load them in topological order.
         """
         self.dev_mode = dev_mode
+        self.devtools_mode = devtools_mode
         raw: list[PluginInfo] = []
 
         for d in plugin_dirs:
@@ -135,8 +137,9 @@ class PluginHost:
 
                 # Filter by mode
                 if info.mode == "dev" and not dev_mode:
-                    # Skip silently — not a failure, just not applicable
-                    continue
+                    continue  # Skip silently — not a failure, just not applicable
+                if info.mode == "devtools" and not (dev_mode and devtools_mode):
+                    continue  # devtools plugins require both dev mode AND --devtools flag
 
                 raw.append(info)
                 self._plugins[info.plugin_id] = info

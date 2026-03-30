@@ -1,0 +1,158 @@
+name: AP World Tests
+
+on:
+  push:
+    branches: [aptests]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Archipelago World Tests (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: apf_repo
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Clone Archipelago
+        run: git clone --depth 1 https://github.com/ArchipelagoMW/Archipelago.git
+        shell: pwsh
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-archipelago-${{ hashFiles('Archipelago/requirements.txt') }}
+          restore-keys: |
+            pip-archipelago-
+
+      - name: Install Archipelago dependencies
+        run: |
+          cd Archipelago
+          pip install -r requirements.txt
+        shell: pwsh
+
+      - name: Install APF world
+        run: Copy-Item -Recurse apf_repo/worlds/apf Archipelago/worlds/apf
+        shell: pwsh
+
+      # Step 1: Manifest/registration tests — always run, no capabilities needed
+      - name: Run manifest tests
+        run: |
+          cd Archipelago
+          pytest worlds/apf/test/test_manifest.py -v
+        shell: pwsh
+
+      # Step 2: Generate test fixtures from external mod registries (optional)
+      - name: Generate test fixtures from registries
+        if: vars.APF_TEST_REGISTRY_URLS != ''
+        shell: pwsh
+        env:
+          APF_TEST_REGISTRY_URLS: ${{ vars.APF_TEST_REGISTRY_URLS }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $fixtures = "$env:RUNNER_TEMP\apf_fixtures"
+          New-Item -ItemType Directory -Force $fixtures | Out-Null
+
+          $registryUrls = $env:APF_TEST_REGISTRY_URLS -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          $manifestPaths = @()
+          $templatesDirs = @()
+
+          foreach ($url in $registryUrls) {
+            # Parse owner/repo from https://github.com/owner/repo
+            if ($url -match "github\.com/([^/]+)/([^/\s]+)") {
+              $owner = $Matches[1]
+              $repo  = $Matches[2]
+            } else {
+              Write-Warning "Skipping unrecognized registry URL: $url"
+              continue
+            }
+
+            # Fetch registry manifest
+            $regRaw = gh api "repos/$owner/$repo/contents/apf_registry.json" --jq ".content" 2>$null
+            if (-not $regRaw) {
+              Write-Warning "Could not fetch apf_registry.json from $url"
+              continue
+            }
+            $regJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(($regRaw -replace "`n","")))
+            $reg = $regJson | ConvertFrom-Json
+
+            # Download templates if present
+            $templatesApiPath = "repos/$owner/$repo/contents/Templates"
+            $templatesListing = gh api $templatesApiPath 2>$null | ConvertFrom-Json
+            if ($templatesListing) {
+              $templatesDest = "$env:RUNNER_TEMP\templates\$owner_$repo"
+              New-Item -ItemType Directory -Force $templatesDest | Out-Null
+              foreach ($entry in $templatesListing) {
+                if ($entry.type -eq "dir") {
+                  gh api "repos/$owner/$repo/contents/Templates/$($entry.name)" | ConvertFrom-Json | ForEach-Object {
+                    if ($_.download_url) {
+                      $dest = "$templatesDest\$($entry.name)\$($_.name)"
+                      New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+                      Invoke-WebRequest $_.download_url -OutFile $dest
+                    }
+                  }
+                }
+              }
+              $templatesDirs += $templatesDest
+            }
+
+            # Fetch manifest.json for each test_only mod
+            foreach ($mod in $reg.mods) {
+              if (-not $mod.test_only) { continue }
+              $modOwnerRepo = $mod.repo -split "/"
+              $modOwner = $modOwnerRepo[0]; $modRepo = $modOwnerRepo[1]
+
+              $manifestRaw = gh api "repos/$modOwner/$modRepo/contents/manifest.json" --jq ".content" 2>$null
+              if (-not $manifestRaw) {
+                Write-Warning "Could not fetch manifest.json from $($mod.repo)"
+                continue
+              }
+              $manifestJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(($manifestRaw -replace "`n","")))
+              $manifestDest = "$env:RUNNER_TEMP\mods\$($mod.mod_id)\manifest.json"
+              New-Item -ItemType Directory -Force (Split-Path $manifestDest) | Out-Null
+              $manifestJson | Out-File -FilePath $manifestDest -Encoding utf8
+              $manifestPaths += $manifestDest
+
+              # Download test option variant files if present
+              $testListing = gh api "repos/$modOwner/$modRepo/contents/tests" 2>$null | ConvertFrom-Json
+              if ($testListing) {
+                foreach ($tf in $testListing) {
+                  if ($tf.name -match "^options.*\.json$" -and $tf.download_url) {
+                    $optDest = "$fixtures\$($mod.mod_id.Split('.')[-1])_$($tf.name -replace '^options_?','' -replace '\.json$','').options.json"
+                    Invoke-WebRequest $tf.download_url -OutFile $optDest
+                  }
+                }
+              }
+            }
+          }
+
+          if ($manifestPaths.Count -eq 0) {
+            Write-Host "No test manifests found — skipping fixture generation"
+            exit 0
+          }
+
+          # Build capabilities fixtures
+          $templateArgs = $templatesDirs | ForEach-Object { "--templates-dir", $_ }
+          python apf_repo/tools/scripts/gen_capabilities.py @manifestPaths --output $fixtures @templateArgs
+          echo "APF_TEST_FIXTURES_DIR=$fixtures" >> $env:GITHUB_ENV
+
+      # Step 3: WorldTestBase tests — silently skips when no fixtures present
+      - name: Run WorldTestBase tests
+        run: |
+          cd Archipelago
+          pytest worlds/apf/test/test_world.py -v
+        shell: pwsh
+
+      # Step 4: Official AP general tests — stub capabilities handles empty case
+      - name: Run official AP general tests
+        run: |
+          cd Archipelago
+          pytest test/general/ -v
+        shell: pwsh
