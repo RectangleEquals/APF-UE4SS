@@ -136,6 +136,8 @@ worlds/**/*.pyc
 
 # Generated files
 compile_commands.json
+shared/include/apf_version_info.h
+tools/apf_manager/__version__.py
 
 # Archive files
 *.zip
