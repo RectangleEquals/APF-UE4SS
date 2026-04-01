@@ -93,6 +93,72 @@ body {
 .doc-item:hover { background: #21262d; }
 .doc-item.active { background: #1f6feb; color: #fff; }
 
+/* ── Heading nav items (verbose + tree modes) ──────────────────────────── */
+.heading-nav-item {
+  padding: 4px 12px 4px 28px;
+  cursor: pointer; font-size: 12px;
+  color: #8b949e;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 4px; margin: 0 4px;
+  transition: background 0.1s;
+}
+.heading-nav-item:hover { background: #21262d; color: #c9d1d9; }
+.heading-nav-h2 { padding-left: 28px; }
+.heading-nav-h3 { padding-left: 40px; font-size: 11px; }
+
+/* ── Tree mode groups ───────────────────────────────────────────────────── */
+.tree-group { margin: 0; }
+.tree-toggle {
+  padding: 4px 12px 4px 22px;
+  cursor: pointer; font-size: 12px;
+  color: #8b949e;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 4px; margin: 0 4px;
+  transition: background 0.1s;
+  user-select: none;
+  position: relative;
+}
+.tree-toggle::before {
+  content: '\25B6';
+  font-size: 7px;
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: transform 0.15s;
+  color: #8b949e;
+}
+.tree-toggle.expanded::before {
+  transform: translateY(-50%) rotate(90deg);
+}
+.tree-toggle:hover { background: #21262d; color: #c9d1d9; }
+.tree-children { overflow: hidden; }
+/* Nested toggle (H2 inside H1 group) */
+.tree-children .tree-toggle { padding-left: 30px; }
+.tree-children .tree-toggle::before { left: 17px; }
+/* Nested heading nav items inside a tree-children */
+.tree-children .heading-nav-h2 { padding-left: 28px; }
+.tree-children .heading-nav-h3 { padding-left: 40px; }
+/* Doubly-nested (H3 inside H2 inside H1) */
+.tree-children .tree-children .heading-nav-h3 { padding-left: 52px; }
+
+/* ── Sidebar footer (mode chips) ────────────────────────────────────────── */
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  border-top: 1px solid #21262d;
+  display: flex; gap: 4px; flex-wrap: wrap;
+}
+.mode-chip {
+  background: #21262d; border: 1px solid #30363d;
+  color: #8b949e; border-radius: 12px;
+  padding: 2px 10px; font-size: 11px;
+  cursor: pointer; outline: none;
+  transition: background 0.1s, color 0.1s;
+}
+.mode-chip:hover { background: #30363d; color: #c9d1d9; }
+.mode-chip.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+
 /* ── Search results ────────────────────────────────────────────────────── */
 .search-result {
   padding: 8px 12px; cursor: pointer; border-radius: 4px; margin: 2px 4px;
@@ -146,12 +212,17 @@ mark.search-hl.fading { background: transparent; }
 </div>
 
 <div class="container">
-  <nav class="sidebar">
+  <nav class="sidebar" id="sidebar">
     <div class="search-wrap">
       <input id="search" type="text" placeholder="Search docs..." autocomplete="off"
              oninput="filterTree(this.value)">
     </div>
     <div class="sidebar-tree" id="tree"></div>
+    <div class="sidebar-footer" id="mode-footer">
+      <button class="mode-chip" id="chip-default" onclick="setSidebarMode('default')">Default</button>
+      <button class="mode-chip" id="chip-verbose" onclick="setSidebarMode('verbose')">Verbose</button>
+      <button class="mode-chip" id="chip-tree"    onclick="setSidebarMode('tree')">Tree</button>
+    </div>
   </nav>
 
   <div class="content-wrap">
@@ -171,6 +242,10 @@ const DOCS_HTML = {DOCS_HTML_JSON};
 /* ── Framework version (embedded by Python at SPA build time) ─────────── */
 const FRAMEWORK_VERSION = "{FRAMEWORK_VERSION}";
 
+/* ── Sidebar mode config (embedded by Python) ────────────────────────── */
+const SIDEBAR_MODE_INIT = "{SIDEBAR_MODE}";
+const SHOW_MODE_TOGGLE = {SHOW_MODE_TOGGLE};
+
 /* ── Search corpus: plain text of each doc, built once at init ───────── */
 const SEARCH_CORPUS = (function() {
   var c = {}, tmp = document.createElement('div');
@@ -179,6 +254,10 @@ const SEARCH_CORPUS = (function() {
   });
   return c;
 })();
+
+/* ── Sidebar mode state ──────────────────────────────────────────────── */
+var _sidebarMode = 'default';
+var _currentEntry = null;
 
 /* ── Navigation history ──────────────────────────────────────────────── */
 // Each item: { entry, jumpTarget } where jumpTarget is null | '#id' | 'search:query'
@@ -193,6 +272,7 @@ function _updateNavButtons() {
 }
 
 function navigateTo(entry, jumpTarget) {
+  _currentEntry = entry;
   jumpTarget = jumpTarget || null;
   var cur = _navPos >= 0 ? _navHistory[_navPos] : null;
   if (cur && cur.entry.path === entry.path && cur.jumpTarget === jumpTarget) return;
@@ -215,6 +295,7 @@ function goBack() {
   if (_navPos <= 0) return;
   _navPos--;
   var item = _navHistory[_navPos];
+  _currentEntry = item.entry;
   _renderDoc(item.entry, item.jumpTarget);
 }
 
@@ -222,6 +303,7 @@ function goForward() {
   if (_navPos >= _navHistory.length - 1) return;
   _navPos++;
   var item = _navHistory[_navPos];
+  _currentEntry = item.entry;
   _renderDoc(item.entry, item.jumpTarget);
 }
 
@@ -271,6 +353,188 @@ function renderTree(items) {
       item.onclick = () => navigateTo(entry);
       treeEl.appendChild(item);
     }
+  }
+
+  // Entries with an unknown/empty section (e.g. single-doc local SPA) — no section header
+  const knownSections = new Set(sectionOrder);
+  for (const entry of items) {
+    if (knownSections.has(entry.section)) continue;
+    const item = document.createElement('div');
+    item.className = 'doc-item';
+    item.dataset.path = entry.path;
+    item.dataset.section = entry.section;
+    item.textContent = entry.display_name;
+    item.title = entry.display_name;
+    item.onclick = () => navigateTo(entry);
+    treeEl.appendChild(item);
+  }
+}
+
+/* ── Heading navigation injection ────────────────────────────────────── */
+
+function _extractHeadings(contentEl) {
+  var headings = [];
+  contentEl.querySelectorAll('h1, h2, h3').forEach(function(el) {
+    if (el.id) {
+      headings.push({
+        level: parseInt(el.tagName[1]),
+        id: el.id,
+        text: el.textContent.trim()
+      });
+    }
+  });
+  return headings;
+}
+
+function _makeAnchorItem(h, className) {
+  var el = document.createElement('div');
+  el.className = className;
+  el.dataset.navInject = '1';
+  el.textContent = h.text;
+  el.title = h.text;
+  el.onclick = (function(id) {
+    return function() {
+      var target = document.getElementById(id);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      _pushJump('#' + id);
+    };
+  })(h.id);
+  return el;
+}
+
+function _makeTreeGroup(h, childNodes) {
+  var group = document.createElement('div');
+  group.className = 'tree-group';
+  group.dataset.navInject = '1';
+
+  var toggle = document.createElement('div');
+  toggle.className = 'tree-toggle collapsed';
+  toggle.textContent = h.text;
+  toggle.title = h.text;
+
+  var childrenEl = document.createElement('div');
+  childrenEl.className = 'tree-children';
+  childrenEl.style.display = 'none';
+
+  childNodes.forEach(function(c) { childrenEl.appendChild(c); });
+
+  toggle.onclick = function() {
+    var isCollapsed = toggle.classList.contains('collapsed');
+    toggle.classList.toggle('collapsed', !isCollapsed);
+    toggle.classList.toggle('expanded', isCollapsed);
+    childrenEl.style.display = isCollapsed ? '' : 'none';
+  };
+
+  group.appendChild(toggle);
+  group.appendChild(childrenEl);
+  return group;
+}
+
+function _injectVerboseNav(activeItem, headings) {
+  var ref = activeItem.nextSibling;
+  var parent = activeItem.parentNode;
+  headings.forEach(function(h) {
+    if (h.level === 1) return;  // skip H1 — usually matches doc title
+    parent.insertBefore(
+      _makeAnchorItem(h, 'heading-nav-item heading-nav-h' + h.level),
+      ref
+    );
+  });
+}
+
+function _injectTreeNav(activeItem, headings) {
+  var ref = activeItem.nextSibling;
+  var parent = activeItem.parentNode;
+
+  // Build tree structure: roots are H1 groups (or H2s if no H1s present)
+  var roots = [];
+  var curH1 = null, curH2 = null;
+
+  headings.forEach(function(h) {
+    if (h.level === 1) {
+      curH1 = { h: h, h2children: [] };
+      curH2 = null;
+      roots.push({ type: 'h1', data: curH1 });
+    } else if (h.level === 2) {
+      curH2 = { h: h, h3children: [] };
+      if (curH1) {
+        curH1.h2children.push({ type: 'h2', data: curH2 });
+      } else {
+        roots.push({ type: 'h2', data: curH2 });
+      }
+    } else if (h.level === 3) {
+      if (curH2) {
+        curH2.h3children.push(h);
+      } else if (curH1) {
+        curH1.h2children.push({ type: 'h3', h: h });
+      } else {
+        roots.push({ type: 'h3', h: h });
+      }
+    }
+  });
+
+  // Build DOM nodes from structure
+  function buildH2Node(child) {
+    if (child.type === 'h3') {
+      return _makeAnchorItem(child.h, 'heading-nav-item heading-nav-h3');
+    }
+    // type === 'h2'
+    if (child.data.h3children.length > 0) {
+      var h3Nodes = child.data.h3children.map(function(h3) {
+        return _makeAnchorItem(h3, 'heading-nav-item heading-nav-h3');
+      });
+      return _makeTreeGroup(child.data.h, h3Nodes);
+    }
+    return _makeAnchorItem(child.data.h, 'heading-nav-item heading-nav-h2');
+  }
+
+  roots.forEach(function(root) {
+    var el;
+    if (root.type === 'h1') {
+      var childNodes = root.data.h2children.map(buildH2Node);
+      el = _makeTreeGroup(root.data.h, childNodes);
+    } else if (root.type === 'h2') {
+      if (root.data.h3children.length > 0) {
+        var h3Nodes = root.data.h3children.map(function(h3) {
+          return _makeAnchorItem(h3, 'heading-nav-item heading-nav-h3');
+        });
+        el = _makeTreeGroup(root.data.h, h3Nodes);
+      } else {
+        el = _makeAnchorItem(root.data.h, 'heading-nav-item heading-nav-h2');
+      }
+    } else {
+      el = _makeAnchorItem(root.h, 'heading-nav-item heading-nav-h3');
+    }
+    parent.insertBefore(el, ref);
+  });
+}
+
+function _updateHeadingNav(entry, contentEl) {
+  // Remove any previously injected nav nodes
+  document.querySelectorAll('[data-nav-inject]').forEach(function(el) { el.remove(); });
+
+  if (_sidebarMode === 'default') return;
+
+  var activeItem = document.querySelector('.doc-item[data-path="' + CSS.escape(entry.path) + '"]');
+  if (!activeItem) return;
+
+  var headings = _extractHeadings(contentEl);
+  if (headings.length === 0) return;
+
+  if (_sidebarMode === 'verbose') {
+    _injectVerboseNav(activeItem, headings);
+  } else if (_sidebarMode === 'tree') {
+    _injectTreeNav(activeItem, headings);
+  }
+}
+
+function setSidebarMode(mode) {
+  _sidebarMode = mode;
+  document.querySelectorAll('.mode-chip').forEach(function(c) { c.classList.remove('active'); });
+  var chip = document.getElementById('chip-' + mode);
+  if (chip) chip.classList.add('active');
+  if (_currentEntry) {
+    _updateHeadingNav(_currentEntry, document.getElementById('content'));
   }
 }
 
@@ -361,6 +625,7 @@ function _renderDoc(entry, jumpTarget) {
   }
 
   _updateNavButtons();
+  _updateHeadingNav(entry, contentEl);
 }
 
 /* ── Full-text search ────────────────────────────────────────────────── */
@@ -432,12 +697,22 @@ function _highlightInContent(query) {
 }
 
 /* ── Search / filter ─────────────────────────────────────────────────── */
+function _restoreTree() {
+  renderTree(TREE);
+  if (_currentEntry) {
+    document.querySelectorAll('.doc-item').forEach(function(el) {
+      el.classList.toggle('active', el.dataset.path === _currentEntry.path);
+    });
+    _updateHeadingNav(_currentEntry, document.getElementById('content'));
+  }
+}
+
 function filterTree(query) {
   var q = query.trim();
   if (q.length >= 2) {
     _showSearchResults(_buildSearchResults(q), q);
   } else {
-    renderTree(TREE);
+    _restoreTree();
     if (q.length > 0) {
       var ql = q.toLowerCase();
       document.querySelectorAll('.doc-item').forEach(function(i) {
@@ -453,18 +728,27 @@ function filterTree(query) {
 }
 
 /* ── Init ────────────────────────────────────────────────────────────── */
-// Set initial title bar text (commit chip added per-doc in _renderDoc)
 (function() {
+  // Hide mode footer if caller disabled the toggle
+  if (!SHOW_MODE_TOGGLE) {
+    var footer = document.getElementById('mode-footer');
+    if (footer) footer.style.display = 'none';
+  }
+
+  // Set initial title bar text
   var titleEl = document.getElementById('apf-title-text');
   if (titleEl && FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?') {
     titleEl.textContent = 'Documentation \u2014 v' + FRAMEWORK_VERSION;
   }
-})();
 
-renderTree(TREE);
-if (TREE.length > 0) {
-  navigateTo(TREE[0]);
-}
+  // Apply initial sidebar mode (updates chips; must run before navigateTo so _sidebarMode is correct)
+  setSidebarMode(SIDEBAR_MODE_INIT);
+
+  renderTree(TREE);
+  if (TREE.length > 0) {
+    navigateTo(TREE[0]);
+  }
+})();
 </script>
 </body>
 </html>

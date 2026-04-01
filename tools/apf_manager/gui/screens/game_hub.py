@@ -17,6 +17,7 @@ The NavigationRail is populated from all registered hub_panel contributions.
 from __future__ import annotations
 
 import shutil
+import sys
 import threading
 import webbrowser
 from pathlib import Path
@@ -32,12 +33,23 @@ from kivymd.uix.screen import MDScreen
 
 from ..widgets.log_panel import LogPanel
 from ..widgets.plugin_panel import PluginPanel
-from ..widgets.tip_icon_button import TipIconButton
+from ..widgets.tip_icon_button import TipIconButton, ImageIconButton
 
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost, PluginContribution
     from ...core.config import APFConfig, GameProfile
     from ...core.ue4ss import UE4SSResult
+
+_HERE = Path(__file__).parent
+_DISCORD_ICON = (
+    Path(sys.executable).parent / "data" / "Discord_Symbol_White.png"
+    if getattr(sys, "frozen", False)
+    else _HERE.parent.parent / "data" / "Discord_Symbol_White.png"
+)
+# game_hub.py is in gui/screens/ which is INSIDE library.zip in frozen builds.
+# __file__ is a zip path in frozen mode; use sys.executable instead.
+# Dev: _HERE.parent.parent = apf_manager/ → data/  ✓
+# Frozen: exe_dir/data/  ✓
 
 
 class _NavRailButton(ButtonBehavior, MDBoxLayout):
@@ -155,22 +167,28 @@ class GameHubScreen(MDScreen):
         )
         bar.add_widget(self._game_name_lbl)
 
-        # hub_action buttons placeholder (populated in populate_panels)
-        self._action_bar = MDBoxLayout(
-            orientation="horizontal",
-            size_hint_x=None,
-            width="0dp",
-            spacing="4dp",
-        )
-        bar.add_widget(self._action_bar)
-
-        # Remove game button
+        # Remove game button — before action bar so fixed buttons stay right-anchored
         remove_btn = TipIconButton(
             icon="trash-can-outline",
             tooltip_text="Remove game",
             on_release=lambda *_: self._on_remove_game(),
         )
         bar.add_widget(remove_btn)
+
+        # hub_action buttons placeholder (populated in populate_panels)
+        self._action_bar = MDBoxLayout(
+            orientation="horizontal",
+            size_hint_x=None,
+            adaptive_width=True,
+            spacing="4dp",
+        )
+        bar.add_widget(self._action_bar)
+
+        # Discord button — just before settings, consistent with LibraryScreen
+        if _DISCORD_ICON.exists():
+            discord_btn = ImageIconButton(source=str(_DISCORD_ICON), tooltip_text="Join our Discord")
+            discord_btn.bind(on_release=lambda *_: webbrowser.open("https://discord.gg/xhcVRhnjK"))
+            bar.add_widget(discord_btn)
 
         # Settings button
         settings_btn = TipIconButton(
@@ -217,16 +235,13 @@ class GameHubScreen(MDScreen):
                 panel = contrib.panel_class(host=self._host)
                 self._panel_map[contrib.label] = panel
 
-        # Build action buttons
-        action_width = 0
+        # Build action buttons — width handled automatically by adaptive_width=True
         for contrib in actions:
             btn = MDIconButton(
                 icon=contrib.icon or "lightning-bolt",
                 on_release=lambda _, c=contrib: c.handler() if c.handler else None,
             )
             self._action_bar.add_widget(btn)
-            action_width += dp(48)
-        self._action_bar.width = str(action_width) + "dp"
 
         # Select first panel
         if panels:

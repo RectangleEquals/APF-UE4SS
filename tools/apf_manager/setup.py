@@ -86,7 +86,10 @@ if "build_exe" in sys.argv and not token_file.exists():
 # ---------------------------------------------------------------------------
 
 EXCLUDES = [
-    "tkinter",
+    # tkinter intentionally NOT excluded — the folder picker in library_screen.py
+    # uses tkinter.filedialog.askdirectory() as its primary (native) dialog.
+    # Excluding it forces a fallback to the Kivy FileChooser which returns unexpected
+    # path formats on fresh installs (Bug 33).
     "unittest",
     # "email" — removed: needed by http.client for header parsing (urllib3 transitive dep)
     # "html"  — removed: needed by markdown.htmlparser (pure Python stdlib, NOT in python312.dll)

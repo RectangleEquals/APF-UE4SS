@@ -5,6 +5,10 @@ Component → source file:
   Framework  CMakeLists.txt          project(APFramework VERSION x.y.z)
   Manager    tools/apf_manager/__version__.py   __version__ = "x.y.z"
   Apworld    worlds/apf/archipelago.json        "world_version": "x.y.z"
+
+_REPO_ROOT is NOT inferred from this file's location — it must be set at runtime
+by calling set_repo_root(path) from DevToolsPanel (loaded from persisted config or
+user folder picker). All functions return None/False if the root is not yet set.
 """
 
 from __future__ import annotations
@@ -16,13 +20,12 @@ from pathlib import Path
 from typing import Optional
 
 _HERE = Path(__file__).parent
-_REPO_ROOT = _HERE.parent.parent.parent.parent  # plugins/devtools → ipc_2/
 
-_FILE_MAP = {
-    "framework": _REPO_ROOT / "CMakeLists.txt",
-    "manager":   _REPO_ROOT / "tools" / "apf_manager" / "__version__.py",
-    "apworld":   _REPO_ROOT / "worlds" / "apf" / "archipelago.json",
-}
+# ---------------------------------------------------------------------------
+# Repo root — unset by default; configured by DevToolsPanel at runtime.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT: Optional[Path] = None
 
 _TAG_PREFIX = {
     "framework": "framework",
@@ -31,13 +34,37 @@ _TAG_PREFIX = {
 }
 
 
+def set_repo_root(path: Optional[Path]) -> None:
+    """Set the local repo root path. Called by DevToolsPanel on startup or user pick."""
+    global _REPO_ROOT
+    _REPO_ROOT = path
+
+
+def is_repo_valid() -> bool:
+    """True when _REPO_ROOT is set and contains a .git directory."""
+    return _REPO_ROOT is not None and (_REPO_ROOT / ".git").is_dir()
+
+
+def _build_file_map() -> dict:
+    """Build the component → Path map from the current _REPO_ROOT. Returns {} if unset."""
+    if _REPO_ROOT is None:
+        return {}
+    return {
+        "framework": _REPO_ROOT / "CMakeLists.txt",
+        "manager":   _REPO_ROOT / "tools" / "apf_manager" / "__version__.py",
+        "apworld":   _REPO_ROOT / "worlds" / "apf" / "archipelago.json",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Readers
 # ---------------------------------------------------------------------------
 
 def get_framework_version() -> Optional[str]:
+    if not is_repo_valid():
+        return None
     try:
-        text = _FILE_MAP["framework"].read_text(encoding="utf-8")
+        text = _build_file_map()["framework"].read_text(encoding="utf-8")
         m = re.search(r'project\s*\(\s*APFramework\s+VERSION\s+([\d.]+)', text)
         return m.group(1) if m else None
     except Exception:
@@ -45,17 +72,21 @@ def get_framework_version() -> Optional[str]:
 
 
 def get_manager_version() -> Optional[str]:
+    if not is_repo_valid():
+        return None
     try:
         ns: dict = {}
-        exec(_FILE_MAP["manager"].read_text(encoding="utf-8"), ns)
+        exec(_build_file_map()["manager"].read_text(encoding="utf-8"), ns)
         return ns.get("__version__")
     except Exception:
         return None
 
 
 def get_apworld_version() -> Optional[str]:
+    if not is_repo_valid():
+        return None
     try:
-        data = json.loads(_FILE_MAP["apworld"].read_text(encoding="utf-8"))
+        data = json.loads(_build_file_map()["apworld"].read_text(encoding="utf-8"))
         return data.get("world_version")
     except Exception:
         return None
@@ -95,8 +126,10 @@ def bump_version(version: str, part: str) -> str:
 # ---------------------------------------------------------------------------
 
 def set_framework_version(version: str) -> bool:
+    if not is_repo_valid():
+        return False
     try:
-        path = _FILE_MAP["framework"]
+        path = _build_file_map()["framework"]
         text = path.read_text(encoding="utf-8")
         new_text = re.sub(
             r'(project\s*\(\s*APFramework\s+VERSION\s+)[\d.]+',
@@ -110,8 +143,10 @@ def set_framework_version(version: str) -> bool:
 
 
 def set_manager_version(version: str) -> bool:
+    if not is_repo_valid():
+        return False
     try:
-        path = _FILE_MAP["manager"]
+        path = _build_file_map()["manager"]
         text = path.read_text(encoding="utf-8")
         new_text = re.sub(
             r'(__version__\s*=\s*["\'])[\d.]+(["\'])',
@@ -125,8 +160,10 @@ def set_manager_version(version: str) -> bool:
 
 
 def set_apworld_version(version: str) -> bool:
+    if not is_repo_valid():
+        return False
     try:
-        path = _FILE_MAP["apworld"]
+        path = _build_file_map()["apworld"]
         data = json.loads(path.read_text(encoding="utf-8"))
         data["world_version"] = version
         path.write_text(json.dumps(data, indent=4), encoding="utf-8")
@@ -152,6 +189,8 @@ def set_version(component: str, version: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_current_branch() -> Optional[str]:
+    if not is_repo_valid():
+        return None
     try:
         return subprocess.check_output(
             ["git", "branch", "--show-current"],
@@ -170,7 +209,10 @@ def commit_and_tag(component: str, version: str) -> tuple[bool, str]:
     Assumes the working tree is on the correct branch and credentials are
     available (SSH key or git credential helper).
     """
-    file_path = str(_FILE_MAP.get(component, ""))
+    if not is_repo_valid():
+        return False, "Repo root not configured — see Dev Setup tab."
+    fm = _build_file_map()
+    file_path = str(fm.get(component, ""))
     if not file_path:
         return False, f"Unknown component: {component!r}"
 

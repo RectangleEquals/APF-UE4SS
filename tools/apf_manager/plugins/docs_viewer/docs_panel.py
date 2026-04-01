@@ -97,6 +97,81 @@ class DocsPanel:
     # Public interface
     # -----------------------------------------------------------------------
 
+    def open_local_spa(
+        self,
+        path: str,
+        title: str = "",
+        sidebar_mode: str = "default",
+        show_mode_toggle: bool = True,
+    ) -> None:
+        """
+        Open a local .md file in the full SPA viewer (sidebar, search, back/forward).
+
+        Reads the file from disk, converts it, and builds a minimal single-item
+        TREE so the SPA loads with navigation chrome — no GitHub fetch needed.
+
+        sidebar_mode: "default" (titles only) | "verbose" (flat heading anchors) |
+                      "tree" (collapsible H1→H2→H3 hierarchy). Default: "default".
+        show_mode_toggle: whether to show the Default/Verbose/Tree chips in the
+                          sidebar footer so the user can switch modes. Default: True.
+        """
+        viewer = self._html_viewer()
+        if viewer is None:
+            self._host.log("[docs_viewer] html_viewer service not available")
+            return
+
+        from .md_to_html import convert_body
+
+        p = Path(path)
+        display_title = title or p.stem.replace("_", " ").title()
+        try:
+            md_text = p.read_text(encoding="utf-8")
+        except Exception as exc:
+            self._host.log(f"[docs_viewer] Failed to read {path}: {exc}")
+            md_text = f"_Could not load `{path}`: {exc}_"
+
+        doc_key = str(p)
+        body_html = convert_body(md_text)
+
+        tree_json = json.dumps(
+            [
+                {
+                    "display_name": display_title,
+                    "path": doc_key,
+                    "download_url": "",
+                    "section": "",
+                    "commit": "",
+                    "commit_url": "",
+                }
+            ],
+            ensure_ascii=False,
+        ).replace("</", "<\\/")
+
+        docs_html_json = json.dumps(
+            {doc_key: body_html}, ensure_ascii=False
+        ).replace("</", "<\\/")
+
+        fw_version = _get_framework_version()
+        github_css = _load_github_css()
+        template = _load_spa_template()
+        spa_html = (
+            template
+            .replace("{TREE_JSON}", tree_json)
+            .replace("{DOCS_HTML_JSON}", docs_html_json)
+            .replace("{GITHUB_CSS}", github_css)
+            .replace("{FRAMEWORK_VERSION}", fw_version)
+            .replace("{SIDEBAR_MODE}", sidebar_mode)
+            .replace("{SHOW_MODE_TOGGLE}", "true" if show_mode_toggle else "false")
+        )
+
+        viewer.show(
+            display_title,
+            spa_html,
+            width=1100,
+            height=780,
+            inject_titlebar=False,
+        )
+
     def open(self, path: str | None = None) -> None:
         """
         Open documentation.
@@ -153,7 +228,12 @@ class DocsPanel:
         html = convert(md_text, title=title)
         viewer.show(title, html)
 
-    def _open_spa(self, viewer) -> None:
+    def _open_spa(
+        self,
+        viewer,
+        sidebar_mode: str = "default",
+        show_mode_toggle: bool = True,
+    ) -> None:
         """
         Build and open the SPA docs browser window.
 
@@ -161,6 +241,9 @@ class DocsPanel:
         required because the viewer runs in a subprocess and cannot call back into
         the parent Python process. All content is embedded into the SPA HTML at
         launch time — no API calls from JS are needed for content loading.
+
+        sidebar_mode: "default" | "verbose" | "tree"
+        show_mode_toggle: whether the mode chips appear in the sidebar footer
         """
         from .md_to_html import convert_body
 
@@ -233,6 +316,8 @@ class DocsPanel:
             .replace("{DOCS_HTML_JSON}", docs_html_json)
             .replace("{GITHUB_CSS}", github_css)
             .replace("{FRAMEWORK_VERSION}", fw_version)
+            .replace("{SIDEBAR_MODE}", sidebar_mode)
+            .replace("{SHOW_MODE_TOGGLE}", "true" if show_mode_toggle else "false")
         )
 
         viewer.show(

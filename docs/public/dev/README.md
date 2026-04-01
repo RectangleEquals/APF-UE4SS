@@ -75,3 +75,11 @@ Each mod that calls `require("APClientLib")` gets its own independent context �
 | [world.md](world.md) | **The apworld** — how `apf.apworld` generates multiworlds from capabilities data, logic modes, option pruning, ID assignment, multi-mod composition. |
 | [tracker.md](tracker.md) | **Tracker engine** — subscribing to real-time tracker data, full snapshot and update schemas, the `ScoredNode` AST tree structure, display region derivation. |
 | [templates.md](templates.md) | **Template system** — reusable JSON fragments via the `include` field, vocabulary validation, directory structure, how to add templates for a new game. |
+
+---
+
+## Contributing
+
+| Document | Description |
+|---|---|
+| [dev_setup.md](dev_setup.md) | **Source build + contribution setup** — prerequisites (Git, VS 2022, CMake, vcpkg), SQLite3, CMake configure, clangd, Python/APF Manager environment, `__version__.py`, versioning strategy. *Not required for mod development* — mod developers only need sections 6–8. |

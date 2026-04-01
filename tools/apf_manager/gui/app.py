@@ -52,8 +52,9 @@ def _custom_plugins_dir() -> Path:
 
 
 class APFManagerApp(MDApp):
-    def __init__(self, **kwargs):
+    def __init__(self, devtools_mode: bool = False, **kwargs):
         super().__init__(**kwargs)
+        self._devtools_mode = devtools_mode
         try:
             from ..__version__ import __version__, __build_id__, __is_dev__
         except Exception:
@@ -86,12 +87,11 @@ class APFManagerApp(MDApp):
         # Load plugins
         builtin = _builtin_plugins_dir()
         custom = _custom_plugins_dir()
-        devtools_mode = "--devtools" in sys.argv
         self._host.discover_and_load(
             plugin_dirs=[builtin, custom],
             disabled_ids=self._config.disabled_plugins,
             dev_mode=self._config.is_dev,
-            devtools_mode=devtools_mode,
+            devtools_mode=self._devtools_mode,
         )
 
         # Wire host callbacks
