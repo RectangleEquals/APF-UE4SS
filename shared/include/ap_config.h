@@ -14,7 +14,6 @@
  * Configuration is loaded from JSON:
  * {
  *     "game_name": "Palworld",
- *     "version": "1.0.0",
  *     "ap_server": { "host": "localhost", "port": 38281, ... },
  *     "logging": { "level": "info", "file": "", "console": true },
  *     "timeouts": { ... },
@@ -121,7 +120,6 @@ public:
     // =========================================================================
 
     const std::string& get_game_name() const { return config_.game_name; }
-    const std::string& get_version() const { return config_.version; }
 
     // Logging config (nested)
     LogLevel get_log_level() const { return config_.logging.level; }

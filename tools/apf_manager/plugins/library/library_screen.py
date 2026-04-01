@@ -70,9 +70,14 @@ def _tile_color(name: str) -> tuple:
 
 # UE4SS badge: uses shared STATUS_ICONS from theme
 from ...gui.theme import STATUS_ICONS as _BADGE_STATUS
+from ...gui.widgets.tip_icon_button import ImageIconButton
 
 _TILE_W = dp(200)
 _TILE_H = dp(150)
+
+_DISCORD_ICON = Path(__file__).parent.parent.parent / "data" / "Discord_Symbol_White.png"
+# Path(__file__).parent = plugins/library/ → .parent.parent = plugins/ → .parent.parent.parent = apf_manager/
+# Works for plugins (always real disk files, not in library.zip)
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +618,12 @@ class LibraryScreen(MDBoxLayout):
             icon="refresh", on_release=lambda *_: threading.Thread(
                 target=self._refresh_steam, daemon=True).start()))
         toolbar.add_widget(MDIconButton(
+            icon="book-open-variant", on_release=lambda *_: self._open_docs()))
+        if _DISCORD_ICON.exists():
+            discord_btn = ImageIconButton(source=str(_DISCORD_ICON), tooltip_text="Join our Discord")
+            discord_btn.bind(on_release=lambda *_: webbrowser.open("https://discord.gg/xhcVRhnjK"))
+            toolbar.add_widget(discord_btn)
+        toolbar.add_widget(MDIconButton(
             icon="cog", on_release=lambda *_: self._go_settings()))
         self.add_widget(toolbar)
 
@@ -1110,6 +1121,14 @@ class LibraryScreen(MDBoxLayout):
         app = MDApp.get_running_app()
         if app and app._sm:
             app._sm.current = "settings"
+
+    def _open_docs(self) -> None:
+        try:
+            svc = self._host.get_service("docs_viewer")
+            if svc:
+                svc.open()
+        except Exception as exc:
+            self._host.log(f"[library] Could not open docs: {exc}")
 
     # -----------------------------------------------------------------------
     # Search

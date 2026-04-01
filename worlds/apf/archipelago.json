@@ -1,11 +1,12 @@
 {
   "game": "APFramework",
-  "world_version": "1.0.0",
-  "version": 7,
-  "compatible_version": 7,
+  "world_version": "0.2.7",
   "minimum_ap_version": "0.6.4",
   "display_name": "ArchipelagoFramework",
-  "authors": ["SpectreCular", "AgStarRay"],
+  "authors": [
+    "SpectreCular",
+    "AgStarRay"
+  ],
   "url": "https://github.com/RectangleEquals/APF-UE4SS",
   "description": "Archipelago <--> UE4SS middleware framework with dynamic mod support"
 }

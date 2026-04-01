@@ -79,17 +79,19 @@ class PluginHost:
         self._failure_fn: Optional[Callable[[], None]] = None
         self.has_failures: bool = False
         self.dev_mode: bool = False
+        self.devtools_mode: bool = False
 
     # -----------------------------------------------------------------------
     # Plugin discovery & loading
     # -----------------------------------------------------------------------
 
-    def discover_and_load(self, plugin_dirs: list[Path], disabled_ids: list[str], dev_mode: bool) -> None:
+    def discover_and_load(self, plugin_dirs: list[Path], disabled_ids: list[str], dev_mode: bool, devtools_mode: bool = False) -> None:
         """
         Discover all plugins in the given directories, resolve dependencies,
         and load them in topological order.
         """
         self.dev_mode = dev_mode
+        self.devtools_mode = devtools_mode
         raw: list[PluginInfo] = []
 
         for d in plugin_dirs:
@@ -135,8 +137,9 @@ class PluginHost:
 
                 # Filter by mode
                 if info.mode == "dev" and not dev_mode:
-                    # Skip silently — not a failure, just not applicable
-                    continue
+                    continue  # Skip silently — not a failure, just not applicable
+                if info.mode == "devtools" and not (dev_mode and devtools_mode):
+                    continue  # devtools plugins require both dev mode AND --devtools flag
 
                 raw.append(info)
                 self._plugins[info.plugin_id] = info
@@ -246,9 +249,49 @@ class PluginHost:
 
         User plugins live outside the package and are imported standalone by
         adding their parent directory to sys.path.
+
+        Frozen build: _APF_PKG_ROOT resolves into library.zip (virtual path), so
+        relative_to() always fails against the real disk path. We instead register
+        apf_manager.plugins backed by the on-disk plugins/ directory, prepending it
+        so the disk copy wins over the zip copy — ensuring __file__ is a real path
+        (needed for data-file access via Path(__file__).parent).
         """
         plugin_dir = info.directory
 
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).parent
+            builtin_dir = exe_dir / "plugins"
+
+            if plugin_dir.is_relative_to(builtin_dir):
+                # Prepend disk plugins/ to apf_manager.plugins.__path__ so disk wins over zip.
+                plugins_pkg_name = f"{_APF_PKG_NAME}.plugins"
+                disk_str = str(builtin_dir)
+                if plugins_pkg_name not in sys.modules:
+                    import types as _types
+                    _pkg = _types.ModuleType(plugins_pkg_name)
+                    _pkg.__path__ = [disk_str]
+                    _pkg.__package__ = plugins_pkg_name
+                    _pkg.__spec__ = None
+                    sys.modules[plugins_pkg_name] = _pkg
+                else:
+                    _existing = sys.modules[plugins_pkg_name]
+                    if not hasattr(_existing, "__path__"):
+                        _existing.__path__ = [disk_str]
+                    elif disk_str not in _existing.__path__:
+                        _existing.__path__.insert(0, disk_str)
+
+                full_name = f"{_APF_PKG_NAME}.plugins.{plugin_dir.name}"
+                if full_name in sys.modules:
+                    return sys.modules[full_name]
+                return importlib.import_module(full_name)
+
+            # User plugin (custom_plugins/) — standalone import
+            plugin_parent = str(plugin_dir.parent)
+            if plugin_parent not in sys.path:
+                sys.path.insert(0, plugin_parent)
+            return importlib.import_module(plugin_dir.name)
+
+        # Dev / non-frozen: existing logic
         try:
             rel = plugin_dir.relative_to(_APF_PKG_ROOT)
             # Built-in: compute full dotted name, e.g. "apf_manager.plugins.diagnostics"

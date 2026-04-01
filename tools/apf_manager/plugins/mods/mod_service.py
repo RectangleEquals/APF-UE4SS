@@ -107,6 +107,8 @@ class ModInfo:
     incompatible: list = field(default_factory=list)   # list of "mod_id" strings
 
     # manifest.json — capabilities
+    capabilities_includes: list = field(default_factory=list)  # capabilities.include paths
+    vocab_validation: bool = False
     items: list = field(default_factory=list)          # list[ItemDef]
     locations: list = field(default_factory=list)      # list[LocationDef]
     goals: list = field(default_factory=list)          # list[GoalDef]
@@ -174,6 +176,44 @@ class ModService:
     def get_mod_by_id(self, mod_id: str) -> Optional[ModInfo]:
         return next((m for m in self._mods if m.mod_id == mod_id), None)
 
+    def build_capabilities(
+        self,
+        mods: Optional[list[ModInfo]] = None,
+        game: str = "APFramework",
+        strict: bool = False,
+    ) -> dict:
+        """
+        Build aggregated capabilities from AP mods.
+        Uses templates_dirs auto-resolved from the game's root directory.
+        """
+        from .capabilities_builder import CapabilitiesBuilder
+        if mods is None:
+            mods = self.get_ap_mods()
+        templates_dirs = self._resolve_templates_dirs()
+        return CapabilitiesBuilder().from_mod_infos(mods, game=game, templates_dirs=templates_dirs, strict=strict)
+
+    def _resolve_templates_dirs(self) -> list[Path]:
+        """
+        Locate Templates/<game>/ directories relative to the active game root.
+        Searches common UE4 directory layouts.
+        """
+        dirs: list[Path] = []
+        if not self._mods_dir:
+            return dirs
+        # Typical layout: game_root/Pal/Binaries/Win64/Mods/ → game_root/
+        # Walk up looking for a Templates/ directory (up to 6 levels)
+        candidate = self._mods_dir
+        for _ in range(6):
+            templates = candidate / "Templates"
+            if templates.is_dir():
+                dirs.append(templates)
+                break
+            parent = candidate.parent
+            if parent == candidate:
+                break
+            candidate = parent
+        return dirs
+
     # -----------------------------------------------------------------------
     # Internal scanning
     # -----------------------------------------------------------------------
@@ -208,6 +248,8 @@ class ModService:
                 info.incompatible = raw.get("incompatible", [])
 
                 caps = raw.get("capabilities", {})
+                info.capabilities_includes = caps.get("include", [])
+                info.vocab_validation = bool(caps.get("vocab_validation", False))
                 info.items = [ModService._parse_item(i) for i in caps.get("items", [])]
                 info.locations = [ModService._parse_location(l) for l in caps.get("locations", [])]
                 info.goals = [ModService._parse_goal(g) for g in caps.get("goals", [])]

@@ -382,7 +382,7 @@ class APConfigPanel(PluginPanel):
         self._dirty = True
 
     def _collect(self) -> dict:
-        # Deep-copy existing data to preserve game_name, version, and any unknown fields
+        # Deep-copy existing data to preserve game_name, and any unknown fields
         data = copy.deepcopy(self._svc._data) if (self._svc and self._svc._data) else {}
 
         def _int(key: str, default: int) -> int:

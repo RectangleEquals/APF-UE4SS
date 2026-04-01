@@ -34,11 +34,12 @@ def _builtin_plugins_dir() -> Path:
     """
     Returns the built-in plugins directory.
     In development: tools/apf_manager/plugins/ (relative to this file).
-    In frozen build: lib/plugins/ (relative to executable).
+    In frozen build: plugins/ (relative to executable).
     """
     if getattr(sys, "frozen", False):
-        # cx_Freeze frozen build
-        return Path(sys.executable).parent / "lib" / "plugins"
+        # cx_Freeze frozen build — setup.py _post_build and inno_setup.iss both
+        # place plugins at {exe_dir}/plugins/, NOT {exe_dir}/lib/plugins/.
+        return Path(sys.executable).parent / "plugins"
     else:
         return Path(__file__).parent.parent / "plugins"
 
@@ -51,9 +52,18 @@ def _custom_plugins_dir() -> Path:
 
 
 class APFManagerApp(MDApp):
-    def __init__(self, **kwargs):
+    def __init__(self, devtools_mode: bool = False, **kwargs):
         super().__init__(**kwargs)
-        self.title = "APF Manager"
+        self._devtools_mode = devtools_mode
+        try:
+            from ..__version__ import __version__, __build_id__, __is_dev__
+        except Exception:
+            __version__, __build_id__, __is_dev__ = "?.?.?", "dev", True
+        self.title = (
+            f"APF Manager v{__version__} ({__build_id__})"
+            if __is_dev__
+            else f"APF Manager v{__version__}"
+        )
         self._config = APFConfig()
         self._host = PluginHost()
         self._sm: Optional[ScreenManager] = None
@@ -81,6 +91,7 @@ class APFManagerApp(MDApp):
             plugin_dirs=[builtin, custom],
             disabled_ids=self._config.disabled_plugins,
             dev_mode=self._config.is_dev,
+            devtools_mode=self._devtools_mode,
         )
 
         # Wire host callbacks

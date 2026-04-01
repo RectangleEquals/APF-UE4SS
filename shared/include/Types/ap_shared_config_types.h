@@ -89,7 +89,6 @@ struct APServerConfig {
 
 struct FrameworkConfig {
     std::string game_name;
-    std::string version;
     APServerConfig ap_server;
     LoggingConfig logging;
     TimeoutConfig timeouts;

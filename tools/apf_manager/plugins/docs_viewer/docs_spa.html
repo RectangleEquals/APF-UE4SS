@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation</title>
+<style>
+/* ── Reset & base ───────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  display: flex; flex-direction: column;
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+}
+
+/* ── Title bar (draggable) ─────────────────────────────────────────────── */
+.apf-titlebar {
+  flex-shrink: 0; height: 40px; z-index: 9999;
+  background: #161b22; border-bottom: 1px solid #30363d;
+  display: flex; align-items: center; padding: 0 12px; gap: 8px;
+  -webkit-app-region: drag;
+}
+.apf-titlebar .apf-title {
+  flex: 1; font-size: 13px; color: #8b949e;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.apf-titlebar .apf-close {
+  -webkit-app-region: no-drag;
+  background: #c0392b; color: white; border: none; border-radius: 4px;
+  padding: 3px 10px; cursor: pointer; font-size: 13px; flex-shrink: 0;
+}
+.apf-titlebar .apf-close:hover { background: #e74c3c; }
+
+/* ── Back / forward nav buttons ────────────────────────────────────────── */
+.apf-nav {
+  -webkit-app-region: no-drag;
+  background: transparent; color: #8b949e; border: none;
+  border-radius: 4px; padding: 3px 8px; cursor: pointer;
+  font-size: 16px; flex-shrink: 0; line-height: 1;
+}
+.apf-nav:hover:not(:disabled) { background: #21262d; color: #e6edf3; }
+.apf-nav:disabled { opacity: 0.3; cursor: default; }
+.apf-commit-chip {
+  -webkit-app-region: no-drag;
+  font-size: 11px; color: #58a6ff; cursor: default;
+  font-family: monospace; margin-left: 4px; flex-shrink: 0;
+}
+.apf-commit-chip.clickable { cursor: pointer; }
+.apf-commit-chip.clickable:hover { text-decoration: underline; }
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+.container {
+  flex: 1; display: flex; overflow: hidden;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────── */
+.sidebar {
+  width: 240px; flex-shrink: 0;
+  background: #161b22; border-right: 1px solid #30363d;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.search-wrap {
+  padding: 8px; flex-shrink: 0;
+  border-bottom: 1px solid #21262d;
+}
+.search-wrap input {
+  width: 100%; background: #21262d; border: 1px solid #30363d;
+  color: #e6edf3; border-radius: 6px; padding: 5px 8px; font-size: 12px;
+  outline: none;
+}
+.search-wrap input:focus { border-color: #58a6ff; }
+.sidebar-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+.sidebar-tree::-webkit-scrollbar { width: 6px; }
+.sidebar-tree::-webkit-scrollbar-track { background: transparent; }
+.sidebar-tree::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+.section-header {
+  padding: 8px 12px 4px;
+  font-size: 11px; color: #8b949e;
+  text-transform: uppercase; letter-spacing: 0.6px;
+  font-weight: 600;
+}
+.doc-item {
+  padding: 6px 12px 6px 20px;
+  cursor: pointer; font-size: 13px;
+  color: #c9d1d9;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 4px; margin: 1px 4px;
+  transition: background 0.1s;
+}
+.doc-item:hover { background: #21262d; }
+.doc-item.active { background: #1f6feb; color: #fff; }
+
+/* ── Heading nav items (verbose + tree modes) ──────────────────────────── */
+.heading-nav-item {
+  padding: 4px 12px 4px 28px;
+  cursor: pointer; font-size: 12px;
+  color: #8b949e;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 4px; margin: 0 4px;
+  transition: background 0.1s;
+}
+.heading-nav-item:hover { background: #21262d; color: #c9d1d9; }
+.heading-nav-h2 { padding-left: 28px; }
+.heading-nav-h3 { padding-left: 40px; font-size: 11px; }
+
+/* ── Tree mode groups ───────────────────────────────────────────────────── */
+.tree-group { margin: 0; }
+.tree-toggle {
+  padding: 4px 12px 4px 22px;
+  cursor: pointer; font-size: 12px;
+  color: #8b949e;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 4px; margin: 0 4px;
+  transition: background 0.1s;
+  user-select: none;
+  position: relative;
+}
+.tree-toggle::before {
+  content: '\25B6';
+  font-size: 7px;
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: transform 0.15s;
+  color: #8b949e;
+}
+.tree-toggle.expanded::before {
+  transform: translateY(-50%) rotate(90deg);
+}
+.tree-toggle:hover { background: #21262d; color: #c9d1d9; }
+.tree-children { overflow: hidden; }
+/* Nested toggle (H2 inside H1 group) */
+.tree-children .tree-toggle { padding-left: 30px; }
+.tree-children .tree-toggle::before { left: 17px; }
+/* Nested heading nav items inside a tree-children */
+.tree-children .heading-nav-h2 { padding-left: 28px; }
+.tree-children .heading-nav-h3 { padding-left: 40px; }
+/* Doubly-nested (H3 inside H2 inside H1) */
+.tree-children .tree-children .heading-nav-h3 { padding-left: 52px; }
+
+/* ── Sidebar footer (mode chips) ────────────────────────────────────────── */
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  border-top: 1px solid #21262d;
+  display: flex; gap: 4px; flex-wrap: wrap;
+}
+.mode-chip {
+  background: #21262d; border: 1px solid #30363d;
+  color: #8b949e; border-radius: 12px;
+  padding: 2px 10px; font-size: 11px;
+  cursor: pointer; outline: none;
+  transition: background 0.1s, color 0.1s;
+}
+.mode-chip:hover { background: #30363d; color: #c9d1d9; }
+.mode-chip.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+
+/* ── Search results ────────────────────────────────────────────────────── */
+.search-result {
+  padding: 8px 12px; cursor: pointer; border-radius: 4px; margin: 2px 4px;
+  border-left: 2px solid #30363d; transition: background 0.1s;
+}
+.search-result:hover { background: #21262d; }
+.search-result .sr-title { font-size: 13px; color: #58a6ff; font-weight: 600; }
+.search-result .sr-snippet {
+  font-size: 11px; color: #8b949e; margin-top: 2px; line-height: 1.4;
+  white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.search-result .sr-snippet em { color: #f0c040; font-style: normal; }
+.search-no-results { padding: 20px 12px; color: #8b949e; font-size: 12px; text-align: center; }
+
+/* ── In-content search highlight ──────────────────────────────────────── */
+mark.search-hl {
+  background: rgba(240, 192, 64, 0.65); color: inherit;
+  border-radius: 2px; padding: 0 1px;
+  transition: background 2s ease-out;
+}
+mark.search-hl.fading { background: transparent; }
+
+/* ── Content ───────────────────────────────────────────────────────────── */
+.content-wrap {
+  flex: 1; overflow-y: auto; padding: 24px 32px 48px;
+}
+.content-wrap::-webkit-scrollbar { width: 8px; }
+.content-wrap::-webkit-scrollbar-track { background: transparent; }
+.content-wrap::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+
+/* ── Loading / error states ────────────────────────────────────────────── */
+.state-msg {
+  color: #8b949e; padding: 48px; text-align: center; font-size: 14px;
+}
+.state-msg.error { color: #f85149; }
+
+/* ── GitHub Markdown CSS ───────────────────────────────────────────────── */
+.markdown-body a { color: #58a6ff; }
+.markdown-body a:hover { color: #79b8ff; }
+{GITHUB_CSS}
+</style>
+</head>
+<body>
+
+<div class="apf-titlebar" pywebview-drag-region>
+  <button class="apf-nav" id="btn-back"    onclick="goBack()"    disabled>&#8249;</button>
+  <button class="apf-nav" id="btn-forward" onclick="goForward()" disabled>&#8250;</button>
+  <span class="apf-title" id="apf-title-text">Documentation</span>
+  <button class="apf-close" onclick="window.pywebview && pywebview.api.close()">&#x2715;</button>
+</div>
+
+<div class="container">
+  <nav class="sidebar" id="sidebar">
+    <div class="search-wrap">
+      <input id="search" type="text" placeholder="Search docs..." autocomplete="off"
+             oninput="filterTree(this.value)">
+    </div>
+    <div class="sidebar-tree" id="tree"></div>
+    <div class="sidebar-footer" id="mode-footer">
+      <button class="mode-chip" id="chip-default" onclick="setSidebarMode('default')">Default</button>
+      <button class="mode-chip" id="chip-verbose" onclick="setSidebarMode('verbose')">Verbose</button>
+      <button class="mode-chip" id="chip-tree"    onclick="setSidebarMode('tree')">Tree</button>
+    </div>
+  </nav>
+
+  <div class="content-wrap">
+    <div class="markdown-body" id="content">
+      <div class="state-msg">Select a document to begin.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── Doc tree data (embedded by Python) ──────────────────────────────── */
+const TREE = {TREE_JSON};
+
+/* ── Pre-rendered doc HTML (embedded by Python) ──────────────────────── */
+const DOCS_HTML = {DOCS_HTML_JSON};
+
+/* ── Framework version (embedded by Python at SPA build time) ─────────── */
+const FRAMEWORK_VERSION = "{FRAMEWORK_VERSION}";
+
+/* ── Sidebar mode config (embedded by Python) ────────────────────────── */
+const SIDEBAR_MODE_INIT = "{SIDEBAR_MODE}";
+const SHOW_MODE_TOGGLE = {SHOW_MODE_TOGGLE};
+
+/* ── Search corpus: plain text of each doc, built once at init ───────── */
+const SEARCH_CORPUS = (function() {
+  var c = {}, tmp = document.createElement('div');
+  TREE.forEach(function(e) {
+    if (DOCS_HTML[e.path]) { tmp.innerHTML = DOCS_HTML[e.path]; c[e.path] = tmp.textContent; }
+  });
+  return c;
+})();
+
+/* ── Sidebar mode state ──────────────────────────────────────────────── */
+var _sidebarMode = 'default';
+var _currentEntry = null;
+
+/* ── Navigation history ──────────────────────────────────────────────── */
+// Each item: { entry, jumpTarget } where jumpTarget is null | '#id' | 'search:query'
+var _navHistory = [];
+var _navPos = -1;
+
+function _updateNavButtons() {
+  var b = document.getElementById('btn-back');
+  var f = document.getElementById('btn-forward');
+  if (b) b.disabled = (_navPos <= 0);
+  if (f) f.disabled = (_navPos >= _navHistory.length - 1);
+}
+
+function navigateTo(entry, jumpTarget) {
+  _currentEntry = entry;
+  jumpTarget = jumpTarget || null;
+  var cur = _navPos >= 0 ? _navHistory[_navPos] : null;
+  if (cur && cur.entry.path === entry.path && cur.jumpTarget === jumpTarget) return;
+  _navPos++;
+  _navHistory = _navHistory.slice(0, _navPos);
+  _navHistory.push({ entry: entry, jumpTarget: jumpTarget });
+  _renderDoc(entry, jumpTarget);
+}
+
+function _pushJump(jumpTarget) {
+  var cur = _navPos >= 0 ? _navHistory[_navPos] : null;
+  if (!cur) return;
+  _navPos++;
+  _navHistory = _navHistory.slice(0, _navPos);
+  _navHistory.push({ entry: cur.entry, jumpTarget: jumpTarget });
+  _updateNavButtons();
+}
+
+function goBack() {
+  if (_navPos <= 0) return;
+  _navPos--;
+  var item = _navHistory[_navPos];
+  _currentEntry = item.entry;
+  _renderDoc(item.entry, item.jumpTarget);
+}
+
+function goForward() {
+  if (_navPos >= _navHistory.length - 1) return;
+  _navPos++;
+  var item = _navHistory[_navPos];
+  _currentEntry = item.entry;
+  _renderDoc(item.entry, item.jumpTarget);
+}
+
+/* ── Resolve a relative href to an absolute doc path ─────────────────── */
+function resolveDocLink(currentPath, href) {
+  var base = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+  var parts = (base + href).split('/');
+  var resolved = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] === '..') resolved.pop();
+    else if (parts[i] !== '.') resolved.push(parts[i]);
+  }
+  return resolved.join('/');
+}
+
+/* ── Render sidebar ──────────────────────────────────────────────────── */
+function renderTree(items) {
+  const treeEl = document.getElementById('tree');
+  treeEl.innerHTML = '';
+
+  const sections = {};
+  for (const item of items) {
+    if (!sections[item.section]) sections[item.section] = [];
+    sections[item.section].push(item);
+  }
+
+  const sectionOrder = ['general', 'dev'];
+  const sectionLabels = { general: 'General', dev: 'Developer' };
+
+  for (const section of sectionOrder) {
+    const entries = sections[section];
+    if (!entries || entries.length === 0) continue;
+
+    const hdr = document.createElement('div');
+    hdr.className = 'section-header';
+    hdr.dataset.section = section;
+    hdr.textContent = sectionLabels[section] || section;
+    treeEl.appendChild(hdr);
+
+    for (const entry of entries) {
+      const item = document.createElement('div');
+      item.className = 'doc-item';
+      item.dataset.path = entry.path;
+      item.dataset.section = section;
+      item.textContent = entry.display_name;
+      item.title = entry.display_name;
+      item.onclick = () => navigateTo(entry);
+      treeEl.appendChild(item);
+    }
+  }
+
+  // Entries with an unknown/empty section (e.g. single-doc local SPA) — no section header
+  const knownSections = new Set(sectionOrder);
+  for (const entry of items) {
+    if (knownSections.has(entry.section)) continue;
+    const item = document.createElement('div');
+    item.className = 'doc-item';
+    item.dataset.path = entry.path;
+    item.dataset.section = entry.section;
+    item.textContent = entry.display_name;
+    item.title = entry.display_name;
+    item.onclick = () => navigateTo(entry);
+    treeEl.appendChild(item);
+  }
+}
+
+/* ── Heading navigation injection ────────────────────────────────────── */
+
+function _extractHeadings(contentEl) {
+  var headings = [];
+  contentEl.querySelectorAll('h1, h2, h3').forEach(function(el) {
+    if (el.id) {
+      headings.push({
+        level: parseInt(el.tagName[1]),
+        id: el.id,
+        text: el.textContent.trim()
+      });
+    }
+  });
+  return headings;
+}
+
+function _makeAnchorItem(h, className) {
+  var el = document.createElement('div');
+  el.className = className;
+  el.dataset.navInject = '1';
+  el.textContent = h.text;
+  el.title = h.text;
+  el.onclick = (function(id) {
+    return function() {
+      var target = document.getElementById(id);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      _pushJump('#' + id);
+    };
+  })(h.id);
+  return el;
+}
+
+function _makeTreeGroup(h, childNodes) {
+  var group = document.createElement('div');
+  group.className = 'tree-group';
+  group.dataset.navInject = '1';
+
+  var toggle = document.createElement('div');
+  toggle.className = 'tree-toggle collapsed';
+  toggle.textContent = h.text;
+  toggle.title = h.text;
+
+  var childrenEl = document.createElement('div');
+  childrenEl.className = 'tree-children';
+  childrenEl.style.display = 'none';
+
+  childNodes.forEach(function(c) { childrenEl.appendChild(c); });
+
+  toggle.onclick = function() {
+    var isCollapsed = toggle.classList.contains('collapsed');
+    toggle.classList.toggle('collapsed', !isCollapsed);
+    toggle.classList.toggle('expanded', isCollapsed);
+    childrenEl.style.display = isCollapsed ? '' : 'none';
+  };
+
+  group.appendChild(toggle);
+  group.appendChild(childrenEl);
+  return group;
+}
+
+function _injectVerboseNav(activeItem, headings) {
+  var ref = activeItem.nextSibling;
+  var parent = activeItem.parentNode;
+  headings.forEach(function(h) {
+    if (h.level === 1) return;  // skip H1 — usually matches doc title
+    parent.insertBefore(
+      _makeAnchorItem(h, 'heading-nav-item heading-nav-h' + h.level),
+      ref
+    );
+  });
+}
+
+function _injectTreeNav(activeItem, headings) {
+  var ref = activeItem.nextSibling;
+  var parent = activeItem.parentNode;
+
+  // Build tree structure: roots are H1 groups (or H2s if no H1s present)
+  var roots = [];
+  var curH1 = null, curH2 = null;
+
+  headings.forEach(function(h) {
+    if (h.level === 1) {
+      curH1 = { h: h, h2children: [] };
+      curH2 = null;
+      roots.push({ type: 'h1', data: curH1 });
+    } else if (h.level === 2) {
+      curH2 = { h: h, h3children: [] };
+      if (curH1) {
+        curH1.h2children.push({ type: 'h2', data: curH2 });
+      } else {
+        roots.push({ type: 'h2', data: curH2 });
+      }
+    } else if (h.level === 3) {
+      if (curH2) {
+        curH2.h3children.push(h);
+      } else if (curH1) {
+        curH1.h2children.push({ type: 'h3', h: h });
+      } else {
+        roots.push({ type: 'h3', h: h });
+      }
+    }
+  });
+
+  // Build DOM nodes from structure
+  function buildH2Node(child) {
+    if (child.type === 'h3') {
+      return _makeAnchorItem(child.h, 'heading-nav-item heading-nav-h3');
+    }
+    // type === 'h2'
+    if (child.data.h3children.length > 0) {
+      var h3Nodes = child.data.h3children.map(function(h3) {
+        return _makeAnchorItem(h3, 'heading-nav-item heading-nav-h3');
+      });
+      return _makeTreeGroup(child.data.h, h3Nodes);
+    }
+    return _makeAnchorItem(child.data.h, 'heading-nav-item heading-nav-h2');
+  }
+
+  roots.forEach(function(root) {
+    var el;
+    if (root.type === 'h1') {
+      var childNodes = root.data.h2children.map(buildH2Node);
+      el = _makeTreeGroup(root.data.h, childNodes);
+    } else if (root.type === 'h2') {
+      if (root.data.h3children.length > 0) {
+        var h3Nodes = root.data.h3children.map(function(h3) {
+          return _makeAnchorItem(h3, 'heading-nav-item heading-nav-h3');
+        });
+        el = _makeTreeGroup(root.data.h, h3Nodes);
+      } else {
+        el = _makeAnchorItem(root.data.h, 'heading-nav-item heading-nav-h2');
+      }
+    } else {
+      el = _makeAnchorItem(root.h, 'heading-nav-item heading-nav-h3');
+    }
+    parent.insertBefore(el, ref);
+  });
+}
+
+function _updateHeadingNav(entry, contentEl) {
+  // Remove any previously injected nav nodes
+  document.querySelectorAll('[data-nav-inject]').forEach(function(el) { el.remove(); });
+
+  if (_sidebarMode === 'default') return;
+
+  var activeItem = document.querySelector('.doc-item[data-path="' + CSS.escape(entry.path) + '"]');
+  if (!activeItem) return;
+
+  var headings = _extractHeadings(contentEl);
+  if (headings.length === 0) return;
+
+  if (_sidebarMode === 'verbose') {
+    _injectVerboseNav(activeItem, headings);
+  } else if (_sidebarMode === 'tree') {
+    _injectTreeNav(activeItem, headings);
+  }
+}
+
+function setSidebarMode(mode) {
+  _sidebarMode = mode;
+  document.querySelectorAll('.mode-chip').forEach(function(c) { c.classList.remove('active'); });
+  var chip = document.getElementById('chip-' + mode);
+  if (chip) chip.classList.add('active');
+  if (_currentEntry) {
+    _updateHeadingNav(_currentEntry, document.getElementById('content'));
+  }
+}
+
+/* ── Pure display function — called by navigateTo / goBack / goForward ── */
+function _renderDoc(entry, jumpTarget) {
+  // Update active state in sidebar
+  document.querySelectorAll('.doc-item').forEach(function(el) {
+    el.classList.toggle('active', el.dataset.path === entry.path);
+  });
+
+  // Update title bar — show framework version + per-doc commit chip (dev mode)
+  var titleEl = document.getElementById('apf-title-text');
+  if (titleEl) {
+    var baseTitle = FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?'
+      ? 'Documentation \u2014 v' + FRAMEWORK_VERSION
+      : 'Documentation';
+    titleEl.textContent = baseTitle;
+    if (entry.commit) {
+      var chip = document.createElement('span');
+      chip.className = 'apf-commit-chip' + (entry.commit_url ? ' clickable' : '');
+      chip.textContent = ' (' + entry.commit + ')';
+      if (entry.commit_url) {
+        chip.onclick = (function(url) {
+          return function() { if (window.pywebview) pywebview.api.open_url(url); };
+        })(entry.commit_url);
+      }
+      titleEl.appendChild(chip);
+    }
+  }
+
+  const contentEl = document.getElementById('content');
+  const html = DOCS_HTML[entry.path];
+
+  if (!html) {
+    contentEl.innerHTML = '<div class="state-msg error">Document not available.</div>';
+    _updateNavButtons();
+    return;
+  }
+
+  contentEl.innerHTML = html;
+  contentEl.scrollTop = 0;
+
+  // Wire link clicks — prevent all navigation out of the SPA
+  contentEl.querySelectorAll('a[href]').forEach(a => {
+    const href = a.getAttribute('href');
+    if (!href) return;
+    if (href.startsWith('http://') || href.startsWith('https://')) {
+      // External: open in system browser via subprocess js_api
+      a.onclick = e => {
+        e.preventDefault();
+        if (window.pywebview) pywebview.api.open_url(href);
+      };
+    } else if (href.startsWith('#')) {
+      // Within-doc anchor — scroll to heading; push as jump
+      a.onclick = (function(h) {
+        return function(e) {
+          e.preventDefault();
+          var el = document.getElementById(h.slice(1));
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          _pushJump(h);
+        };
+      })(href);
+    } else {
+      // Internal doc link — resolve and load from tree
+      a.onclick = (function(h) {
+        return function(e) {
+          e.preventDefault();
+          var curPath = entry.path;
+          var resolved = resolveDocLink(curPath, h);
+          var target = null;
+          for (var i = 0; i < TREE.length; i++) {
+            if (TREE[i].path === resolved) { target = TREE[i]; break; }
+          }
+          if (target) navigateTo(target);
+        };
+      })(href);
+    }
+  });
+
+  // Restore jump target
+  if (jumpTarget) {
+    if (jumpTarget.startsWith('#')) {
+      var el = document.getElementById(jumpTarget.slice(1));
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (jumpTarget.startsWith('search:')) {
+      _highlightInContent(jumpTarget.slice(7));
+    }
+  }
+
+  _updateNavButtons();
+  _updateHeadingNav(entry, contentEl);
+}
+
+/* ── Full-text search ────────────────────────────────────────────────── */
+function _buildSearchResults(query) {
+  var q = query.trim().toLowerCase(), results = [];
+  if (q.length < 2) return results;
+  TREE.forEach(function(entry) {
+    var corpus = (SEARCH_CORPUS[entry.path] || '').toLowerCase();
+    var idx = corpus.indexOf(q);
+    if (idx < 0) return;
+    var raw = SEARCH_CORPUS[entry.path];
+    var s = Math.max(0, idx - 45), e = Math.min(raw.length, idx + q.length + 90);
+    var snip = (s > 0 ? '\u2026' : '') + raw.slice(s, e).trim() + (e < raw.length ? '\u2026' : '');
+    var mi = snip.toLowerCase().indexOf(q);
+    if (mi >= 0)
+      snip = snip.slice(0, mi) + '<em>' + snip.slice(mi, mi + query.trim().length) + '</em>' + snip.slice(mi + query.trim().length);
+    results.push({ entry: entry, snippet: snip });
+  });
+  return results;
+}
+
+function _showSearchResults(results, query) {
+  var treeEl = document.getElementById('tree');
+  treeEl.innerHTML = '';
+  if (!results.length) {
+    var d = document.createElement('div');
+    d.className = 'search-no-results';
+    d.textContent = 'No results for "' + query + '"';
+    treeEl.appendChild(d);
+    return;
+  }
+  results.forEach(function(r) {
+    var item = document.createElement('div');
+    item.className = 'search-result';
+    item.innerHTML = '<div class="sr-title">' + r.entry.display_name + '</div>'
+                   + '<div class="sr-snippet">' + r.snippet + '</div>';
+    item.onclick = function() { navigateTo(r.entry, 'search:' + query); };
+    treeEl.appendChild(item);
+  });
+}
+
+function _highlightInContent(query) {
+  if (!query || query.trim().length < 2) return;
+  var q = query.trim(), ql = q.toLowerCase();
+  var contentEl = document.getElementById('content');
+  var walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, null, false);
+  var nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  var firstMark = null;
+  nodes.forEach(function(node) {
+    var text = node.textContent, idx = text.toLowerCase().indexOf(ql);
+    if (idx < 0) return;
+    var mark = document.createElement('mark');
+    mark.className = 'search-hl';
+    mark.textContent = text.slice(idx, idx + q.length);
+    var frag = document.createDocumentFragment();
+    frag.appendChild(document.createTextNode(text.slice(0, idx)));
+    frag.appendChild(mark);
+    frag.appendChild(document.createTextNode(text.slice(idx + q.length)));
+    node.parentNode.replaceChild(frag, node);
+    if (!firstMark) firstMark = mark;
+  });
+  if (firstMark) {
+    firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(function() {
+      contentEl.querySelectorAll('mark.search-hl').forEach(function(m) { m.classList.add('fading'); });
+    }, 2000);
+  }
+}
+
+/* ── Search / filter ─────────────────────────────────────────────────── */
+function _restoreTree() {
+  renderTree(TREE);
+  if (_currentEntry) {
+    document.querySelectorAll('.doc-item').forEach(function(el) {
+      el.classList.toggle('active', el.dataset.path === _currentEntry.path);
+    });
+    _updateHeadingNav(_currentEntry, document.getElementById('content'));
+  }
+}
+
+function filterTree(query) {
+  var q = query.trim();
+  if (q.length >= 2) {
+    _showSearchResults(_buildSearchResults(q), q);
+  } else {
+    _restoreTree();
+    if (q.length > 0) {
+      var ql = q.toLowerCase();
+      document.querySelectorAll('.doc-item').forEach(function(i) {
+        i.style.display = i.textContent.toLowerCase().includes(ql) ? '' : 'none';
+      });
+      document.querySelectorAll('.section-header').forEach(function(h) {
+        var anyVis = Array.from(document.querySelectorAll('.doc-item[data-section="' + h.dataset.section + '"]'))
+          .some(function(el) { return el.style.display !== 'none'; });
+        h.style.display = anyVis ? '' : 'none';
+      });
+    }
+  }
+}
+
+/* ── Init ────────────────────────────────────────────────────────────── */
+(function() {
+  // Hide mode footer if caller disabled the toggle
+  if (!SHOW_MODE_TOGGLE) {
+    var footer = document.getElementById('mode-footer');
+    if (footer) footer.style.display = 'none';
+  }
+
+  // Set initial title bar text
+  var titleEl = document.getElementById('apf-title-text');
+  if (titleEl && FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?') {
+    titleEl.textContent = 'Documentation \u2014 v' + FRAMEWORK_VERSION;
+  }
+
+  // Apply initial sidebar mode (updates chips; must run before navigateTo so _sidebarMode is correct)
+  setSidebarMode(SIDEBAR_MODE_INIT);
+
+  renderTree(TREE);
+  if (TREE.length > 0) {
+    navigateTo(TREE[0]);
+  }
+})();
+</script>
+</body>
+</html>

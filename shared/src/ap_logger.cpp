@@ -1,5 +1,6 @@
 #include "ap_logger.h"
 #include "ap_config.h"
+#include "apf_version_info.h"
 #include "ap_manager_base.h"
 #include "ap_path_util.h"
 
@@ -105,7 +106,7 @@ void APLogger::init()
 
             std::ostringstream hdr;
             hdr << "================================================================================\n";
-            hdr << "AP Framework v" << cfg->get_version() << " | " << cfg->get_game_name() << "\n";
+            hdr << "AP Framework v" << APF_FRAMEWORK_VERSION << " (build " << APF_BUILD_ID << ") | " << cfg->get_game_name() << "\n";
             hdr << "Started:    " << get_timestamp() << "\n";
             hdr << "AP Server:  " << cfg->get_ap_host() << ":" << cfg->get_ap_port() << " | Password: " << pw_str
                 << "\n";

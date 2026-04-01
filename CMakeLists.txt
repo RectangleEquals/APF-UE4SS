@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(APFramework VERSION 1.0.0 LANGUAGES CXX C)
+project(APFramework VERSION 0.2.7 LANGUAGES CXX C)
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
@@ -134,6 +134,7 @@ FetchContent_Declare(
 # of a .dll, so the post-build copy step produces nothing useful at runtime.
 set(OPENSSL_USE_STATIC_LIBS FALSE)
 find_package(OpenSSL REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 FetchContent_MakeAvailable(zlib asio json websocketpp wswrap apclientpp ryml)
 
@@ -143,9 +144,24 @@ add_subdirectory(third_party/sqlite3)
 # Shared library (must be built before framework and client)
 add_subdirectory(shared)
 
+# ---------------------------------------------------------------------------
+# Version info header (auto-generated from CMakeLists.txt + git hash)
+# ---------------------------------------------------------------------------
+set(_APF_VERSION_HEADER "${CMAKE_SOURCE_DIR}/shared/include/apf_version_info.h")
+add_custom_command(
+    OUTPUT "${_APF_VERSION_HEADER}"
+    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/tools/scripts/gen_version_header.py"
+    DEPENDS "${CMAKE_SOURCE_DIR}/CMakeLists.txt"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Generating apf_version_info.h"
+    VERBATIM
+)
+add_custom_target(apf_version_info ALL DEPENDS "${_APF_VERSION_HEADER}")
+
 # Build targets
 if(AP_BUILD_FRAMEWORK)
     add_subdirectory(APFrameworkCore)
+    add_dependencies(APFrameworkCore apf_version_info)
 endif()
 
 if(AP_BUILD_CLIENTLIB)

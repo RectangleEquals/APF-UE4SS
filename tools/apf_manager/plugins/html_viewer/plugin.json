@@ -1,0 +1,10 @@
+{
+  "id": "apf.builtin.html_viewer",
+  "name": "HTML Viewer",
+  "version": "1.0.0",
+  "description": "Generic service for displaying HTML content in a frameless native window with Kivy dimming overlay.",
+  "mode": "both",
+  "requires": [],
+  "suggests": [],
+  "contributions": []
+}

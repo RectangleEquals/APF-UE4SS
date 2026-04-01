@@ -2,12 +2,14 @@
   "id": "apf.builtin.docs_viewer",
   "name": "Documentation Viewer",
   "version": "1.0.0",
-  "description": "Browse and render Markdown documentation files.",
+  "description": "Browse and render APF documentation from GitHub.",
   "mode": "both",
+  "repo_owner": "RectangleEquals",
+  "repo_name": "APF-UE4SS",
   "requires": [],
   "suggests": [],
   "contributions": [
     {"type": "hub_action", "label": "Docs", "icon": "book-open-variant"},
-    {"type": "dialog", "label": "Documentation Viewer", "icon": "book-open-variant"}
+    {"type": "dialog", "label": "Documentation Viewer", "icon": "book-open-variant", "dialog_id": "docs_viewer"}
   ]
 }
