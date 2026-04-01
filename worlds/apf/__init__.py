@@ -150,7 +150,7 @@ class APFrameworkWorld(World):
 
         cap_data = self.options.capabilities_data.value
         if not cap_data:
-            self.log.warning(
+            self.log.warn(
                 f"[{self.game}] *** STUB MODE — no capabilities_data provided. ***\n"
                 "This world contains placeholder content only and is not suitable for "
                 "real gameplay. Real usage requires capabilities_data in the player YAML."
