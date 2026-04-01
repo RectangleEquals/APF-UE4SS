@@ -53,6 +53,9 @@ Source: "{#BuildDir}\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion 
 ; Data assets (icons, theme) — optional; silently skipped if absent or empty
 Source: "{#BuildDir}\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
+; Tcl/Tk script libraries are in lib/tcl8.6 and lib/tk8.6 (setup.py places them there so
+; tcl86t.dll's compiled-in search path finds them). Covered by the lib\* entry above.
+
 ; WebView2 bootstrapper — optional; only bundled if redist\MicrosoftEdgeWebview2Setup.exe is present.
 ; Download the Evergreen Bootstrapper from Microsoft and place it at redist\ before running ISCC.
 ; See redist\README.txt for instructions.

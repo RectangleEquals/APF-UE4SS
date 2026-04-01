@@ -24,7 +24,7 @@ def main():
     # path still points to the original conda env after installation elsewhere.
     if getattr(sys, 'frozen', False):
         _exe_dir = Path(sys.executable).parent
-        for _env, _subdir in (('TCL_LIBRARY', 'tcl8.6'), ('TK_LIBRARY', 'tk8.6')):
+        for _env, _subdir in (('TCL_LIBRARY', 'lib/tcl8.6'), ('TK_LIBRARY', 'lib/tk8.6')):
             _lib = _exe_dir / _subdir
             if _lib.exists():
                 os.environ.setdefault(_env, str(_lib))

@@ -967,7 +967,12 @@ class DevToolsPanel(PluginPanel):
             if svc is None:
                 self.host.log("[devtools] docs_viewer service not available.")
                 return
-            svc.open(path="docs/public/dev/dev_setup.md")
+            svc.open(
+                initial_path="docs/public/dev/dev_setup.md",
+                force_dev_docs=True,
+                sidebar_mode="tree",
+                show_mode_toggle=False,
+            )
         except Exception as exc:
             self.host.log(f"[devtools] Could not open setup guide: {exc}")
 

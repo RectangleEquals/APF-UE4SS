@@ -246,6 +246,9 @@ const FRAMEWORK_VERSION = "{FRAMEWORK_VERSION}";
 const SIDEBAR_MODE_INIT = "{SIDEBAR_MODE}";
 const SHOW_MODE_TOGGLE = {SHOW_MODE_TOGGLE};
 
+/* ── Initial doc path to navigate to (embedded by Python; empty = first) ── */
+const INITIAL_PATH = "{INITIAL_PATH}";
+
 /* ── Search corpus: plain text of each doc, built once at init ───────── */
 const SEARCH_CORPUS = (function() {
   var c = {}, tmp = document.createElement('div');
@@ -745,9 +748,10 @@ function filterTree(query) {
   setSidebarMode(SIDEBAR_MODE_INIT);
 
   renderTree(TREE);
-  if (TREE.length > 0) {
-    navigateTo(TREE[0]);
-  }
+  var _startEntry = (INITIAL_PATH
+      ? TREE.find(function(e) { return e.path === INITIAL_PATH; })
+      : null) || (TREE.length > 0 ? TREE[0] : null);
+  if (_startEntry) { navigateTo(_startEntry); }
 })();
 </script>
 </body>

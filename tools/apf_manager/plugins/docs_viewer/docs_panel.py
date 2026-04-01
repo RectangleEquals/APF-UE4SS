@@ -162,6 +162,7 @@ class DocsPanel:
             .replace("{FRAMEWORK_VERSION}", fw_version)
             .replace("{SIDEBAR_MODE}", sidebar_mode)
             .replace("{SHOW_MODE_TOGGLE}", "true" if show_mode_toggle else "false")
+            .replace("{INITIAL_PATH}", doc_key)
         )
 
         viewer.show(
@@ -172,13 +173,25 @@ class DocsPanel:
             inject_titlebar=False,
         )
 
-    def open(self, path: str | None = None) -> None:
+    def open(
+        self,
+        path: str | None = None,
+        initial_path: str | None = None,
+        force_dev_docs: bool = False,
+        sidebar_mode: str = "default",
+        show_mode_toggle: bool = True,
+    ) -> None:
         """
         Open documentation.
 
         path=None          → remote SPA browser (fetches tree from GitHub)
         path="docs/..."    → remote single-file view (repo-relative path)
         path="C:\\..."     → local file view (absolute filesystem path)
+
+        initial_path: when opening the SPA, pre-navigate to this repo-relative path.
+        force_dev_docs: when True, include dev docs in the SPA tree even in player mode.
+        sidebar_mode: "default" | "verbose" | "tree"
+        show_mode_toggle: whether the mode chips appear in the sidebar footer
         """
         viewer = self._html_viewer()
         if viewer is None:
@@ -192,7 +205,13 @@ class DocsPanel:
             else:
                 self._open_remote_file(viewer, path)
         else:
-            self._open_spa(viewer)
+            self._open_spa(
+                viewer,
+                initial_path=initial_path,
+                force_dev_docs=force_dev_docs,
+                sidebar_mode=sidebar_mode,
+                show_mode_toggle=show_mode_toggle,
+            )
 
     # -----------------------------------------------------------------------
     # Private — view modes
@@ -233,6 +252,8 @@ class DocsPanel:
         viewer,
         sidebar_mode: str = "default",
         show_mode_toggle: bool = True,
+        initial_path: str | None = None,
+        force_dev_docs: bool = False,
     ) -> None:
         """
         Build and open the SPA docs browser window.
@@ -244,10 +265,16 @@ class DocsPanel:
 
         sidebar_mode: "default" | "verbose" | "tree"
         show_mode_toggle: whether the mode chips appear in the sidebar footer
+        initial_path: repo-relative doc path to navigate to on open (None = first entry)
+        force_dev_docs: include dev docs even if host.dev_mode is False
         """
         from .md_to_html import convert_body
 
-        docs_svc = self._get_docs_svc()
+        if force_dev_docs and not self._host.dev_mode:
+            from .github_docs import GitHubDocsService
+            docs_svc = GitHubDocsService(api=self._get_api(), dev_mode=True)
+        else:
+            docs_svc = self._get_docs_svc()
 
         try:
             tree = docs_svc.get_tree()
@@ -318,6 +345,7 @@ class DocsPanel:
             .replace("{FRAMEWORK_VERSION}", fw_version)
             .replace("{SIDEBAR_MODE}", sidebar_mode)
             .replace("{SHOW_MODE_TOGGLE}", "true" if show_mode_toggle else "false")
+            .replace("{INITIAL_PATH}", initial_path or "")
         )
 
         viewer.show(

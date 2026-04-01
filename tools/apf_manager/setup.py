@@ -224,7 +224,9 @@ _conda_lib = Path(sys.executable).parent / 'Library' / 'lib'
 for _tcl_dir in ('tcl8.6', 'tk8.6'):
     _p = _conda_lib / _tcl_dir
     if _p.exists():
-        INCLUDE_FILES.append((str(_p), _tcl_dir))
+        # Placed in lib/ so tcl86t.dll's compiled-in search path ({dlldir}/lib/tcl8.6) finds them.
+        # The existing inno_setup.iss lib/* recursive entry installs them without extra .iss entries.
+        INCLUDE_FILES.append((str(_p), f'lib/{_tcl_dir}'))
 
 
 build_options = {
