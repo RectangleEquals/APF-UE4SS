@@ -892,7 +892,7 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _open_add_folder_picker(self) -> None:
-        # Fix 32-E: try tkinter first (synchronous native dialog, most reliable)
+        # Tier 1 — native dialog via tkinter (most reliable)
         try:
             import tkinter as tk
             from tkinter import filedialog
@@ -904,24 +904,33 @@ class LibraryScreen(MDBoxLayout):
             if path:
                 Clock.schedule_once(lambda dt: self._on_dir_chosen([path]), 0)
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            self._host.log(f"[library] tkinter folder picker failed: {type(exc).__name__}: {exc}")
+
+        # Tier 2 — plyer native abstraction
         try:
             from plyer import filechooser
             filechooser.choose_dir(
                 title="Select Game Folder",
                 on_selection=self._on_dir_chosen,
             )
-        except Exception:
-            self._open_kivy_folder_picker()
+            return
+        except Exception as exc:
+            self._host.log(f"[library] plyer folder picker failed: {type(exc).__name__}: {exc}")
+
+        # Tier 3 — embedded Kivy FileChooser (last resort)
+        self._host.log("[library] Falling back to Kivy folder picker.")
+        self._open_kivy_folder_picker()
 
     def _open_kivy_folder_picker(self) -> None:
+        from kivy.metrics import dp
         from kivy.uix.filechooser import FileChooserIconView
 
         picker = FileChooserIconView(
             path=str(Path.home()),
-            filters=["*/"],
             dirselect=True,
+            size_hint=(1, None),
+            height=dp(400),
         )
         dialog: list = []
 

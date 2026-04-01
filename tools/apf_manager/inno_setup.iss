@@ -6,7 +6,9 @@
 ;   2. iscc inno_setup.iss          (produces APFManager-Setup.exe)
 
 #define MyAppName "APF Manager"
+#ifndef MyAppVersion
 #define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "AP Framework"
 #define MyAppExeName "APFManager.exe"
 #define MyAppDebugExeName "APFManagerDebug.exe"

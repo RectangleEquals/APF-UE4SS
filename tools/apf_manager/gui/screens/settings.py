@@ -343,8 +343,31 @@ class SettingsScreen(MDScreen):
         self._config.save()
 
     def _install_plugin(self, *_) -> None:
-        # TODO: file picker for .apfplugin — implement with plyer or kivy FileChooser
-        pass
+        from kivymd.uix.dialog import (
+            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+            MDDialogButtonContainer,
+        )
+        dlg_ref = [None]
+
+        def _close(*_):
+            if dlg_ref[0]:
+                dlg_ref[0].dismiss()
+
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Not Yet Implemented"),
+            MDDialogSupportingText(
+                text=(
+                    "Installing plugins from a file (.apfplugin) is planned for a future release.\n\n"
+                    "For now, plugins can be installed manually by placing them in the "
+                    "custom_plugins/ folder inside the APF Manager installation directory."
+                ),
+            ),
+            MDDialogButtonContainer(
+                MDButton(MDButtonText(text="OK"), style="text", on_release=_close),
+            ),
+        )
+        dlg_ref[0] = dlg
+        dlg.open()
 
     def _go_back(self, *_) -> None:
         from kivymd.app import MDApp

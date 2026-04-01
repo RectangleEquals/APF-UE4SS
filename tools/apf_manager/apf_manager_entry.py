@@ -13,9 +13,28 @@ Development entry: python -m tools.apf_manager  (uses __main__.py)
 Frozen entry:      APFManager.exe / APFManagerDebug.exe  (uses this file)
 """
 import multiprocessing
+import os
+import sys
+from pathlib import Path
 
 
 def main():
+    # In frozen builds, point tkinter at the bundled tcl/tk script libraries.
+    # _tkinter looks up TCL_LIBRARY/TK_LIBRARY at Tk() init time; the default
+    # path still points to the original conda env after installation elsewhere.
+    if getattr(sys, 'frozen', False):
+        _exe_dir = Path(sys.executable).parent
+        for _env, _subdir in (('TCL_LIBRARY', 'tcl8.6'), ('TK_LIBRARY', 'tk8.6')):
+            _lib = _exe_dir / _subdir
+            if _lib.exists():
+                os.environ.setdefault(_env, str(_lib))
+
+    # Strip app-specific flags from sys.argv BEFORE any Kivy import.
+    # Kivy parses sys.argv at import time and errors on unrecognised flags.
+    devtools_mode = "--devtools" in sys.argv
+    if devtools_mode:
+        sys.argv.remove("--devtools")
+
     # freeze_support() MUST be called before any Kivy import. The frozen
     # multiprocessing child process runs module-level code first; if Kivy is
     # imported at module level it initializes an SDL2 window before
@@ -23,7 +42,7 @@ def main():
     # child process exits cleanly without ever touching Kivy.
     multiprocessing.freeze_support()
     from apf_manager.gui.app import APFManagerApp
-    APFManagerApp().run()
+    APFManagerApp(devtools_mode=devtools_mode).run()
 
 
 if __name__ == "__main__":
