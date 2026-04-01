@@ -36,6 +36,7 @@ jobs:
         run: |
           cd Archipelago
           pip install -r requirements.txt
+          pip install pytest
         shell: pwsh
 
       - name: Install APF world
