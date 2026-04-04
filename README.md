@@ -5,4 +5,4 @@
 ---
 
 ## Documentation
-Read about the [full architectural specification here](docs/Architecture/ARCHITECTURE.md)
+Read more about it [here](docs/public/README.md)
