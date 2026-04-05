@@ -131,6 +131,8 @@ To add template support for a new game:
    }
    ```
 
+5. **Publish in a registry** so players can install directly via APF Manager — see [publishing.md](publishing.md) for how to structure the `Templates/<GameName>/` directory in a GitHub registry repo.
+
 ---
 
 ## Example: Shared Regions Template

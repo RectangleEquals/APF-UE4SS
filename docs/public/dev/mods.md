@@ -97,6 +97,8 @@ Run the Archipelago generator with `apf.apworld` installed. Your mod's items and
 
 Launch the game. The framework connects to the AP server automatically using settings from `APFramework.json` (configured via the in-game UI widget).
 
+> **Want to publish your mod?** See [publishing.md](publishing.md) for how to create a GitHub registry that players can add directly in APF Manager.
+
 ---
 
 ## mod_id Conventions
@@ -117,6 +119,8 @@ Examples:
 - **Must NOT declare capabilities** — priority clients have no items, locations, or regions. They connect for admin access, UI, or tooling purposes only.
 
 Use the priority prefix only if your mod is an infrastructure mod (tracker, UI, admin tools). Game content mods should use the regular `author.game.modname` format.
+
+> **Publishing:** The `mod_id` format is also used for dependency declarations and conflict detection when installing from a registry. See [publishing.md](publishing.md).
 
 ---
 
