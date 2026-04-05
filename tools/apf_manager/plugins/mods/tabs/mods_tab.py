@@ -12,18 +12,57 @@ Disabled until at least 1 registry is added.
 
 from __future__ import annotations
 
+import re
 import webbrowser
 from typing import Optional, TYPE_CHECKING
+from urllib.parse import urljoin
 
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
-from kivymd.uix.label import MDLabel
+from kivymd.uix.label import MDIcon, MDLabel
 
 if TYPE_CHECKING:
     from ...registry_service import RegistryService, RegistryModEntry
+
+
+# ---------------------------------------------------------------------------
+# Link resolution helper
+# ---------------------------------------------------------------------------
+
+def _resolve_links(html: str, raw_url: str) -> str:
+    """Resolve relative links in rendered HTML to absolute raw GitHub URLs.
+
+    All anchor links are given target="_blank" so they open in the system
+    browser instead of navigating the pywebview window (which would lose the
+    close button and cause a softlock).
+    """
+    def _fix_src(m: "re.Match") -> str:
+        url = m.group(1)
+        if url.startswith(("http", "data:", "#")):
+            return m.group(0)
+        return f'src="{urljoin(raw_url, url)}"'
+
+    def _fix_href(m: "re.Match") -> str:
+        url = m.group(1)
+        if url.startswith("#"):
+            return m.group(0)
+        if not url.startswith("http"):
+            url = urljoin(raw_url, url)
+        return f'href="{url}"'
+
+    html = re.sub(r'src="([^"]*)"', _fix_src, html)
+    html = re.sub(r'href="([^"]*)"', _fix_href, html)
+    # Open all links externally to prevent webview navigation.
+    html = re.sub(
+        r'<a\b([^>]*)>',
+        lambda m: m.group(0) if 'target=' in m.group(1)
+        else f'<a{m.group(1)} target="_blank" rel="noopener">',
+        html,
+    )
+    return html
 
 
 class ModsTab(MDBoxLayout):
@@ -33,21 +72,51 @@ class ModsTab(MDBoxLayout):
         super().__init__(orientation="vertical", **kwargs)
         self._host = host
         self._content: Optional[MDBoxLayout] = None
-        self._banner: Optional[MDLabel] = None
+        self._banner: Optional[MDBoxLayout] = None
+        self._banner_icon: Optional[MDIcon] = None
+        self._banner_lbl: Optional[MDLabel] = None
         self._game_id: str = ""
         self._build_ui()
 
     def _build_ui(self) -> None:
+        # Tab subtitle — static, never cleared
+        self.add_widget(MDLabel(
+            text=(
+                "Browse and stage mods from your registries. "
+                "Click + on a mod to stage it, then review and install from the Queue tab."
+            ),
+            size_hint_y=None,
+            adaptive_height=True,
+            theme_text_color="Secondary",
+            font_style="Body",
+            role="small",
+            padding=[dp(12), dp(4)],
+        ))
+
         # Framework mod status banner
-        self._banner = MDLabel(
-            text="",
+        self._banner = MDBoxLayout(
+            orientation="horizontal",
             size_hint_y=None,
             height=dp(36),
-            halign="center",
-            theme_text_color="Custom",
-            text_color=(0.7, 0.7, 0.7, 1),
+            padding=[dp(12), 0],
+            spacing=dp(8),
             md_bg_color=(0.12, 0.14, 0.16, 1),
         )
+        self._banner_icon = MDIcon(
+            icon="help-circle-outline",
+            size_hint=(None, 1),
+            width=dp(24),
+            theme_text_color="Custom",
+            text_color=(0.7, 0.7, 0.7, 1),
+        )
+        self._banner_lbl = MDLabel(
+            text="",
+            size_hint=(1, 1),
+            theme_text_color="Custom",
+            text_color=(0.7, 0.7, 0.7, 1),
+        )
+        self._banner.add_widget(self._banner_icon)
+        self._banner.add_widget(self._banner_lbl)
         self.add_widget(self._banner)
 
         scroll = ScrollView(size_hint=(1, 1))
@@ -65,13 +134,19 @@ class ModsTab(MDBoxLayout):
         self._content.clear_widgets()
         svc = self._registry_svc()
 
-        if not svc or not svc.get_user_registries():
-            self._banner.text = "Add registries to browse mods."
+        if not svc or not svc.get_user_registries(game_id):
+            self._banner_icon.icon = "information-outline"
+            self._banner_icon.text_color = (0.7, 0.7, 0.7, 1)
+            self._banner_lbl.text = "Add a registry to browse mods."
+            self._banner_lbl.text_color = (0.7, 0.7, 0.7, 1)
             self._content.add_widget(MDLabel(
-                text="Add at least one registry in the Registries tab.",
+                text=(
+                    "No registries added for this game yet.\n"
+                    "Go to the Registries tab and add a GitHub registry URL to get started."
+                ),
                 halign="center",
                 size_hint_y=None,
-                height=dp(60),
+                adaptive_height=True,
                 theme_text_color="Custom",
                 text_color=(0.55, 0.55, 0.55, 1),
             ))
@@ -80,24 +155,33 @@ class ModsTab(MDBoxLayout):
         # Update framework mod banner
         candidates = svc.get_framework_candidates(game_id)
         if not candidates:
-            self._banner.text = "✗ No framework mod found — install blocked"
-            self._banner.text_color = (0.9, 0.3, 0.3, 1)
+            self._banner_icon.icon = "close-circle"
+            self._banner_icon.text_color = (0.9, 0.3, 0.3, 1)
+            self._banner_lbl.text = "No framework mod found — install blocked"
+            self._banner_lbl.text_color = (0.9, 0.3, 0.3, 1)
         elif len(candidates) > 1:
-            self._banner.text = "⚠ Multiple framework mod candidates — confirm selection"
-            self._banner.text_color = (0.9, 0.6, 0.1, 1)
+            self._banner_icon.icon = "alert"
+            self._banner_icon.text_color = (0.9, 0.6, 0.1, 1)
+            self._banner_lbl.text = "Multiple framework mod candidates — confirm selection"
+            self._banner_lbl.text_color = (0.9, 0.6, 0.1, 1)
         else:
             name = candidates[0].entry.name or candidates[0].entry.mod_id
-            self._banner.text = f"✓ Framework mod: {name}"
-            self._banner.text_color = (0.3, 0.8, 0.4, 1)
+            self._banner_icon.icon = "check-circle"
+            self._banner_icon.text_color = (0.3, 0.8, 0.4, 1)
+            self._banner_lbl.text = f"Framework mod: {name}"
+            self._banner_lbl.text_color = (0.3, 0.8, 0.4, 1)
 
         # Render mods grouped by repo
         mods = svc.get_mods(game_id)
         if not mods:
             self._content.add_widget(MDLabel(
-                text="No mods found in registered repositories.",
+                text=(
+                    "No mods found for this game in your registries.\n"
+                    "Try refreshing your registries or adding more registry URLs."
+                ),
                 halign="center",
                 size_hint_y=None,
-                height=dp(60),
+                adaptive_height=True,
                 theme_text_color="Custom",
                 text_color=(0.55, 0.55, 0.55, 1),
             ))
@@ -206,6 +290,7 @@ class ModsTab(MDBoxLayout):
                 try:
                     from ....plugins.docs_viewer.md_to_html import convert
                     html = convert(md_text, title=mod.name or mod.mod_id)
+                    html = _resolve_links(html, docs[0].raw_url)
                     viewer.show(mod.name or mod.mod_id, html)
                     return
                 except Exception:

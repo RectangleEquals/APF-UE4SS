@@ -235,6 +235,19 @@ class RegistryResolver:
                                 mod.ue4ss_info = synth_ue4ss
             mods.extend(sub_mods)
 
+        # Synthetic container for template-only repos (no mods but has Templates/ dirs)
+        if not mods and templates_paths:
+            mods.append(DiscoveredMod(
+                owner=owner,
+                repo=repo,
+                folder="",
+                manifest={},
+                mod_id="",
+                readme_url="",
+                ue4ss_info=None,
+                templates_paths=templates_paths,
+            ))
+
         # Cache successful result
         if mods:
             try:
@@ -400,7 +413,7 @@ class RegistryResolver:
         token = self._load_bundled_token()
         raw_url = (
             f"https://raw.githubusercontent.com/{_BLACKLIST_OWNER}/"
-            f"{_BLACKLIST_REPO}/main/tools/apf_manager/data/blacklist.json"
+            f"{_BLACKLIST_REPO}/master/tools/apf_manager/data/blacklist.json"
         )
         import httpx
         headers = {"User-Agent": "APFManager/1.0"}

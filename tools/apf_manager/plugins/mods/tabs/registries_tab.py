@@ -24,7 +24,8 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText, MDIconButton
 from kivymd.uix.card import MDCard
 from kivymd.uix.divider import MDDivider
-from kivymd.uix.label import MDLabel
+from kivymd.uix.label import MDIcon, MDLabel
+from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 from kivymd.uix.textfield import MDTextField
 
 if TYPE_CHECKING:
@@ -34,14 +35,18 @@ if TYPE_CHECKING:
 class RegistriesTab(MDBoxLayout):
     """Tab 1 — Registries."""
 
-    def __init__(self, host, **kwargs):
+    def __init__(self, host, on_registry_changed=None, **kwargs):
         super().__init__(orientation="vertical", **kwargs)
         self._host = host
+        self._on_registry_changed = on_registry_changed
         self._url_field: Optional[MDTextField] = None
         self._registries_list: Optional[MDBoxLayout] = None
         self._search_results: Optional[MDBoxLayout] = None
         self._ue4ss_card: Optional[MDBoxLayout] = None
+        self._ue4ss_status_icon: Optional[MDIcon] = None
+        self._ue4ss_status_lbl: Optional[MDLabel] = None
         self._add_status: Optional[MDLabel] = None
+        self._share_btn: Optional[MDButton] = None
         self._game_id: str = ""
         self._build_ui()
 
@@ -57,6 +62,20 @@ class RegistriesTab(MDBoxLayout):
             padding=[dp(12), dp(8)],
             spacing=dp(12),
         )
+
+        # Tab purpose description
+        content.add_widget(MDLabel(
+            text=(
+                "Registries are GitHub repositories that contain AP mods for your game. "
+                "Add a registry URL below to browse and install mods, or search GitHub "
+                "to discover community registries and share your list with others."
+            ),
+            size_hint_y=None,
+            adaptive_height=True,
+            theme_text_color="Secondary",
+            font_style="Body",
+            role="small",
+        ))
 
         # UE4SS setup card
         self._ue4ss_card = self._build_ue4ss_card()
@@ -125,12 +144,14 @@ class RegistriesTab(MDBoxLayout):
             style="outlined",
             on_release=lambda *_: self._on_search_github(),
         ))
-        action_row.add_widget(MDButton(
+        self._share_btn = MDButton(
             MDButtonIcon(icon="share-variant"),
             MDButtonText(text="Share"),
             style="outlined",
+            disabled=True,
             on_release=lambda *_: self._on_share(),
-        ))
+        )
+        action_row.add_widget(self._share_btn)
         action_row.add_widget(Widget(size_hint=(1, 1)))
         content.add_widget(action_row)
 
@@ -162,12 +183,28 @@ class RegistriesTab(MDBoxLayout):
             theme_text_color="Custom",
             text_color=(0.7, 0.7, 0.7, 1),
         ))
-        self._ue4ss_status_lbl = MDLabel(
-            text="Checking…",
+        status_row = MDBoxLayout(
+            orientation="horizontal",
             size_hint_y=None,
             height=dp(24),
+            spacing=dp(6),
         )
-        card.add_widget(self._ue4ss_status_lbl)
+        self._ue4ss_status_icon = MDIcon(
+            icon="loading",
+            size_hint=(None, 1),
+            width=dp(20),
+            theme_text_color="Custom",
+            text_color=(0.7, 0.7, 0.7, 1),
+        )
+        self._ue4ss_status_lbl = MDLabel(
+            text="Checking…",
+            size_hint=(1, 1),
+            theme_text_color="Custom",
+            text_color=(0.7, 0.7, 0.7, 1),
+        )
+        status_row.add_widget(self._ue4ss_status_icon)
+        status_row.add_widget(self._ue4ss_status_lbl)
+        card.add_widget(status_row)
         return card
 
     # -----------------------------------------------------------------------
@@ -181,12 +218,14 @@ class RegistriesTab(MDBoxLayout):
 
     def _refresh_ue4ss_card(self, ue4ss_detected: bool) -> None:
         if ue4ss_detected:
-            self._ue4ss_status_lbl.text = "✓ UE4SS detected"
-            self._ue4ss_status_lbl.theme_text_color = "Custom"
+            self._ue4ss_status_icon.icon = "check-circle"
+            self._ue4ss_status_icon.text_color = (0.3, 0.8, 0.4, 1)
+            self._ue4ss_status_lbl.text = "UE4SS detected"
             self._ue4ss_status_lbl.text_color = (0.3, 0.8, 0.4, 1)
         else:
-            self._ue4ss_status_lbl.text = "⚠ UE4SS not detected"
-            self._ue4ss_status_lbl.theme_text_color = "Custom"
+            self._ue4ss_status_icon.icon = "alert"
+            self._ue4ss_status_icon.text_color = (0.9, 0.6, 0.1, 1)
+            self._ue4ss_status_lbl.text = "UE4SS not detected"
             self._ue4ss_status_lbl.text_color = (0.9, 0.6, 0.1, 1)
 
     def _refresh_registries(self) -> None:
@@ -200,12 +239,18 @@ class RegistriesTab(MDBoxLayout):
             ))
             return
 
-        entries = svc.get_user_registries()
+        entries = svc.get_user_registries(self._game_id)
+        if self._share_btn:
+            self._share_btn.disabled = not bool(entries)
         if not entries:
             self._registries_list.add_widget(MDLabel(
-                text="No registries added yet.",
+                text=(
+                    "No registries added for this game yet.\n"
+                    "Paste a GitHub repository URL in the field below, "
+                    "or click Search GitHub to discover community registries."
+                ),
                 size_hint_y=None,
-                height=dp(32),
+                adaptive_height=True,
                 theme_text_color="Custom",
                 text_color=(0.55, 0.55, 0.55, 1),
             ))
@@ -259,6 +304,12 @@ class RegistriesTab(MDBoxLayout):
             self._show_import_dialog(urls)
             return
 
+        # Duplicate check — avoid full traversal for already-added URLs
+        existing = svc.get_user_registries()  # unfiltered for dup check
+        if any(e.url.rstrip("/") == url.rstrip("/") for e in existing):
+            self._set_add_status("Already in list.", (0.9, 0.6, 0.1, 1))
+            return
+
         self._set_add_status("Adding…", (0.7, 0.7, 0.7, 1))
         svc.add_registry(url, on_done=self._on_add_done)
 
@@ -268,6 +319,8 @@ class RegistriesTab(MDBoxLayout):
         if success:
             self._url_field.text = ""
             self._refresh_registries()
+            if self._on_registry_changed:
+                self._on_registry_changed()
 
     def _set_add_status(self, text: str, color) -> None:
         if self._add_status:
@@ -279,11 +332,24 @@ class RegistriesTab(MDBoxLayout):
         if svc:
             svc.remove_registry(entry.url)
         self._refresh_registries()
+        self._show_snackbar("Registry removed.")
+        if self._on_registry_changed:
+            self._on_registry_changed()
 
     def _on_refresh_one(self, entry) -> None:
         svc = self._registry_svc()
-        if svc:
-            svc.refresh_all(on_done=self._refresh_registries)
+        if not svc:
+            return
+        self._set_add_status("Refreshing…", (0.7, 0.7, 0.7, 1))
+
+        def _on_refresh_done():
+            self._set_add_status("", (0.7, 0.7, 0.7, 1))
+            self._refresh_registries()
+            self._show_snackbar("Registries refreshed.")
+            if self._on_registry_changed:
+                self._on_registry_changed()
+
+        svc.refresh_all(on_done=_on_refresh_done)
 
     def _on_report(self, url: str) -> None:
         issue_url = (
@@ -351,7 +417,7 @@ class RegistriesTab(MDBoxLayout):
             return
         encoded = svc.export_registries_b64()
         Clipboard.copy(encoded)
-        self._set_add_status("Registry list copied to clipboard.", (0.3, 0.8, 0.4, 1))
+        self._show_snackbar("Registry list copied to clipboard.")
 
     def _show_import_dialog(self, urls: list[str]) -> None:
         if not urls:
@@ -369,10 +435,23 @@ class RegistriesTab(MDBoxLayout):
 
         def _add_all(*_):
             dlg.dismiss()
-            for url in urls:
-                svc.add_registry(url, on_done=lambda s, m: None)
-            self._refresh_registries()
             self._url_field.text = ""
+            remaining = [len(urls)]
+
+            def _one_done(success, msg):
+                remaining[0] -= 1
+                if remaining[0] == 0:
+                    def _ui(*_):
+                        self._refresh_registries()
+                        added = len(urls)
+                        word = "registry" if added == 1 else "registries"
+                        self._show_snackbar(f"Added {added} {word}.")
+                        if self._on_registry_changed:
+                            self._on_registry_changed()
+                    Clock.schedule_once(_ui, 0)
+
+            for url in urls:
+                svc.add_registry(url, on_done=_one_done)
 
         def _dismiss(*_):
             dlg.dismiss()
@@ -398,3 +477,6 @@ class RegistriesTab(MDBoxLayout):
         if self._host.has_service("registry"):
             return self._host.get_service("registry")
         return None
+
+    def _show_snackbar(self, text: str) -> None:
+        MDSnackbar(MDSnackbarText(text=text)).open()

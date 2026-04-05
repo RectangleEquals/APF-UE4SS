@@ -35,6 +35,21 @@ class TemplatesTab(MDBoxLayout):
         self._build_ui()
 
     def _build_ui(self) -> None:
+        # Tab subtitle — always visible, not cleared on refresh
+        self.add_widget(MDLabel(
+            text=(
+                "Templates are shared region definitions, item/location vocabulary, "
+                "and logic fragments provided by your registries. "
+                "They are fetched automatically — no manual setup required."
+            ),
+            size_hint_y=None,
+            adaptive_height=True,
+            theme_text_color="Secondary",
+            font_style="Body",
+            role="small",
+            padding=[dp(12), dp(4)],
+        ))
+
         scroll = ScrollView(size_hint=(1, 1))
         self._content = MDBoxLayout(
             orientation="vertical",
@@ -51,12 +66,12 @@ class TemplatesTab(MDBoxLayout):
         if not svc:
             return
 
-        if not svc.get_user_registries():
+        if not svc.get_user_registries(game_id):
             self._content.add_widget(MDLabel(
-                text="Add at least one registry to see template data.",
+                text="Add a registry in the Registries tab to see templates for this game.",
                 halign="center",
                 size_hint_y=None,
-                height=dp(60),
+                adaptive_height=True,
                 theme_text_color="Custom",
                 text_color=(0.55, 0.55, 0.55, 1),
             ))
@@ -65,10 +80,10 @@ class TemplatesTab(MDBoxLayout):
         templates = svc.get_templates(game_id)
         if not templates:
             self._content.add_widget(MDLabel(
-                text="No templates found in registered repositories.",
+                text="No templates found for this game in your registries.",
                 halign="center",
                 size_hint_y=None,
-                height=dp(60),
+                adaptive_height=True,
                 theme_text_color="Custom",
                 text_color=(0.55, 0.55, 0.55, 1),
             ))

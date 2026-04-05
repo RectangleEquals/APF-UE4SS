@@ -97,6 +97,20 @@ class DeployTab(MDBoxLayout):
         ))
         self.add_widget(toolbar)
 
+        # Tab subtitle
+        self.add_widget(MDLabel(
+            text=(
+                "Deploy copies your installed mods to the game directory and updates mods.txt. "
+                "Use Deploy All to sync everything at once, or toggle individual mods on/off."
+            ),
+            size_hint_y=None,
+            adaptive_height=True,
+            theme_text_color="Secondary",
+            font_style="Body",
+            role="small",
+            padding=[dp(12), dp(4)],
+        ))
+
         # Scrollable mod list
         self._scroll = ScrollView(size_hint=(1, 1))
         self._list_layout = MDBoxLayout(
@@ -125,6 +139,16 @@ class DeployTab(MDBoxLayout):
         self._list_layout.clear_widgets()
         self._rows = []
 
+        if not (self._detection and self._detection.valid):
+            self._list_layout.add_widget(MDLabel(
+                text="UE4SS is required to manage deployed mods.\nInstall UE4SS in the Registries tab first.",
+                halign="center",
+                size_hint=(1, None),
+                height=dp(80),
+                theme_text_color="Secondary",
+            ))
+            return
+
         mods_svc = self._host.get_service("mods")
         mods = mods_svc.scan() if mods_svc else []
         mods = [m for m in mods if m.folder_name not in _DEP_EXCL]
@@ -133,7 +157,10 @@ class DeployTab(MDBoxLayout):
 
         if not mods:
             self._list_layout.add_widget(MDLabel(
-                text="No mods found.",
+                text=(
+                    "No mods found in the game directory.\n"
+                    "Install mods from the Queue tab, then deploy them here."
+                ),
                 halign="center",
                 size_hint=(1, None),
                 height=dp(60),

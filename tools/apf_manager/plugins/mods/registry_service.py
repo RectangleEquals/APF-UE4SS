@@ -138,16 +138,21 @@ class RegistryService:
     # Registry management
     # -----------------------------------------------------------------------
 
-    def get_user_registries(self) -> list[RegistryEntry]:
-        """Return RegistryEntry objects for all user-added registry URLs."""
+    def get_user_registries(self, game_id: str = "") -> list[RegistryEntry]:
+        """Return RegistryEntry objects for user-added registry URLs.
+
+        If game_id is given, returns only registries associated with that game
+        (plus any older entries that have no game_id stored).
+        """
         from .registry_resolver import parse_github_url
         entries = []
-        for r in self._host.config.get_user_registries():
+        for r in self._host.config.get_user_registries(game_id):
             parsed = parse_github_url(r["url"])
             if not parsed:
                 continue
             owner, repo = parsed
-            entry = RegistryEntry(url=r["url"], owner=owner, repo=repo)
+            entry = RegistryEntry(url=r["url"], owner=owner, repo=repo,
+                                  game_id=r.get("game_id", ""))
             added_at = r.get("added_at")
             if added_at:
                 try:
@@ -182,16 +187,25 @@ class RegistryService:
                 _ui(lambda: on_done(False, f"Traversal failed: {exc}"))
                 return
 
-            if not mods:
+            if not any(m.mod_id for m in mods):
                 _ui(lambda: on_done(
                     False,
                     "No AP mods found in this repository — is this a valid APF registry?"
                 ))
                 return
 
-            self._host.config.add_user_registry(url)
+            real_count = sum(1 for m in mods if m.mod_id)
+            # Derive game_id from the 2nd component of the first real mod's mod_id.
+            derived_game_id = ""
+            for m in mods:
+                if m.mod_id:
+                    parts = m.mod_id.split(".")
+                    if len(parts) >= 2:
+                        derived_game_id = parts[1].lower()
+                    break
+            self._host.config.add_user_registry(url, game_id=derived_game_id)
             self._invalidate_mods_cache()
-            _ui(lambda: on_done(True, f"Registry added — {len(mods)} mod(s) found."))
+            _ui(lambda: on_done(True, f"Registry added — {real_count} mod(s) found."))
 
         threading.Thread(target=_bg, daemon=True).start()
 
@@ -263,6 +277,9 @@ class RegistryService:
                 continue
 
             for mod in discovered:
+                # Skip synthetic container entries (template-only repos)
+                if not mod.mod_id:
+                    continue
                 # Filter by game_id (2nd component of mod_id, e.g. "palworld")
                 parts = mod.mod_id.split(".")
                 if game_id and len(parts) >= 2 and parts[1].lower() != game_id.lower():

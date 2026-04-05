@@ -75,6 +75,7 @@ Each mod that calls `require("APClientLib")` gets its own independent context �
 | [world.md](world.md) | **The apworld** — how `apf.apworld` generates multiworlds from capabilities data, logic modes, option pruning, ID assignment, multi-mod composition. |
 | [tracker.md](tracker.md) | **Tracker engine** — subscribing to real-time tracker data, full snapshot and update schemas, the `ScoredNode` AST tree structure, display region derivation. |
 | [templates.md](templates.md) | **Template system** — reusable JSON fragments via the `include` field, vocabulary validation, directory structure, how to add templates for a new game. |
+| [publishing.md](publishing.md) | **Publishing a registry** — how to structure a GitHub registry repo, `mod_id` and folder conventions, `ue4ss.json` reference, GitHub topic tags for discovery, versioning, CI testing, and release checklist. |
 
 ---
 

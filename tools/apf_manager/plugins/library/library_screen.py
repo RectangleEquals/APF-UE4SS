@@ -40,6 +40,7 @@ from kivymd.uix.dialog import (
     MDDialogContentContainer, MDDialogButtonContainer,
 )
 from kivymd.uix.label import MDIcon, MDLabel
+from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 from kivymd.uix.textfield import MDTextField
 
 if TYPE_CHECKING:
@@ -585,7 +586,6 @@ class LibraryScreen(MDBoxLayout):
         super().__init__(orientation="vertical", **kwargs)
         self._host = host
         self._config = config
-        self._ue4ss_dialog: Optional[MDDialog] = None
         self._search_visible: bool = False
         self._search_text: str = ""
         self._steam_games: list = []
@@ -807,57 +807,16 @@ class LibraryScreen(MDBoxLayout):
     def _on_tile_selected(self, profile: "GameProfile") -> None:
         from ...core.ue4ss import UE4SSDetector
         detection = UE4SSDetector.detect(profile.game_root)
-        if detection.valid:
+        if detection.valid or detection.content_paks_dir:
+            # Navigate even when UE4SS is absent — Tab 1 of Mods panel handles setup.
             if profile.game_id not in self._config.games:
                 self._config.add_game(profile)
             self._host.navigate_to_game(profile)
         else:
-            self._show_ue4ss_dialog(profile, detection)
-
-    # -----------------------------------------------------------------------
-    # UE4SS missing dialog
-    # -----------------------------------------------------------------------
-
-    def _show_ue4ss_dialog(self, profile: "GameProfile", detection) -> None:
-        detail = ("Missing: " + ", ".join(detection.missing)
-                  if detection.missing
-                  else "Could not locate UE4SS in the game folder.")
-
-        def _dismiss(*_):
-            if self._ue4ss_dialog:
-                self._ue4ss_dialog.dismiss()
-
-        def _download(*_):
-            webbrowser.open("https://github.com/UE4SS-RE/RE-UE4SS/releases")
-            _dismiss()
-
-        def _remove(*_):
-            _dismiss()
-            self._confirm_remove_game(profile)
-
-        in_config = profile.game_id in self._config.games
-
-        btn_widgets = [Widget()]
-        btn_widgets.append(MDButton(MDButtonText(text="Cancel"), style="text", on_release=_dismiss))
-        if in_config:
-            btn_widgets.append(MDButton(MDButtonText(text="Remove from Library"),
-                                        style="text", on_release=_remove))
-        btn_widgets.append(MDButton(MDButtonText(text="Download UE4SS"),
-                                    style="filled", on_release=_download))
-
-        self._ue4ss_dialog = MDDialog(
-            MDDialogHeadlineText(text="UE4SS Not Detected"),
-            MDDialogSupportingText(text=(
-                f"UE4SS was not found for {profile.display_name}.\n\n"
-                f"{detail}\n\n"
-                "Follow the official UE4SS installation guide for your game. "
-                "Note: some games require a specific UE4SS version or fork — "
-                "check Nexus Mods, CurseForge, or Thunderstore. "
-                "AP Framework for UE4SS requires v3.0.1 or newer."
-            )),
-            MDDialogButtonContainer(*btn_widgets),
-        )
-        self._ue4ss_dialog.open()
+            # Not a recognised UE game root at all.
+            MDSnackbar(MDSnackbarText(
+                text="Not a UE game folder — check the game root path."
+            )).open()
 
     def _confirm_remove_game(self, profile: "GameProfile") -> None:
         dialog: list = []

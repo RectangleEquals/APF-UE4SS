@@ -232,19 +232,29 @@ class APFConfig:
     # Registry management
     # -----------------------------------------------------------------------
 
-    def get_user_registries(self) -> list[dict]:
-        """Return list of user-added registry entries [{url, added_at}]."""
-        return list(self._settings.user_registries)
+    def get_user_registries(self, game_id: str = "") -> list[dict]:
+        """Return user-added registry entries, optionally filtered by game_id.
 
-    def add_user_registry(self, url: str) -> None:
+        Entries without a stored game_id (added before this field existed) are
+        always included so older data is not silently dropped.
+        """
+        entries = list(self._settings.user_registries)
+        if not game_id:
+            return entries
+        return [r for r in entries if not r.get("game_id") or r["game_id"] == game_id]
+
+    def add_user_registry(self, url: str, game_id: str = "") -> None:
         """Add a registry URL if not already present, then save."""
         from datetime import datetime, timezone
         existing_urls = {r["url"] for r in self._settings.user_registries}
         if url not in existing_urls:
-            self._settings.user_registries.append({
+            entry: dict = {
                 "url": url,
                 "added_at": datetime.now(timezone.utc).isoformat(),
-            })
+            }
+            if game_id:
+                entry["game_id"] = game_id
+            self._settings.user_registries.append(entry)
             self.save()
 
     def remove_user_registry(self, url: str) -> None:

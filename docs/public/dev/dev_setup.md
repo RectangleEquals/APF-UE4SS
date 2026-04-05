@@ -224,6 +224,8 @@ Tagging via the Developer Tools plugin keeps CI and release artifacts synchroniz
 
 **Read-only contributors** (clone, build, open PRs): you do not manage versions. The repo owner and write-tier collaborators handle version bumps and tagging.
 
+> **Publishing mods to a registry:** See [publishing.md](publishing.md) for how to version your mod's `manifest.json` and create a GitHub registry that players can install from.
+
 ---
 
 ## Troubleshooting

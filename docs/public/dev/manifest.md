@@ -743,4 +743,4 @@ The following manifest exercises every feature: options, goals, regions, locatio
 
 ---
 
-*See also: [logic.md](logic.md) for the full logic expression reference | [templates.md](templates.md) for the `include` field and vocabulary validation | [mods.md](mods.md) for how Lua registers item action handlers*
+*See also: [logic.md](logic.md) for the full logic expression reference | [templates.md](templates.md) for the `include` field and vocabulary validation | [mods.md](mods.md) for how Lua registers item action handlers | [publishing.md](publishing.md) for versioning and registry publishing*

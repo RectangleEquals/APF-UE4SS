@@ -43,8 +43,8 @@ _ROW_BG_DISABLED = (0.10, 0.10, 0.10, 1)
 _ROW_BG_NONAP    = (0.11, 0.11, 0.11, 1)
 _ROW_BG_KEYBINDS = (0.08, 0.08, 0.08, 1)
 
-_COL_REORDER = dp(64)
-_COL_STATUS  = dp(56)
+_COL_REORDER = dp(100)
+_COL_STATUS  = dp(72)
 _COL_STEPS   = dp(80)
 _COL_VERSION = dp(72)
 _COL_TOGGLE  = dp(52)
@@ -299,6 +299,21 @@ class LoadOrderTab(MDBoxLayout):
         ))
         self.add_widget(toolbar)
 
+        # Tab subtitle
+        self.add_widget(MDLabel(
+            text=(
+                "Adjust the load order of your mods. The AP framework mod must stay above all "
+                "other AP mods — use the arrow buttons to reorder. Non-AP mods (greyed out) "
+                "can be placed anywhere. Keybinds is always pinned at the bottom."
+            ),
+            size_hint_y=None,
+            adaptive_height=True,
+            theme_text_color="Secondary",
+            font_style="Body",
+            role="small",
+            padding=[dp(12), dp(4)],
+        ))
+
         # Sticky header
         self._header_row = _HeaderRow()
         self._header_row.opacity = 0
@@ -331,6 +346,17 @@ class LoadOrderTab(MDBoxLayout):
         self._list_layout.clear_widgets()
         self._rows = []
 
+        if not (self._detection and self._detection.valid):
+            self._header_row.opacity = 0
+            self._list_layout.add_widget(MDLabel(
+                text="UE4SS is required to manage load order.\nInstall UE4SS in the Registries tab first.",
+                halign="center",
+                size_hint=(1, None),
+                height=dp(80),
+                theme_text_color="Secondary",
+            ))
+            return
+
         mods_svc = self._host.get_service("mods")
         all_mods = mods_svc.scan() if mods_svc else []
         all_mods = [m for m in all_mods if m.folder_name not in _SCAN_EXCLUDE]
@@ -338,18 +364,24 @@ class LoadOrderTab(MDBoxLayout):
         if self._mods_txt:
             order = self._mods_txt.get_order()
             order_idx = {name: i for i, name in enumerate(order)}
-            visible = [m for m in all_mods if m.is_ap_mod or self._show_all]
+            visible = [m for m in all_mods if (m.is_ap_mod or self._show_all)
+                       and m.folder_name.lower() != "keybinds"]
             visible.sort(key=lambda m: order_idx.get(m.folder_name, len(order)))
         else:
-            visible = [m for m in all_mods if m.is_ap_mod or self._show_all]
+            visible = [m for m in all_mods if (m.is_ap_mod or self._show_all)
+                       and m.folder_name.lower() != "keybinds"]
 
         if not visible and not (self._mods_txt and self._mods_txt.has_footer):
             self._header_row.opacity = 0
             self._list_layout.add_widget(MDLabel(
-                text="No mods found.",
+                text=(
+                    "No mods found in the game directory.\n"
+                    "Install mods from the Queue tab, then deploy them to manage load order here."
+                ),
                 halign="center",
                 size_hint=(1, None),
-                height=dp(60),
+                adaptive_height=True,
+                height=dp(80),
             ))
             return
 

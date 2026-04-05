@@ -41,6 +41,20 @@ class QueueTab(MDBoxLayout):
         self._build_ui()
 
     def _build_ui(self) -> None:
+        # Tab subtitle — static, never cleared
+        self.add_widget(MDLabel(
+            text=(
+                "Review staged mods and their dependencies before installing. "
+                "Resolve any conflicts shown below, then click Install All."
+            ),
+            size_hint_y=None,
+            adaptive_height=True,
+            theme_text_color="Secondary",
+            font_style="Body",
+            role="small",
+            padding=[dp(12), dp(4)],
+        ))
+
         scroll = ScrollView(size_hint=(1, 1))
         self._content = MDBoxLayout(
             orientation="vertical",
@@ -89,15 +103,20 @@ class QueueTab(MDBoxLayout):
         staged = svc.get_staged()
         if not staged:
             self._content.add_widget(MDLabel(
-                text="No mods staged. Go to the Mods tab to stage mods for install.",
+                text=(
+                    "No mods staged for installation.\n"
+                    "Go to the Mods tab and click + on a mod to stage it here."
+                ),
                 halign="center",
                 size_hint_y=None,
-                height=dp(60),
+                adaptive_height=True,
                 theme_text_color="Custom",
                 text_color=(0.55, 0.55, 0.55, 1),
             ))
             if self._install_btn:
-                self._install_btn.disabled = True
+                self._install_btn.opacity = 0
+                self._install_btn.size_hint = (None, None)
+                self._install_btn.size = (0, 0)
             return
 
         # Staged mods list
@@ -154,7 +173,14 @@ class QueueTab(MDBoxLayout):
                 ))
 
         if self._install_btn:
-            self._install_btn.disabled = bool(blocking)
+            if blocking:
+                self._install_btn.opacity = 0
+                self._install_btn.size_hint = (None, None)
+                self._install_btn.size = (0, 0)
+            else:
+                self._install_btn.opacity = 1
+                self._install_btn.size_hint = (None, None)
+                self._install_btn.size = (dp(120), dp(40))
         if self._status_lbl:
             self._status_lbl.text = f"{len(staged)} mod(s) ready" if not blocking else "Resolve errors before installing"
 
@@ -165,7 +191,9 @@ class QueueTab(MDBoxLayout):
         if self._status_lbl:
             self._status_lbl.text = "Installing…"
         if self._install_btn:
-            self._install_btn.disabled = True
+            self._install_btn.opacity = 0
+            self._install_btn.size_hint = (None, None)
+            self._install_btn.size = (0, 0)
 
         def _progress(msg: str):
             if self._status_lbl:
