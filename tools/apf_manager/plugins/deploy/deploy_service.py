@@ -26,8 +26,8 @@ from typing import Optional, TYPE_CHECKING
 _DEPLOYMENTS_DIR = Path.home() / ".apf_manager" / "deployments"
 
 
-def _manifest_path(game_id: str, folder_name: str) -> Path:
-    key = "framework" if folder_name == "APFrameworkMod" else folder_name
+def _manifest_path(game_id: str, folder_name: str, mod_id: str = "") -> Path:
+    key = "framework" if mod_id.endswith(".framework") else folder_name
     return _DEPLOYMENTS_DIR / f"{game_id}_{key}.json"
 
 if TYPE_CHECKING:
@@ -87,8 +87,46 @@ class DeployService:
     def reorder(self, order: list[str]) -> None:
         with self._lock:
             if self._mods_txt:
-                self._mods_txt.reorder(order)
+                enforced = self._enforce_framework_order(order)
+                self._mods_txt.reorder(enforced)
                 self._mods_txt.save()
+
+    def _get_framework_folder(self) -> Optional[str]:
+        """Find the framework mod folder name via ModService (mod_id ends with .framework)."""
+        mods_svc = self._host.get_service("mods")
+        if not mods_svc:
+            return None
+        for mod in mods_svc.get_ap_mods():
+            if mod.mod_id and mod.mod_id.endswith(".framework"):
+                return mod.folder_name
+        return None
+
+    def _enforce_framework_order(self, order: list[str]) -> list[str]:
+        """
+        Ensure the framework mod precedes all other AP mods in the order list.
+        This is a safety net; the UI cascade logic should maintain the invariant.
+        """
+        fw_folder = self._get_framework_folder()
+        if not fw_folder or fw_folder not in order:
+            return order
+
+        mods_svc = self._host.get_service("mods")
+        if not mods_svc:
+            return order
+
+        ap_folders = {mod.folder_name for mod in mods_svc.get_ap_mods()}
+        result = list(order)
+        fw_idx = result.index(fw_folder)
+
+        # Find the first non-framework AP mod that appears before the framework mod
+        for i in range(fw_idx):
+            if result[i] in ap_folders and result[i] != fw_folder:
+                # Move framework mod to just before that AP mod
+                result.pop(fw_idx)
+                result.insert(i, fw_folder)
+                break
+
+        return result
 
     def deploy_all(self, log_fn=None) -> None:
         """Run install steps for all AP mods. Blocking — call from a thread."""
@@ -110,7 +148,7 @@ class DeployService:
             for mod in mods:
                 if mod.is_ap_mod and mod.install_steps:
                     log(f"Deploying {mod.display_name}…")
-                    mpath = _manifest_path(game_id, mod.folder_name)
+                    mpath = _manifest_path(game_id, mod.folder_name, mod.mod_id)
                     engine.run_steps(mod.install_steps, mod, manifest_path=mpath)
             self._mods_txt.save()
 

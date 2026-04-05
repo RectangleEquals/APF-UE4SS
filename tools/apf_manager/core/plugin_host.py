@@ -27,7 +27,7 @@ _APF_PKG_ROOT = Path(__file__).parent.parent
 _APF_PKG_NAME = __name__.split(".")[0]  # e.g. "apf_manager"
 
 if TYPE_CHECKING:
-    from .config import GameProfile
+    from .config import APFConfig, GameProfile
     from .ue4ss import UE4SSResult
 
 
@@ -73,6 +73,7 @@ class PluginHost:
         self._services: dict[str, Any] = {}
         self._game_context: Optional["GameProfile"] = None
         self._detection: Optional["UE4SSResult"] = None
+        self._config: Optional["APFConfig"] = None
         self._log_fn: Optional[Callable[[str], None]] = None
         self._navigate_fn: Optional[Callable[["GameProfile"], None]] = None
         self._dialog_fn: Optional[Callable[[str, dict], None]] = None
@@ -343,6 +344,13 @@ class PluginHost:
 
     def get_detection(self) -> Optional["UE4SSResult"]:
         return self._detection
+
+    def set_config(self, config: "APFConfig") -> None:
+        self._config = config
+
+    @property
+    def config(self) -> Optional["APFConfig"]:
+        return self._config
 
     def set_game_context(self, profile: Optional["GameProfile"], detection: Optional["UE4SSResult"] = None) -> None:
         self._game_context = profile

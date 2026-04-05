@@ -4,6 +4,11 @@ on:
   push:
     branches: [aptests]
   workflow_dispatch:
+    inputs:
+      gist_url:
+        description: "GitHub Gist URL with {capabilities, options_yaml} JSON (overrides APF_TEST_REGISTRY_URLS)"
+        required: false
+        default: ""
 
 jobs:
   test:
@@ -50,9 +55,56 @@ jobs:
           pytest worlds/apf/test/test_manifest.py -v
         shell: pwsh
 
-      # Step 2: Generate test fixtures from external mod registries (optional)
+      # Step 2a: Download capabilities + options from Gist (DevTools CI flow)
+      # When gist_url is provided it takes priority; registry fetch is skipped.
+      - name: Load fixtures from Gist
+        if: inputs.gist_url != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $fixtures = "$env:RUNNER_TEMP\apf_fixtures"
+          New-Item -ItemType Directory -Force $fixtures | Out-Null
+
+          # Resolve raw content URL from the Gist page URL
+          # Accepted forms:
+          #   https://gist.github.com/{user}/{id}
+          #   https://api.github.com/gists/{id}
+          $gistUrl = "${{ inputs.gist_url }}"
+          if ($gistUrl -match "gist\.github\.com/[^/]+/([0-9a-f]+)") {
+            $gistId = $Matches[1]
+          } elseif ($gistUrl -match "gists/([0-9a-f]+)") {
+            $gistId = $Matches[1]
+          } else {
+            Write-Error "Cannot parse Gist ID from: $gistUrl"
+            exit 1
+          }
+
+          $gistMeta = gh api "gists/$gistId" | ConvertFrom-Json
+          # The Gist must contain exactly one file whose content is JSON
+          $file = $gistMeta.files.PSObject.Properties | Select-Object -First 1 -ExpandProperty Value
+          $payload = Invoke-WebRequest $file.raw_url | ConvertFrom-Json
+
+          if (-not $payload.capabilities) {
+            Write-Error "Gist JSON missing 'capabilities' field"
+            exit 1
+          }
+
+          # Write capabilities fixture
+          $payload.capabilities | ConvertTo-Json -Depth 20 | Out-File "$fixtures\capabilities.json" -Encoding utf8
+
+          # Write options_yaml fixture (may be absent)
+          if ($payload.options_yaml) {
+            $payload.options_yaml | Out-File "$fixtures\options.yaml" -Encoding utf8
+          }
+
+          echo "APF_TEST_FIXTURES_DIR=$fixtures" >> $env:GITHUB_ENV
+          Write-Host "Loaded fixtures from Gist $gistId"
+
+      # Step 2b: Generate test fixtures from external mod registries (optional)
+      # Skipped when gist_url is provided (Step 2a already set up fixtures).
       - name: Generate test fixtures from registries
-        if: vars.APF_TEST_REGISTRY_URLS != ''
+        if: vars.APF_TEST_REGISTRY_URLS != '' && inputs.gist_url == ''
         shell: pwsh
         env:
           APF_TEST_REGISTRY_URLS: ${{ vars.APF_TEST_REGISTRY_URLS }}

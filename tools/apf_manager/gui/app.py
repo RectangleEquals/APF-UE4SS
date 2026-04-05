@@ -66,6 +66,7 @@ class APFManagerApp(MDApp):
         )
         self._config = APFConfig()
         self._host = PluginHost()
+        self._host.set_config(self._config)
         self._sm: Optional[ScreenManager] = None
         self._game_hub: Optional[GameHubScreen] = None
         self._settings_screen: Optional[SettingsScreen] = None

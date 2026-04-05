@@ -6,7 +6,5 @@
   "mode": "both",
   "requires": ["apf.builtin.mods"],
   "suggests": [],
-  "contributions": [
-    {"type": "hub_panel", "label": "Mods", "icon": "package-variant", "priority": 10}
-  ]
+  "contributions": []
 }

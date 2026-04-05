@@ -6,5 +6,7 @@
   "mode": "both",
   "requires": [],
   "suggests": [],
-  "contributions": []
+  "contributions": [
+    {"type": "hub_panel", "label": "Mods", "icon": "package-variant", "priority": 10}
+  ]
 }

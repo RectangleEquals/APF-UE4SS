@@ -70,6 +70,7 @@ class GlobalSettings:
     last_game_id: Optional[str] = None
     steam_library_override: Optional[str] = None  # Override for Steam libraryfolders.vdf path
     disabled_plugins: list = field(default_factory=list)  # plugin IDs to skip loading
+    user_registries: list = field(default_factory=list)   # [{"url": str, "added_at": ISO8601}]
     window_width: int = 1280
     window_height: int = 720
     window_x: Optional[int] = None
@@ -96,6 +97,7 @@ class APFConfig:
             s.last_game_id = data.get("last_game_id")
             s.steam_library_override = data.get("steam_library_override")
             s.disabled_plugins = data.get("disabled_plugins", [])
+            s.user_registries = data.get("user_registries", [])
             s.window_width = data.get("window_width", 1280)
             s.window_height = data.get("window_height", 720)
             s.window_x = data.get("window_x")
@@ -122,6 +124,7 @@ class APFConfig:
             "window_y": s.window_y,
             "window_maximized": s.window_maximized,
             "games": {gid: g.to_dict() for gid, g in s.games.items()},
+            "user_registries": s.user_registries,
         }
         self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -223,4 +226,30 @@ class APFConfig:
             self._settings.disabled_plugins.append(plugin_id)
         elif not disabled and plugin_id in self._settings.disabled_plugins:
             self._settings.disabled_plugins.remove(plugin_id)
+        self.save()
+
+    # -----------------------------------------------------------------------
+    # Registry management
+    # -----------------------------------------------------------------------
+
+    def get_user_registries(self) -> list[dict]:
+        """Return list of user-added registry entries [{url, added_at}]."""
+        return list(self._settings.user_registries)
+
+    def add_user_registry(self, url: str) -> None:
+        """Add a registry URL if not already present, then save."""
+        from datetime import datetime, timezone
+        existing_urls = {r["url"] for r in self._settings.user_registries}
+        if url not in existing_urls:
+            self._settings.user_registries.append({
+                "url": url,
+                "added_at": datetime.now(timezone.utc).isoformat(),
+            })
+            self.save()
+
+    def remove_user_registry(self, url: str) -> None:
+        """Remove a registry URL by URL string, then save."""
+        self._settings.user_registries = [
+            r for r in self._settings.user_registries if r["url"] != url
+        ]
         self.save()

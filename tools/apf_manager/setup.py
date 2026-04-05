@@ -349,6 +349,14 @@ def _post_build():
         shutil.copytree(data_src, data_dst)
         print(f"Copied data/ → {data_dst}")
 
+    # blacklist.json is repo-only — never ship it to end users.
+    # It is fetched live from GitHub per session; bundling it would
+    # allow circumvention via a stale copy.
+    _bl = build_dir / "data" / "blacklist.json"
+    if _bl.exists():
+        _bl.unlink()
+        print(f"Removed data/blacklist.json from build output (repo-only)")
+
     # Generate versioned ISCC runner — avoids dirtying inno_setup.iss (committed file).
     # Usage: .\build\build_installer.ps1 [-IsccPath "D:\Programs\Inno Setup 7"]
     # -IsccPath accepts a directory or full exe path; falls back to PATH then common locations.

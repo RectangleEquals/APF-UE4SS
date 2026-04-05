@@ -532,7 +532,60 @@ class DeployPanel(PluginPanel):
         )
         if idx is None or idx >= len(self._rows) - 1:
             return
-        self._swap_displayed(idx, idx + 1)
+
+        if mod.mod_id and mod.mod_id.endswith(".framework"):
+            self._cascade_framework_down(idx)
+        else:
+            self._swap_displayed(idx, idx + 1)
+
+    def _cascade_framework_down(self, fw_idx: int) -> None:
+        """
+        Move the framework mod down one non-AP slot, cascading adjacent AP mods.
+
+        Finds all directly adjacent AP mod rows below the framework mod, then
+        finds the next non-AP row below the cluster.  That non-AP row bubbles
+        up to just above the framework mod (i.e., the whole cluster shifts
+        down by 1).  Blocked when no non-AP row exists below the cluster.
+        """
+        rows = self._rows
+
+        # Find the end of the adjacent-AP cluster below the framework mod
+        cluster_end = fw_idx + 1
+        while cluster_end < len(rows) and rows[cluster_end]._mod.is_ap_mod:
+            cluster_end += 1
+        # cluster_end now points to the first non-AP row below the cluster
+        # (or past the end of the list)
+
+        if cluster_end >= len(rows):
+            return  # No non-AP mod below — blocked
+
+        # Bubble the non-AP row up: remove it from cluster_end, insert at fw_idx
+        non_ap_row = rows[cluster_end]
+        new_rows = rows[:fw_idx] + [non_ap_row] + rows[fw_idx:cluster_end] + rows[cluster_end + 1:]
+
+        svc = self._deploy_svc
+        if not svc:
+            return
+
+        new_names = [r._mod.folder_name for r in new_rows]
+        displayed_names_set = {r._mod.folder_name for r in self._rows}
+
+        # Rebuild full mods.txt order preserving hidden mods
+        full_order = svc.get_load_order()
+        new_full: list[str] = []
+        di = 0
+        for name in full_order:
+            if name in displayed_names_set:
+                new_full.append(new_names[di])
+                di += 1
+            else:
+                new_full.append(name)
+        while di < len(new_names):
+            new_full.append(new_names[di])
+            di += 1
+
+        svc.reorder(new_full)
+        self._refresh()
 
     def _swap_displayed(self, i: int, j: int) -> None:
         """Swap rows[i] and rows[j] in the display order, then rebuild and save mods.txt order."""

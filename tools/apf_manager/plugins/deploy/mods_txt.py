@@ -6,11 +6,14 @@ Format:
     ModName : 0    (disabled)
     ; comment
 
-Protected footer (always at absolute bottom, never moved):
+Protected footer (at absolute bottom when present, never moved):
     ; Built-in keybinds, do not move up!
     Keybinds : 1
 
-Constraint: APFrameworkMod always appears first among managed entries.
+The footer is preserved only if it already existed in the file being read.
+Some UE4SS versions omit it — this is handled transparently.
+
+Framework mod ordering is enforced at the DeployService level, not here.
 """
 
 from __future__ import annotations
@@ -23,8 +26,6 @@ _FOOTER_LINES = [
     "; Built-in keybinds, do not move up!",
     "Keybinds : 1",
 ]
-
-_FRAMEWORK_MOD = "APFrameworkMod"
 
 
 class ModEntry:
@@ -52,6 +53,7 @@ class ModsTextManager:
         self._entries: list[ModEntry] = []   # ordered list (footer excluded)
         self._comments: list[str] = []       # comment lines (preserved as-is, at top)
         self._raw_comments: list[str] = []   # leading comment lines before first entry
+        self._has_footer: bool = False       # True if the file contained the keybinds footer
 
     # -----------------------------------------------------------------------
     # Load
@@ -60,6 +62,7 @@ class ModsTextManager:
     def load(self) -> None:
         self._entries = []
         self._raw_comments = []
+        self._has_footer = False
 
         if not self._path.exists():
             return
@@ -68,6 +71,7 @@ class ModsTextManager:
 
         # Strip footer from bottom before parsing
         footer_start = self._find_footer(lines)
+        self._has_footer = footer_start < len(lines)
         body = lines[:footer_start]
 
         in_header = True
@@ -118,6 +122,11 @@ class ModsTextManager:
     def entries(self) -> list[ModEntry]:
         return list(self._entries)
 
+    @property
+    def has_footer(self) -> bool:
+        """True if the keybinds footer was present in the file when loaded."""
+        return self._has_footer
+
     def get_order(self) -> list[str]:
         return [e.name for e in self._entries]
 
@@ -144,11 +153,7 @@ class ModsTextManager:
     def ensure_entry(self, name: str, enabled: bool = True) -> None:
         """Add entry if not already present."""
         if not self._find(name):
-            new_entry = ModEntry(name=name, enabled=enabled)
-            if name == _FRAMEWORK_MOD:
-                self._entries.insert(0, new_entry)
-            else:
-                self._entries.append(new_entry)
+            self._entries.append(ModEntry(name=name, enabled=enabled))
 
     def remove_entry(self, name: str) -> None:
         self._entries = [e for e in self._entries if e.name != name]
@@ -157,7 +162,7 @@ class ModsTextManager:
         """
         Reorder entries to match the given name list.
         Names not in the list are appended at the end in original order.
-        APFrameworkMod is always promoted to first position after reorder.
+        Framework mod ordering is enforced by DeployService before calling this.
         """
         name_set = set(names)
         ordered = []
@@ -173,23 +178,12 @@ class ModsTextManager:
                 ordered.append(e)
 
         self._entries = ordered
-        self._enforce_framework_first()
-
-    def _enforce_framework_first(self) -> None:
-        """Ensure APFrameworkMod is the first entry if it exists."""
-        idx = next(
-            (i for i, e in enumerate(self._entries) if e.name == _FRAMEWORK_MOD), None
-        )
-        if idx is not None and idx != 0:
-            entry = self._entries.pop(idx)
-            self._entries.insert(0, entry)
 
     # -----------------------------------------------------------------------
     # Save
     # -----------------------------------------------------------------------
 
     def save(self) -> None:
-        self._enforce_framework_first()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         lines: list[str] = []
 
@@ -199,9 +193,10 @@ class ModsTextManager:
         for entry in self._entries:
             lines.append(f"{entry.name} : {1 if entry.enabled else 0}")
 
-        # Always append footer
-        lines.append("")
-        for fl in _FOOTER_LINES:
-            lines.append(fl)
+        # Only write the keybinds footer if it was present when the file was loaded
+        if self._has_footer:
+            lines.append("")
+            for fl in _FOOTER_LINES:
+                lines.append(fl)
 
         self._path.write_text("\n".join(lines) + "\n", encoding="utf-8")
