@@ -191,7 +191,18 @@ When goals are declared, the apworld generates a `goal` option as a `text_choice
 
 **If the specified `goal` name does not match any declared goal**, a warning is emitted with a fuzzy suggestion if one exists (e.g. `Did you mean 'all_keys'?`), and the default applies. Check for typos in the goal name.
 
-Goal logic supports the full expression grammar — `(Item:)`, `(Can Access:)`, `(Option:)`, `AND`, `OR`.
+Goal logic supports the full expression grammar — `(Item:)`, `(Can Access:)`, `(Option:)`, `(Checked:)`, `AND`, `OR`. The `(Checked: LocationName)` predicate is available exclusively in goal logic and evaluates to true when the named location has been actually sent as a check to the AP server. See [logic.md — Checked Predicate](logic.md#checked-predicate--checked-x) for details and two-phase behavior.
+
+A common pattern is pairing `(Can Access: X)` (ensures region reachability for fill) with `(Checked: X: Boss)` (ensures the in-game event actually occurred before the goal fires):
+
+```json
+{
+    "name": "defeat_boss",
+    "display": "Defeat the Boss",
+    "description": "Obtain the Boss Key and defeat the final boss",
+    "logic": "(Can Access: Boss Room) AND (Checked: Boss: Defeated)"
+}
+```
 
 ### Using `(Goal: X)` in region and item logic
 

@@ -101,6 +101,29 @@ Launch the game. The framework connects to the AP server automatically using set
 
 ---
 
+## Logic Predicates
+
+Location and region access in `manifest.json` is expressed using logic strings. The following predicates are available:
+
+| Predicate | Example | Notes |
+|---|---|---|
+| `(Item: Name)` | `(Item: Iron Key)` | Player has at least 1 of the item |
+| `(Item: Name : N)` | `(Item: Crystal Key : 3)` | Player has at least N of the item |
+| `(Can Access: Region)` | `(Can Access: Mountain Pass)` | Region is reachable |
+| `(Option: key)` | `(Option: include_traps)` | Toggle option is enabled |
+| `(Option: key OP val)` | `(Option: difficulty == hard)` | Option comparison |
+| `(Goal: name)` | `(Goal: defeat_boss)` | Player's selected goal matches |
+| `(Checked: Name)` | `(Checked: Boss: Defeated)` | Location has been sent as a check. **Goal logic only.** |
+| `True` / `False` | `False` | Constant values |
+| `A AND B` | `(Item: Key) AND (Can Access: Vault)` | Both required |
+| `A OR B` | `(Item: Iron Key) OR (Item: Crystal Key)` | Either works |
+
+**Scope:** `(Checked: X)` is valid only in goal logic. Using it in region or location logic emits a warning and it evaluates to false.
+
+**Goal logic** additionally supports `(Checked: X)` and supports the full predicate set: `(Item:)`, `(Can Access:)`, `(Option:)`, `(Checked:)`, `AND`, `OR`. See [logic.md](logic.md) for the full logic reference.
+
+---
+
 ## mod_id Conventions
 
 ```
@@ -418,4 +441,4 @@ Most game mods should be regular mods. Use the priority prefix only for infrastr
 
 ---
 
-*See also: [manifest.md](manifest.md) for the full manifest schema | [framework.md](framework.md) for lifecycle states and IPC protocol | [tracker.md](tracker.md) for subscribing to tracker data*
+*See also: [manifest.md](manifest.md) for the full manifest schema | [logic.md](logic.md) for the full logic expression reference | [framework.md](framework.md) for lifecycle states and IPC protocol | [tracker.md](tracker.md) for subscribing to tracker data*

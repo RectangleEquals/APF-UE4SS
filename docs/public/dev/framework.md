@@ -42,6 +42,8 @@ Without AP Framework, each game mod would need to independently implement AP cli
 | **APClientContext** | Per-mod state: mod_id, cached Lua state, callback table, lifecycle state, cross-mod API registry |
 | **APCallbacks** | Per-mod callback table — 13 slots for Lua functions registered via `on_lifecycle`, `on_item_received`, etc. |
 
+**Two-phase goal logic:** Goal logic strings support the `(Checked: LocationName)` predicate. During AP generation (Python apworld), this compiles to a `can_reach` reachability check so the Archipelago fill algorithm correctly accounts for it — the named location must be reachable for the goal to be completable. At runtime, APTrackerEngine evaluates it against the set of locations actually sent to the AP server (`APStateManager::checked_locations`) — the location must have been checked in-game before the predicate evaluates to true and the goal can fire.
+
 ---
 
 ## UE4SS Integration
