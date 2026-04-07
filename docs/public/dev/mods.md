@@ -149,7 +149,16 @@ Use the priority prefix only if your mod is an infrastructure mod (tracker, UI, 
 | Function | Returns | Description |
 |---|---|---|
 | `APClient.check_location(name)` | `bool` | Report a location as checked. |
+| `APClient.get_location(id_or_name)` | table or `nil` | Look up a location by ID (integer) or name (string). Returns `nil` if not found. |
 | `APClient.scout_locations(names_table)` | `bool` | Scout a list of locations (learn their contents without checking). The result arrives via `on_message` with type `"location_info"`. |
+
+**`get_location` return table fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | int64 | Unique location ID. |
+| `name` | string | Location name. |
+| `checked` | bool | `true` if this location has been sent as a check (either this session via `check_location`, or as reported by the framework via a tracker snapshot/update). |
 
 ### Tracker
 

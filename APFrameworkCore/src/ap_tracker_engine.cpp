@@ -35,6 +35,9 @@ nlohmann::json scored_node_to_json(const ScoredNode &node)
     case LogicNodeType::Option:
         j["type"] = "option";
         break;
+    case LogicNodeType::Checked:
+        j["type"] = "checked";
+        break;
     case LogicNodeType::And:
         j["type"] = "and";
         break;
@@ -341,6 +344,9 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
         item_id_to_name_[item.item_id] = item.item_name;
     }
 
+    // Build location ID -> name mapping (needed to populate checked_locations in TrackerState)
+    location_id_to_name_.clear();
+
     // Pre-parse location logic
     parsed_locations_.clear();
     auto all_locations = APCapabilities::get()->get_all_locations();
@@ -367,6 +373,7 @@ void APTrackerEngine::initialize(const std::map<std::string, std::string> &optio
             parsed.logic = LogicNode::make_const(true);
         }
 
+        location_id_to_name_[parsed.location_id] = parsed.name;
         parsed_locations_.push_back(std::move(parsed));
     }
 
@@ -527,6 +534,15 @@ TrackerState APTrackerEngine::build_tracker_state() const
         {
             state.received_items[it->second] = count;
         }
+    }
+
+    // Convert checked location IDs to names (for (Checked: X) predicate in goal logic)
+    auto checked_ids = APStateManager::get()->get_checked_locations();
+    for (int64_t id : checked_ids)
+    {
+        auto it = location_id_to_name_.find(id);
+        if (it != location_id_to_name_.end())
+            state.checked_locations.insert(it->second);
     }
 
     return state;

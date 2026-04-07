@@ -20,6 +20,7 @@ Grammar:
                | '(Goal:' NAME ')'
                | '(Goal: none)'
                | '(Goal: ?)'
+               | '(Checked:' NAME ')'
                | 'True' | 'False'
 
 Option expressions are evaluated at generation time (static). Item and region
@@ -77,6 +78,12 @@ class ConstNode:
     value: bool
 
 
+@dataclass
+class CheckedNode:
+    """Location has been sent as a check. Valid in goal logic only."""
+    location: str
+
+
 # ============================================================================
 # Token Types
 # ============================================================================
@@ -84,6 +91,7 @@ class ConstNode:
 ITEM = "ITEM"
 CAN_ACCESS = "CAN_ACCESS"
 OPTION = "OPTION"
+CHECKED = "CHECKED"
 AND = "AND"
 OR = "OR"
 TRUE = "TRUE"
@@ -162,6 +170,17 @@ def tokenize(logic: str) -> List[Token]:
                     tokens.append((OPTION, ("goal", "==", "")))      # empty = no goal set
                 else:
                     tokens.append((OPTION, ("goal", "==", goal_name)))
+                i = close + 1
+                continue
+
+            # (Checked: LOCATION) — valid in goal logic only
+            if rest.startswith('(Checked:'):
+                i += len('(Checked:')
+                close = logic.find(')', i)
+                if close == -1:
+                    raise ValueError(f"Unclosed '(Checked:' starting near position {i}")
+                location = logic[i:close].strip()
+                tokens.append((CHECKED, location))
                 i = close + 1
                 continue
 
@@ -299,6 +318,10 @@ class Parser:
             name, op, value = token[1]
             return OptionNode(name=name, op=op, value=value)
 
+        if typ == CHECKED:
+            self.consume()
+            return CheckedNode(location=token[1])
+
         if typ == TRUE:
             self.consume()
             return ConstNode(value=True)
@@ -373,7 +396,7 @@ def evaluate_options(node, options: Dict[str, Any]):
     if isinstance(node, OrNode):
         return OrNode(children=[evaluate_options(c, options) for c in node.children])
 
-    # ItemNode, CanAccessNode, ConstNode — unchanged
+    # ItemNode, CanAccessNode, CheckedNode, ConstNode — unchanged
     return node
 
 
@@ -442,6 +465,12 @@ def compile_rule(node, player: int) -> Callable[[CollectionState], bool]:
         region = node.region
         return lambda state, r=region, p=player: state.can_reach_region(r, p)
 
+    if isinstance(node, CheckedNode):
+        # Generation-time approximation: location must be reachable.
+        # Runtime enforcement (actually checked) is handled by the C++ tracker.
+        loc = node.location
+        return lambda state, l=loc, p=player: state.can_reach(l, "Location", p)
+
     if isinstance(node, AndNode):
         compiled = [compile_rule(c, player) for c in node.children]
         return lambda state, rules=compiled: all(r(state) for r in rules)
@@ -479,6 +508,33 @@ def extract_region_refs(node) -> List[str]:
             refs.extend(extract_region_refs(child))
         return refs
     return []
+
+
+# ============================================================================
+# Checked Node Helpers
+# ============================================================================
+
+def _collect_checked_nodes(node) -> list:
+    """Walk AST and return all CheckedNode instances found."""
+    if isinstance(node, CheckedNode):
+        return [node]
+    if isinstance(node, (AndNode, OrNode)):
+        result = []
+        for child in node.children:
+            result.extend(_collect_checked_nodes(child))
+        return result
+    return []
+
+
+def _replace_checked_with_false(node):
+    """Walk AST and replace all CheckedNode instances with ConstNode(False)."""
+    if isinstance(node, CheckedNode):
+        return ConstNode(value=False)
+    if isinstance(node, AndNode):
+        return AndNode(children=[_replace_checked_with_false(c) for c in node.children])
+    if isinstance(node, OrNode):
+        return OrNode(children=[_replace_checked_with_false(c) for c in node.children])
+    return node
 
 
 # ============================================================================

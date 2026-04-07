@@ -353,11 +353,25 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
     }
     else if (msg.type == IPCMessageType::TRACKER_SNAPSHOT)
     {
+        // Sync checked location IDs from snapshot (authoritative full state)
+        if (msg.payload.contains("checked_locations") && msg.payload["checked_locations"].is_array())
+        {
+            ctx->checked_location_ids.clear();
+            for (const auto &id_val : msg.payload["checked_locations"])
+                ctx->checked_location_ids.insert(id_val.get<int64_t>());
+        }
         if (ctx->cached_lua)
             ctx->callbacks.invoke_tracker_snapshot(msg.payload, *ctx->cached_lua);
     }
     else if (msg.type == IPCMessageType::TRACKER_UPDATE)
     {
+        // Sync checked location IDs from update (replaces full set each update)
+        if (msg.payload.contains("checked_locations") && msg.payload["checked_locations"].is_array())
+        {
+            ctx->checked_location_ids.clear();
+            for (const auto &id_val : msg.payload["checked_locations"])
+                ctx->checked_location_ids.insert(id_val.get<int64_t>());
+        }
         if (ctx->cached_lua)
             ctx->callbacks.invoke_tracker_update(msg.payload, *ctx->cached_lua);
     }
@@ -555,14 +569,31 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
             return false;
         }
 
-        return ctx->ipc_client->send_message(msg);
+        if (!ctx->ipc_client->send_message(msg))
+            return false;
+
+        // Optimistically mark as checked so get_location() reflects it immediately
+        if (arg.get_type() == sol::type::number)
+        {
+            ctx->checked_location_ids.insert(arg.as<int64_t>());
+        }
+        else if (arg.get_type() == sol::type::string)
+        {
+            auto nit = ctx->location_by_name.find(arg.as<std::string>());
+            if (nit != ctx->location_by_name.end())
+                ctx->checked_location_ids.insert(nit->second);
+        }
+        return true;
     };
 
     // get_location(id_or_name)
     //   Integer → table for that location ID
     //   String  → table for that location name
     //   Returns nil if not found.
-    // Returned table fields: id (integer), name (string)
+    // Returned table fields:
+    //   id      (integer) — unique location ID
+    //   name    (string)  — location name
+    //   checked (boolean) — true if this location has been sent as a check
     module["get_location"] = [ctx](sol::object arg, sol::this_state L) -> sol::object {
         sol::state_view lua(L);
         const APClientContext::LocationEntry *entry = nullptr;
@@ -589,9 +620,11 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
         if (!entry)
             return sol::nil;
 
+        bool checked = ctx->checked_location_ids.count(entry->id) > 0;
         return lua.create_table_with(
-            "id",   entry->id,
-            "name", entry->name
+            "id",      entry->id,
+            "name",    entry->name,
+            "checked", checked
         );
     };
 

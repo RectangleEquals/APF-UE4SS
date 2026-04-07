@@ -58,17 +58,31 @@ def set_rules(world: "APFrameworkWorld") -> None:
         if region_name == "Menu" or not region_logic:
             continue
 
-        rule = LogicParser.parse_and_compile(region_logic, world.player, options)
-        if rule is None:
-            continue  # Always accessible, no rule needed
-
-        region = world.multiworld.get_region(region_name, world.player)
-
-        # Register indirect conditions for (Can Access: ...) references
         ast = LogicParser.parse(region_logic)
+
+        # Warn and replace (Checked:) nodes — only valid in goal logic
+        checked_nodes = LogicParser._collect_checked_nodes(ast)
+        if checked_nodes:
+            names = [n.location for n in checked_nodes]
+            log.warning(
+                f"'(Checked:)' found in region logic for '{region_name}' — "
+                f"this predicate is only valid in goal logic. "
+                f"Affected: {names}. Treating as unreachable during fill.",
+                "Rules",
+            )
+            ast = LogicParser._replace_checked_with_false(ast)
+
         if options:
             ast = LogicParser.evaluate_options(ast, options)
             ast = LogicParser.simplify(ast)
+
+        if isinstance(ast, LogicParser.ConstNode):
+            continue  # Always or never accessible — no rule to set
+
+        rule = LogicParser.compile_rule(ast, world.player)
+        region = world.multiworld.get_region(region_name, world.player)
+
+        # Register indirect conditions for (Can Access: ...) references
         for ref_name in LogicParser.extract_region_refs(ast):
             try:
                 ref_region = world.multiworld.get_region(ref_name, world.player)
@@ -87,17 +101,31 @@ def set_rules(world: "APFrameworkWorld") -> None:
         if not loc_data.logic:
             continue
 
-        rule = LogicParser.parse_and_compile(loc_data.logic, world.player, options)
-        if rule is None:
-            continue  # Always accessible
-
-        location = world.multiworld.get_location(loc_name, world.player)
-
-        # Register indirect conditions for (Can Access: ...) references
         ast = LogicParser.parse(loc_data.logic)
+
+        # Warn and replace (Checked:) nodes — only valid in goal logic
+        checked_nodes = LogicParser._collect_checked_nodes(ast)
+        if checked_nodes:
+            names = [n.location for n in checked_nodes]
+            log.warning(
+                f"'(Checked:)' found in location logic for '{loc_name}' — "
+                f"this predicate is only valid in goal logic. "
+                f"Affected: {names}. Treating as unreachable during fill.",
+                "Rules",
+            )
+            ast = LogicParser._replace_checked_with_false(ast)
+
         if options:
             ast = LogicParser.evaluate_options(ast, options)
             ast = LogicParser.simplify(ast)
+
+        if isinstance(ast, LogicParser.ConstNode):
+            continue  # Always or never accessible — no rule to set
+
+        rule = LogicParser.compile_rule(ast, world.player)
+        location = world.multiworld.get_location(loc_name, world.player)
+
+        # Register indirect conditions for (Can Access: ...) references
         for ref_name in LogicParser.extract_region_refs(ast):
             try:
                 ref_region = world.multiworld.get_region(ref_name, world.player)

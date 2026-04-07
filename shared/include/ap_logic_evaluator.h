@@ -16,6 +16,7 @@
  *                 | '(Can Access:' NAME ')'
  *                 | '(Option:' NAME ')'
  *                 | '(Option:' NAME OP VALUE ')'
+ *                 | '(Checked:' NAME ')'
  *                 | 'True' | 'False'
  *
  * Evaluation modes:
@@ -42,6 +43,7 @@ enum class LogicNodeType
     Item,      ///< (Item: Name) or (Item: Name : Count)
     CanAccess, ///< (Can Access: Region)
     Option,    ///< (Option: Name) or (Option: Name OP Value)
+    Checked,   ///< (Checked: LocationName) — valid in goal logic only
     And,       ///< All children must be satisfied
     Or         ///< At least one child must be satisfied
 };
@@ -71,6 +73,9 @@ struct LogicNode
     std::string option_op;    ///< "", ">=", "<=", ">", "<", "==", "!="
     std::string option_value;
 
+    // Checked
+    std::string location_name;
+
     // And/Or
     std::vector<LogicNode> children;
 
@@ -80,6 +85,7 @@ struct LogicNode
     static LogicNode make_can_access(const std::string &region);
     static LogicNode make_option(const std::string &name, const std::string &op = "",
                                  const std::string &value = "");
+    static LogicNode make_checked(std::string location_name);
     static LogicNode make_and(std::vector<LogicNode> children);
     static LogicNode make_or(std::vector<LogicNode> children);
 };
@@ -141,6 +147,7 @@ struct TrackerState
 {
     std::map<std::string, int> received_items;  ///< item_name -> count
     std::set<std::string> reachable_regions;
+    std::set<std::string> checked_locations;    ///< location_name -> checked
 };
 
 // =============================================================================

@@ -400,6 +400,11 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.name = reg.value("name", "");
                     def.logic = reg.value("logic", "");
 
+                    if (def.logic.find("(Checked:") != std::string::npos)
+                        APLogger::get()->log(LogLevel::Warn, "APModRegistry",
+                            "[" + manifest.mod_id + "] '(Checked:)' in region logic for '" + def.name +
+                            "' — this predicate is only valid in goal logic and will always evaluate to False here.");
+
                     if (!def.name.empty())
                     {
                         manifest.regions.push_back(def);
@@ -417,6 +422,11 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     def.logic = loc.value("logic", "");
                     def.priority = parse_hint(loc, "priority");
                     def.exclude  = parse_hint(loc, "exclude");
+
+                    if (def.logic.find("(Checked:") != std::string::npos)
+                        APLogger::get()->log(LogLevel::Warn, "APModRegistry",
+                            "[" + manifest.mod_id + "] '(Checked:)' in location logic for '" + def.name +
+                            "' — this predicate is only valid in goal logic and will always evaluate to False here.");
 
                     if (!def.name.empty())
                     {
@@ -467,6 +477,12 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                     }
                     def.action = item.value("action", "");
                     def.logic = item.value("logic", "");
+
+                    if (def.logic.find("(Checked:") != std::string::npos)
+                        APLogger::get()->log(LogLevel::Warn, "APModRegistry",
+                            "[" + manifest.mod_id + "] '(Checked:)' in item logic for '" + def.name +
+                            "' — this predicate is only valid in goal logic and will always evaluate to False here.");
+
                     def.early = parse_hint(item, "early");
                     def.start = parse_hint(item, "start");
                     def.local = parse_hint(item, "local");

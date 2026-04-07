@@ -8,6 +8,7 @@
 #include <sol/sol.hpp>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace ap::client
 {
@@ -77,6 +78,7 @@ struct APClientContext
 
     std::unordered_map<int64_t, LocationEntry> location_by_id;   // ID → entry
     std::unordered_map<std::string, int64_t>   location_by_name; // name → ID
+    std::unordered_set<int64_t>                checked_location_ids; // IDs that have been checked
     std::unordered_map<int64_t, ItemEntry>     item_by_id;       // ID → full entry
     std::unordered_map<std::string, int64_t>   item_by_name;     // name → ID
 
