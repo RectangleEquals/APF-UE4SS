@@ -60,7 +60,6 @@ bool APManifest::load(const std::filesystem::path& mod_folder) {
             for (const auto& loc : j["locations"]) {
                 LocationDef def;
                 def.name = loc.value("name", "");
-                def.amount = loc.value("amount", 1);
                 def.logic = loc.value("logic", "");
                 if (!def.name.empty()) {
                     manifest_.locations.push_back(def);

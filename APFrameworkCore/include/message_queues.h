@@ -140,7 +140,6 @@ using PendingActionQueue = ThreadSafeQueue<PendingAction>;
 struct LocationCheckRequest {
     std::string mod_id;
     std::string location_name;
-    int instance = 1;  // For multi-instance locations
 };
 
 /**

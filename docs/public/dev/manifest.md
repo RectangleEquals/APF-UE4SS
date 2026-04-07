@@ -272,7 +272,7 @@ Locations are check points in the game that the player fulfills to receive items
     { "name": "Mountain Pass: Supply Cache" },
     { "name": "Caves: Hidden Alcove", "logic": "(Can Access: Deep Caves)" },
     { "name": "Sanctum: Altar Chest", "logic": "(Can Access: Crystal Sanctum) AND (Item: Lantern)" },
-    { "name": "Boss Chamber: Reward", "amount": 3,
+    { "name": "Boss Chamber: Reward",
       "logic": "(Can Access: Boss Chamber) AND (Option: include_traps)" }
 ]
 ```
@@ -280,7 +280,6 @@ Locations are check points in the game that the player fulfills to receive items
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Location name — must be unique within this mod |
-| `amount` | int | Number of separate check instances. Default: `1`. Use when the same "location type" occurs N times. Checks as `"Location Name 1"` through `"Location Name N"`. |
 | `logic` | string | Access requirement. The first `(Can Access: R)` node determines both the AP sphere region and the tracker display group. |
 | `priority` | `true` or option-logic | Location will always contain a progression item. Cannot be combined with `exclude` (priority wins if both active). |
 | `exclude` | `true` or option-logic | Location will not contain progression items (gets filler or useful). Cannot be combined with `priority`. |

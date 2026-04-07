@@ -414,7 +414,6 @@ std::optional<Manifest> APModRegistry::parse_manifest(const std::string &json_co
                 {
                     LocationDef def;
                     def.name = loc.value("name", "");
-                    def.amount = loc.value("amount", 1);
                     def.logic = loc.value("logic", "");
                     def.priority = parse_hint(loc, "priority");
                     def.exclude  = parse_hint(loc, "exclude");

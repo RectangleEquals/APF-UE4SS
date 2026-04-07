@@ -111,7 +111,6 @@ class AP_API APCapabilities
      *
      * Uses APF_GLOBAL_ID_BASE as the starting ID.
      * IDs are assigned in order: locations first, then items.
-     * Multi-instance locations/items get sequential IDs.
      */
     void assign_ids();
 
@@ -119,10 +118,9 @@ class AP_API APCapabilities
      * @brief Get location ID by mod and name.
      * @param mod_id Mod identifier.
      * @param location_name Location name.
-     * @param instance Instance number (1-based, for multi-instance locations).
      * @return Location ID, or 0 if not found.
      */
-    int64_t get_location_id(const std::string &mod_id, const std::string &location_name, int instance = 1) const;
+    int64_t get_location_id(const std::string &mod_id, const std::string &location_name) const;
 
     /**
      * @brief Get item ID by mod and name.

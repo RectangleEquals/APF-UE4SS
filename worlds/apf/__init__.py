@@ -779,7 +779,6 @@ class APFrameworkWorld(World):
                 code=new_code,
                 name=data.name,
                 mod_id=data.mod_id,
-                instance=data.instance,
                 region=data.region,
                 logic=data.logic,
             )

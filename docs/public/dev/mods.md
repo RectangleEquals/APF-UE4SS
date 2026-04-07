@@ -148,7 +148,7 @@ Use the priority prefix only if your mod is an infrastructure mod (tracker, UI, 
 
 | Function | Returns | Description |
 |---|---|---|
-| `APClient.check_location(name, instance?)` | `bool` | Report a location as checked. `instance` is optional (default 1); use it for multi-instance locations declared with `amount > 1` in the manifest. |
+| `APClient.check_location(name)` | `bool` | Report a location as checked. |
 | `APClient.scout_locations(names_table)` | `bool` | Scout a list of locations (learn their contents without checking). The result arrives via `on_message` with type `"location_info"`. |
 
 ### Tracker
@@ -353,23 +353,6 @@ APClient.register_api({
     end
 })
 ```
-
----
-
-## Multi-Instance Locations
-
-When a manifest location has `amount > 1`, it represents N separate check instances sharing a name prefix. Use the optional `instance` parameter to distinguish them:
-
-```json
-{ "name": "Enemy Defeated", "amount": 50 }
-```
-
-```lua
--- When the player defeats enemy #12:
-APClient.check_location("Enemy Defeated", 12)  -- checks instance 12
-```
-
-The framework maps this to a unique location ID for that instance. Instance numbers are 1-based.
 
 ---
 
