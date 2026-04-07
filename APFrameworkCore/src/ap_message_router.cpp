@@ -493,6 +493,14 @@ void APMessageRouter::check_and_send_goal_completion()
                 eval_state.received_items[item_opt->item_name] = count;
         }
 
+        auto checked_ids = APStateManager::get()->get_checked_locations();
+        for (int64_t id : checked_ids)
+        {
+            auto loc_opt = caps->get_location_by_id(id);
+            if (loc_opt)
+                eval_state.checked_locations.insert(loc_opt->location_name);
+        }
+
         goal_achieved = evaluate_bool(node, eval_state);
     }
 
