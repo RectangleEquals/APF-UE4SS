@@ -115,7 +115,6 @@ struct LocationOwnership {
   std::string mod_id;
   std::string location_name;
   int64_t location_id = 0;
-  int instance = 1;
   std::string logic;                                 // Logic expression string (includes (Can Access: R) for region placement)
   std::string priority = "";                         // Placement hint: "True" or option-logic expr
   std::string exclude  = "";                         // Placement hint: "True" or option-logic expr
@@ -303,7 +302,6 @@ struct CapabilitiesConfigLocation {
   int64_t id = 0;
   std::string name;
   std::string mod_id;
-  int instance = 1;
   std::string logic;                                 // Logic expression string (includes (Can Access: R) for region placement)
   std::string priority = "";                         // Placement hint: "True" or option-logic expr
   std::string exclude  = "";                         // Placement hint: "True" or option-logic expr
@@ -429,7 +427,6 @@ struct CapabilitiesConfig {
       l["id"] = loc.id;
       l["name"] = loc.name;
       l["mod_id"] = loc.mod_id;
-      l["instance"] = loc.instance;
       if (!loc.logic.empty())
         l["logic"] = loc.logic;
       emit_hint(l, "priority", loc.priority);

@@ -21,7 +21,7 @@ from worlds.AutoWorld import World, WebWorld
 from .Items import APFrameworkItem, ItemData, build_item_table, get_filler_items, get_trap_items
 from .Locations import APFrameworkLocation, LocationData, build_location_table
 from .Logger import APFLogger
-from .LogicParser import is_always_false, evaluate_count
+from .LogicParser import is_always_false, evaluate_count, _collect_checked_nodes
 from .Options import APFrameworkOptions
 from .Rules import set_rules, set_completion_rules
 
@@ -279,6 +279,26 @@ class APFrameworkWorld(World):
                 f"  {len(goals)} goals, {len(overrides)} item overrides",
                 "World",
             )
+
+        # Validate (Checked: X) location names in goal logic
+        from .LogicParser import parse as _lp_parse
+        for goal in goals:
+            goal_logic = goal.get("logic", "")
+            if not goal_logic or "(Checked:" not in goal_logic:
+                continue
+            try:
+                ast = _lp_parse(goal_logic)
+                for cn in _collect_checked_nodes(ast):
+                    if cn.location not in self.location_table:
+                        self.log.error(
+                            f"Goal '{goal.get('name', '?')}' references "
+                            f"'(Checked: {cn.location})' but no location named "
+                            f"'{cn.location}' exists in the location pool. "
+                            f"This goal will be permanently incompletable.",
+                            "World",
+                        )
+            except Exception:
+                pass  # Parse errors will surface elsewhere
 
     def _hint_active(self, hint_val, option_values: dict) -> bool:
         """Return True if a placement hint is currently active.
@@ -779,7 +799,6 @@ class APFrameworkWorld(World):
                 code=new_code,
                 name=data.name,
                 mod_id=data.mod_id,
-                instance=data.instance,
                 region=data.region,
                 logic=data.logic,
             )

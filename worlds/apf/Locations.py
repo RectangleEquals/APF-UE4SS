@@ -42,7 +42,6 @@ class LocationData(NamedTuple):
     code: int
     name: str
     mod_id: str
-    instance: int  # Instance number for multi-instance locations
     region: str    # Display region derived from logic (e.g. first (Can Access: R) pattern)
     logic: str = ""  # Logic expression string
 
@@ -51,9 +50,6 @@ def build_location_table(capabilities: dict, known_regions: set = None) -> Dict[
     """
     Build the location table from capabilities config.
 
-    Uses a two-pass approach to handle multi-instance locations:
-    locations with the same name get suffixed with #1, #2, etc.
-
     Region is derived from the logic expression via (Can Access: R) patterns.
 
     Args:
@@ -61,29 +57,19 @@ def build_location_table(capabilities: dict, known_regions: set = None) -> Dict[
         known_regions: Set of known region names for derivation (optional)
 
     Returns:
-        Dict mapping location display name to LocationData
+        Dict mapping location name to LocationData
     """
     location_table: Dict[str, LocationData] = {}
     locations = capabilities.get("locations", [])
 
-    # First pass: count instances per name
-    name_counts: Dict[str, int] = {}
     for loc_data in locations:
         name = loc_data["name"]
-        name_counts[name] = name_counts.get(name, 0) + 1
-
-    # Second pass: build table with unique display names
-    for loc_data in locations:
-        name = loc_data["name"]
-        instance = loc_data.get("instance", 1)
-        display_name = f"{name} #{instance}" if name_counts[name] > 1 else name
         logic = loc_data.get("logic", "")
 
-        location_table[display_name] = LocationData(
+        location_table[name] = LocationData(
             code=loc_data["id"],
-            name=display_name,
+            name=name,
             mod_id=loc_data.get("mod_id", ""),
-            instance=instance,
             region=derive_ap_region(logic, name, known_regions),
             logic=logic,
         )

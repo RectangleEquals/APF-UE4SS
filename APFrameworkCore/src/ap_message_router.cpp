@@ -171,10 +171,10 @@ std::vector<ActionArg> APMessageRouter::resolve_arguments(const ItemOwnership &i
 // Location Check Routing
 // =============================================================================
 
-int64_t APMessageRouter::route_location_check(const std::string &mod_id, const std::string &location_name, int instance)
+int64_t APMessageRouter::route_location_check(const std::string &mod_id, const std::string &location_name)
 {
     // Look up location ID
-    int64_t location_id = APCapabilities::get()->get_location_id(mod_id, location_name, instance);
+    int64_t location_id = APCapabilities::get()->get_location_id(mod_id, location_name);
     if (location_id == 0)
     {
         bool looks_like_id = !location_name.empty() &&
@@ -183,8 +183,7 @@ int64_t APMessageRouter::route_location_check(const std::string &mod_id, const s
                                ? " (looks like a location ID — pass integer directly to check_location)"
                                : "";
         APLogger::get()->log(LogLevel::Warn, "APMessageRouter",
-                             "Unknown location: " + mod_id + "/" + location_name + " #" +
-                             std::to_string(instance) + hint);
+                             "Unknown location: " + mod_id + "/" + location_name + hint);
         return 0;
     }
 
@@ -286,7 +285,7 @@ std::vector<int64_t> APMessageRouter::route_location_scouts(const std::string &m
 
     for (const auto &name : location_names)
     {
-        int64_t id = APCapabilities::get()->get_location_id(mod_id, name, 1);
+        int64_t id = APCapabilities::get()->get_location_id(mod_id, name);
         if (id != 0)
         {
             location_ids.push_back(id);
@@ -492,6 +491,14 @@ void APMessageRouter::check_and_send_goal_completion()
             auto item_opt = caps->get_item_by_id(id);
             if (item_opt)
                 eval_state.received_items[item_opt->item_name] = count;
+        }
+
+        auto checked_ids = APStateManager::get()->get_checked_locations();
+        for (int64_t id : checked_ids)
+        {
+            auto loc_opt = caps->get_location_by_id(id);
+            if (loc_opt)
+                eval_state.checked_locations.insert(loc_opt->location_name);
         }
 
         goal_achieved = evaluate_bool(node, eval_state);

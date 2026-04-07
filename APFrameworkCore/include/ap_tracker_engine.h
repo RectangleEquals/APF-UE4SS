@@ -302,6 +302,9 @@ class AP_API APTrackerEngine
     // Item ID -> item name mapping (for converting progression counts to names)
     std::map<int64_t, std::string> item_id_to_name_;
 
+    // Location ID -> location name mapping (for populating checked_locations in TrackerState)
+    std::map<int64_t, std::string> location_id_to_name_;
+
     // Ecosystem metadata (built once at init)
     std::vector<EcosystemMod> ecosystem_mods_;
     std::vector<EcosystemRegion> ecosystem_regions_;

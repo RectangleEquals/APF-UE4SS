@@ -50,6 +50,14 @@ LogicNode LogicNode::make_option(const std::string &name, const std::string &op,
     return n;
 }
 
+LogicNode LogicNode::make_checked(std::string location_name)
+{
+    LogicNode n;
+    n.type = LogicNodeType::Checked;
+    n.location_name = std::move(location_name);
+    return n;
+}
+
 LogicNode LogicNode::make_and(std::vector<LogicNode> children)
 {
     LogicNode n;
@@ -77,6 +85,7 @@ enum class TokenType
     Item,
     CanAccess,
     Option,
+    Checked,
     And,
     Or,
     True,
@@ -225,6 +234,22 @@ std::vector<Token> tokenize(const std::string &logic)
                     tok.opt_value = goal_name;
                 }
 
+                tokens.push_back(tok);
+                i = close + 1;
+                continue;
+            }
+
+            // (Checked: LOCATION)
+            if (rest.rfind("(Checked:", 0) == 0)
+            {
+                i += 9; // skip "(Checked:"
+                auto close = logic.find(')', i);
+                if (close == std::string::npos)
+                    throw std::runtime_error("Unclosed '(Checked:' near position " + std::to_string(i));
+
+                Token tok;
+                tok.type = TokenType::Checked;
+                tok.str_val = trim(logic.substr(i, close - i));
                 tokens.push_back(tok);
                 i = close + 1;
                 continue;
@@ -438,6 +463,10 @@ class Parser
             auto t = consume();
             return LogicNode::make_option(t.str_val, t.opt_op, t.opt_value);
         }
+        case TokenType::Checked: {
+            auto t = consume();
+            return LogicNode::make_checked(t.str_val);
+        }
         case TokenType::True:
             consume();
             return LogicNode::make_const(true);
@@ -572,7 +601,7 @@ LogicNode evaluate_options(const LogicNode &node, const std::map<std::string, st
     }
 
     default:
-        // Item, CanAccess, Const — unchanged
+        // Item, CanAccess, Checked, Const — unchanged
         return node;
     }
 }
@@ -672,6 +701,9 @@ std::string logic_node_to_display(const LogicNode &node)
             return "(Option: " + node.option_name + ")";
         return "(Option: " + node.option_name + " " + node.option_op + " " + node.option_value + ")";
 
+    case LogicNodeType::Checked:
+        return "(Checked: " + node.location_name + ")";
+
     case LogicNodeType::And: {
         std::string result;
         for (size_t i = 0; i < node.children.size(); ++i)
@@ -735,6 +767,10 @@ ScoredNode evaluate_scored(const LogicNode &node, const TrackerState &state)
     case LogicNodeType::Option:
         // Options should be resolved before scoring; treat unresolved as true
         scored.score = 1.0f;
+        break;
+
+    case LogicNodeType::Checked:
+        scored.score = state.checked_locations.count(node.location_name) ? 1.0f : 0.0f;
         break;
 
     case LogicNodeType::And: {
@@ -814,6 +850,7 @@ std::set<std::string> compute_reachable_regions(
             TrackerState eval_state;
             eval_state.received_items = state.received_items;
             eval_state.reachable_regions = reachable;
+            eval_state.checked_locations = state.checked_locations;
 
             if (evaluate_bool(region.access_logic, eval_state))
             {

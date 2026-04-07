@@ -63,7 +63,6 @@ struct RegionDef {
 
 struct LocationDef {
     std::string name;
-    int amount = 1;
     std::string logic;                       // Logic expression string (includes (Can Access: R) for region placement)
     std::string priority = "";              // Placement hint: "True" or option-logic expr
     std::string exclude  = "";              // Placement hint: "True" or option-logic expr

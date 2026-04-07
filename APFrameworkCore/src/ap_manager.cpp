@@ -307,18 +307,11 @@ bool APManager::register_mod(const std::string &mod_id, const std::string &versi
     auto all_locs  = APCapabilities::get()->get_locations_for_mod(mod_id);
     auto all_items = APCapabilities::get()->get_items_for_mod(mod_id);
 
-    // Compute instance count per location name
-    std::unordered_map<std::string, int> instance_counts;
-    for (const auto &loc : all_locs)
-        instance_counts[loc.location_name]++;
-
     nlohmann::json locations_json = nlohmann::json::array();
     for (const auto &loc : all_locs)
     {
-        locations_json.push_back({{"id",             loc.location_id},
-                                  {"name",           loc.location_name},
-                                  {"instance",       loc.instance},
-                                  {"instance_count", instance_counts[loc.location_name]}});
+        locations_json.push_back({{"id",   loc.location_id},
+                                  {"name", loc.location_name}});
     }
 
     nlohmann::json items_json = nlohmann::json::array();
@@ -499,13 +492,11 @@ void APManager::handle_ipc_message(const std::string &client_id, const IPCMessag
         }
         else
         {
-            // Name string path — from check_location(name, instance?)
+            // Name string path — from check_location(name)
             std::string location_name = msg.payload.value("location", "");
-            int instance = msg.payload.value("instance", 1);
             APLogger::get()->log(LogLevel::Debug, "APManager",
-                                 "check_location: '" + location_name + "' #" +
-                                 std::to_string(instance) + " from " + client_id);
-            APMessageRouter::get()->route_location_check(client_id, location_name, instance);
+                                 "check_location: '" + location_name + "' from " + client_id);
+            APMessageRouter::get()->route_location_check(client_id, location_name);
         }
     }
     else if (msg.type == IPCMessageType::LOCATION_SCOUT)

@@ -299,20 +299,16 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
         if (success)
         {
             // Populate bidirectional lookup maps from registration response.
-            // location_by_id covers all instances; location_by_name maps to instance=1 ID.
             for (const auto &loc : msg.payload.value("locations", nlohmann::json::array()))
             {
                 APClientContext::LocationEntry entry;
-                entry.id             = loc.value("id",             int64_t(0));
-                entry.name           = loc.value("name",           std::string{});
-                entry.instance       = loc.value("instance",       1);
-                entry.instance_count = loc.value("instance_count", 1);
+                entry.id   = loc.value("id",   int64_t(0));
+                entry.name = loc.value("name", std::string{});
 
                 if (entry.id != 0 && !entry.name.empty())
                 {
-                    ctx->location_by_id[entry.id] = entry;
-                    if (entry.instance == 1)
-                        ctx->location_by_name[entry.name] = entry.id;
+                    ctx->location_by_id[entry.id]      = entry;
+                    ctx->location_by_name[entry.name]  = entry.id;
                 }
             }
             for (const auto &item : msg.payload.value("items", nlohmann::json::array()))
@@ -357,11 +353,25 @@ void APClientManager::handle_ipc_message_for_context(APClientContext *ctx, const
     }
     else if (msg.type == IPCMessageType::TRACKER_SNAPSHOT)
     {
+        // Sync checked location IDs from snapshot (authoritative full state)
+        if (msg.payload.contains("checked_locations") && msg.payload["checked_locations"].is_array())
+        {
+            ctx->checked_location_ids.clear();
+            for (const auto &id_val : msg.payload["checked_locations"])
+                ctx->checked_location_ids.insert(id_val.get<int64_t>());
+        }
         if (ctx->cached_lua)
             ctx->callbacks.invoke_tracker_snapshot(msg.payload, *ctx->cached_lua);
     }
     else if (msg.type == IPCMessageType::TRACKER_UPDATE)
     {
+        // Sync checked location IDs from update (replaces full set each update)
+        if (msg.payload.contains("checked_locations") && msg.payload["checked_locations"].is_array())
+        {
+            ctx->checked_location_ids.clear();
+            for (const auto &id_val : msg.payload["checked_locations"])
+                ctx->checked_location_ids.insert(id_val.get<int64_t>());
+        }
         if (ctx->cached_lua)
             ctx->callbacks.invoke_tracker_update(msg.payload, *ctx->cached_lua);
     }
@@ -529,11 +539,10 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
     // Location Functions
     // =========================================================================
 
-    // check_location(name_or_id, instance?)
-    // - Integer: check_location(6942067)             → routes by ID; instance ignored (IDs globally unique)
-    // - String:  check_location("Alpha: Free Chest") → routes by name; instance defaults to 1
-    // - String:  check_location("Chest", 2)          → routes by name, instance 2 (for amount>1 manifests)
-    module["check_location"] = [ctx](sol::object arg, sol::optional<int> instance) -> bool {
+    // check_location(name_or_id)
+    // - Integer: check_location(6942067)             → routes by ID (globally unique)
+    // - String:  check_location("Alpha: Free Chest") → routes by name
+    module["check_location"] = [ctx](sol::object arg) -> bool {
         if (!ctx->ipc_client->is_connected())
             return false;
 
@@ -544,15 +553,13 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
 
         if (arg.get_type() == sol::type::number)
         {
-            // Integer ID path — instance is irrelevant (ID is globally unique)
             int64_t location_id = arg.as<int64_t>();
             msg.payload = {{"location_id", location_id}};
         }
         else if (arg.get_type() == sol::type::string)
         {
-            // Name string path — existing behavior preserved; instance defaults to 1
             std::string location_name = arg.as<std::string>();
-            msg.payload = {{"location", location_name}, {"instance", instance.value_or(1)}};
+            msg.payload = {{"location", location_name}};
         }
         else
         {
@@ -562,14 +569,31 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
             return false;
         }
 
-        return ctx->ipc_client->send_message(msg);
+        if (!ctx->ipc_client->send_message(msg))
+            return false;
+
+        // Optimistically mark as checked so get_location() reflects it immediately
+        if (arg.get_type() == sol::type::number)
+        {
+            ctx->checked_location_ids.insert(arg.as<int64_t>());
+        }
+        else if (arg.get_type() == sol::type::string)
+        {
+            auto nit = ctx->location_by_name.find(arg.as<std::string>());
+            if (nit != ctx->location_by_name.end())
+                ctx->checked_location_ids.insert(nit->second);
+        }
+        return true;
     };
 
     // get_location(id_or_name)
-    //   Integer → table for that exact location ID (any instance)
-    //   String  → table for the instance=1 entry for that name
+    //   Integer → table for that location ID
+    //   String  → table for that location name
     //   Returns nil if not found.
-    // Returned table fields: id (integer), name (string), instance (integer), instance_count (integer)
+    // Returned table fields:
+    //   id      (integer) — unique location ID
+    //   name    (string)  — location name
+    //   checked (boolean) — true if this location has been sent as a check
     module["get_location"] = [ctx](sol::object arg, sol::this_state L) -> sol::object {
         sol::state_view lua(L);
         const APClientContext::LocationEntry *entry = nullptr;
@@ -596,11 +620,11 @@ int APClientManager::create_lua_module_impl(lua_State *L, APClientContext *ctx)
         if (!entry)
             return sol::nil;
 
+        bool checked = ctx->checked_location_ids.count(entry->id) > 0;
         return lua.create_table_with(
-            "id",             entry->id,
-            "name",           entry->name,
-            "instance",       entry->instance,
-            "instance_count", entry->instance_count
+            "id",      entry->id,
+            "name",    entry->name,
+            "checked", checked
         );
     };
 

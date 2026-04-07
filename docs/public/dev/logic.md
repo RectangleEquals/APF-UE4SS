@@ -43,6 +43,7 @@ primary     := '(' expression ')'
              | '(Goal:' NAME ')'
              | '(Goal: none)'
              | '(Goal: ?)'
+             | '(Checked:' NAME ')'
              | 'True'
              | 'False'
 
@@ -69,6 +70,7 @@ VALUE := any characters up to the closing ')'
 | `(Goal: name)` | `(Goal: any_key)` | Player's selected goal is exactly `name` (case-insensitive) |
 | `(Goal: none)` | `(Goal: none)` | No goal is selected (all-locations completion mode) |
 | `(Goal: ?)` | `(Goal: ?)` | Any goal is set (player has an active goal) |
+| `(Checked: Name)` | `(Checked: Boss: Defeated)` | Location has been sent as a check to the AP server. **Goal logic only.** |
 | `True` | `True` | Always satisfied |
 | `False` | `False` | Never satisfied |
 | `A AND B` | `(Item: Iron Key) AND (Can Access: Mountain Pass)` | Both must be satisfied |
@@ -135,6 +137,59 @@ With `goal: any_key`: `(Goal: any_key)` resolves to `True` at generation → Zon
 
 ---
 
+## Checked Predicate — `(Checked: X)`
+
+`(Checked: LocationName)` evaluates to true when the named location has been sent as a check to the AP server — meaning the in-game action that corresponds to that location has actually occurred during this session.
+
+**Scope: goal logic only.** Using `(Checked: X)` in region, location, or item logic emits a warning and the predicate evaluates to `false` in that context.
+
+### Two-phase behavior
+
+The predicate has different semantics depending on the phase in which it is evaluated:
+
+| Phase | System | Behavior |
+|---|---|---|
+| **AP generation (Python)** | apworld | Compiles to `state.can_reach(X, "Location", player)` — fill treats the location as accessibility-relevant to the goal, but does NOT require it to be checked, only reachable |
+| **Runtime (C++)** | Tracker engine | Evaluates to `1.0` only when the location ID is in `APStateManager::checked_locations` — the location must have been actually sent as a check |
+
+This means fill logic is correct (the location must be reachable for the goal to be completable), and runtime logic is correct (the location must actually be checked in-game before the goal fires).
+
+### Common pattern
+
+```json
+{
+    "regions": [
+        { "name": "Boss Room", "logic": "(Item: Boss Key)" }
+    ],
+    "locations": [
+        { "name": "Boss: Defeated", "logic": "(Can Access: Boss Room)" }
+    ],
+    "goals": [
+        {
+            "name": "defeat_boss",
+            "display": "Defeat the Boss",
+            "description": "Obtain the Boss Key and defeat the final boss",
+            "logic": "(Can Access: Boss Room) AND (Checked: Boss: Defeated)"
+        }
+    ]
+}
+```
+
+`(Can Access: Boss Room)` gates on having the Boss Key. `(Checked: Boss: Defeated)` ensures the mod has actually sent the location check — the goal will not fire until the boss fight has occurred in-game, even if the player already has the key.
+
+### Behavior details
+
+| Scenario | Behavior |
+|---|---|
+| `(Checked: X)` in goal logic | Valid — evaluates against checked location state at runtime |
+| `(Checked: X)` in region/location/item logic | Warning logged; treated as `false` |
+| Referenced location doesn't exist in the pool | Error logged at generation time; goal is permanently incompletable |
+| Referenced location has `exclude: true` | Warning at manifest load — goal will be permanently incompletable |
+| Multiple goals reference the same `(Checked: X)` | Each evaluates independently; no conflict |
+| Player checks location before other goal conditions are met | Check is recorded; goal fires once all conditions are simultaneously satisfied |
+
+---
+
 ## Scope Rules by Entry Type
 
 Not all expression types are valid everywhere. The framework enforces these restrictions:
@@ -143,10 +198,13 @@ Not all expression types are valid everywhere. The framework enforces these rest
 |---|---|---|
 | **Regions** | `Item`, `CanAccess`, `Option`, `And`, `Or`, `Const` | Full logic supported |
 | **Locations** | `Item`, `CanAccess`, `Option`, `And`, `Or`, `Const` | Full logic supported; first `CanAccess` determines display group |
+| **Goals** | `Item`, `CanAccess`, `Option`, `Checked`, `And`, `Or`, `Const` | Full logic supported; additionally supports `(Checked: X)` |
 | **Items** | `Option`, `And`, `Or`, `Const` | Only option-based conditions; `Item`/`CanAccess` nodes warn + evaluate to false |
 | **Item overrides** | `Option`, `And`, `Or`, `Const` | Same restriction as items |
 
 For items and item overrides, `(Item:)` and `(Can Access:)` nodes are structurally invalid — they cannot be evaluated at generation time before items are placed. When the framework encounters these in item logic, it logs a warning and evaluates the node as `false`. OR branches through valid option nodes can still succeed; only AND chains where an invalid node is required will always block the item from the pool.
+
+`(Checked: X)` is only valid in goal logic. Using it in region, location, or item logic emits a warning in both the C++ framework and the Python apworld, and the node is treated as `false` in that context.
 
 ---
 
@@ -184,6 +242,7 @@ At runtime, option values are already baked into the parsed AST (via `evaluate_o
 struct TrackerState {
     std::map<std::string, int> received_items;  // item_name -> count received
     std::set<std::string> reachable_regions;    // currently reachable region names
+    std::set<std::string> checked_locations;    // location names sent as checks
 };
 ```
 
@@ -206,6 +265,7 @@ struct ScoredNode {
 | `Const(false)` | `0.0` |
 | `Item(name, count)` | `min(received / required, 1.0)` — partial credit for partial items |
 | `CanAccess(region)` | `1.0` if region is reachable, `0.0` otherwise |
+| `Checked(location)` | `1.0` if location is in `checked_locations`, `0.0` otherwise |
 | `Option(...)` | `1.0` (options are resolved before scoring; unknown options default to true) |
 | `And(children)` | Average of all children scores |
 | `Or(children)` | Maximum of all children scores |

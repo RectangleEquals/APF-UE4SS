@@ -108,7 +108,6 @@ class AP_API APMessageRouter
      * @brief Route a location check from a client mod.
      * @param mod_id Source mod ID.
      * @param location_name Location name.
-     * @param instance Instance number (for multi-instance locations).
      * @return Location ID if found and not already checked, 0 otherwise.
      *
      * Flow:
@@ -117,7 +116,7 @@ class AP_API APMessageRouter
      * 3. Mark as checked in state_manager
      * 4. Send to AP server via callback
      */
-    int64_t route_location_check(const std::string &mod_id, const std::string &location_name, int instance = 1);
+    int64_t route_location_check(const std::string &mod_id, const std::string &location_name);
 
     /**
      * @brief Route a location check by integer ID (from polymorphic check_location(integer)).

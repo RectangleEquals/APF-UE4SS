@@ -229,17 +229,13 @@ void APCapabilities::add_manifest(const Manifest &manifest)
     // Add locations
     for (const auto &loc : manifest.locations)
     {
-        for (int i = 1; i <= loc.amount; ++i)
-        {
-            LocationOwnership ownership;
-            ownership.mod_id = manifest.mod_id;
-            ownership.location_name = loc.name;
-            ownership.instance = i;
-            ownership.logic = loc.logic;
-            ownership.priority = loc.priority;
-            ownership.exclude  = loc.exclude;
-            locations_.push_back(ownership);
-        }
+        LocationOwnership ownership;
+        ownership.mod_id = manifest.mod_id;
+        ownership.location_name = loc.name;
+        ownership.logic = loc.logic;
+        ownership.priority = loc.priority;
+        ownership.exclude  = loc.exclude;
+        locations_.push_back(ownership);
     }
 
     // Add items
@@ -430,7 +426,7 @@ ValidationResult APCapabilities::validate() const
     std::map<std::string, std::string> location_owners;
     for (const auto &loc : locations_)
     {
-        std::string key = loc.location_name + "#" + std::to_string(loc.instance);
+        std::string key = loc.location_name;
         auto it = location_owners.find(key);
         if (it != location_owners.end() && it->second != loc.mod_id)
         {
@@ -529,11 +525,11 @@ void APCapabilities::assign_ids()
                              std::to_string(items_.size()) + " items, base=" + std::to_string(base_id));
 }
 
-int64_t APCapabilities::get_location_id(const std::string &mod_id, const std::string &location_name, int instance) const
+int64_t APCapabilities::get_location_id(const std::string &mod_id, const std::string &location_name) const
 {
     for (const auto &loc : locations_)
     {
-        if (loc.mod_id == mod_id && loc.location_name == location_name && loc.instance == instance)
+        if (loc.mod_id == mod_id && loc.location_name == location_name)
         {
             return loc.location_id;
         }
@@ -641,7 +637,6 @@ std::string APCapabilities::compute_checksum() const
         for (const auto &loc : manifest.locations)
         {
             sha.update(loc.name);
-            sha.update(std::to_string(loc.amount));
             sha.update(loc.logic);
         }
 
@@ -736,7 +731,6 @@ CapabilitiesConfig APCapabilities::generate_capabilities_config() const
         cfg_loc.id = loc.location_id;
         cfg_loc.name = loc.location_name;
         cfg_loc.mod_id = loc.mod_id;
-        cfg_loc.instance = loc.instance;
         cfg_loc.logic = loc.logic;
         cfg_loc.priority = loc.priority;
         cfg_loc.exclude  = loc.exclude;

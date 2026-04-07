@@ -8,6 +8,7 @@
 #include <sol/sol.hpp>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace ap::client
 {
@@ -59,16 +60,13 @@ struct APClientContext
 
     // =========================================================================
     // Bidirectional Location/Item Lookup Maps
-    // Populated from REGISTRATION_RESPONSE (instance_count, type included).
-    // location_by_name maps to instance=1 ID; for higher instances use check_location(name, N).
+    // Populated from REGISTRATION_RESPONSE (type included).
     // =========================================================================
 
     struct LocationEntry
     {
-        int64_t     id             = 0;
+        int64_t     id   = 0;
         std::string name;
-        int         instance       = 1;   // which instance this entry represents
-        int         instance_count = 1;   // total instances for this location name
     };
 
     struct ItemEntry
@@ -78,8 +76,9 @@ struct APClientContext
         std::string type; // "progression", "useful", "filler", "trap"
     };
 
-    std::unordered_map<int64_t, LocationEntry> location_by_id;   // ID → full entry (all instances)
-    std::unordered_map<std::string, int64_t>   location_by_name; // name → instance-1 ID
+    std::unordered_map<int64_t, LocationEntry> location_by_id;   // ID → entry
+    std::unordered_map<std::string, int64_t>   location_by_name; // name → ID
+    std::unordered_set<int64_t>                checked_location_ids; // IDs that have been checked
     std::unordered_map<int64_t, ItemEntry>     item_by_id;       // ID → full entry
     std::unordered_map<std::string, int64_t>   item_by_name;     // name → ID
 
