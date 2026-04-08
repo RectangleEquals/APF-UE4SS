@@ -28,6 +28,16 @@ from .github_cache import GitHubCache, TTL_CONTENTS, TTL_FILES, TTL_RELEASES
 
 _USER_AGENT = "APFManager/1.0"
 
+# Module-level cache so any plugin can read the most recent rate limit state
+# without holding a reference to a specific GitHubAPI instance.
+# Keyed by auth_source ('user_override', 'bundled', 'unauthenticated', 'devtools').
+# Value: (remaining, limit, reset_ts)
+_rate_limit_global: dict = {}
+
+# Persistent cache path — survives app restarts so the proactive gate works
+# even if the app was closed while rate-limited.
+_RATE_LIMIT_CACHE_PATH = Path.home() / ".apf_manager" / "github" / "rate_limit.json"
+
 
 class GitHubAPI:
     """
@@ -44,15 +54,18 @@ class GitHubAPI:
         token_file_path: Optional[Path] = None,
         cache: Optional[GitHubCache] = None,
         on_status: Optional[Callable[[str, str], None]] = None,
+        direct_token: Optional[str] = None,
     ) -> None:
         self._owner = repo_owner
         self._repo = repo_name
         self._cache = cache or GitHubCache(repo_owner, repo_name)
         self._on_status = on_status or (lambda level, msg: None)
         self._bundled_token_path = token_file_path
-        self._token, self._auth_source = self._resolve_token(token_file_path)
+        self._token, self._auth_source = self._resolve_token(token_file_path, direct_token)
         self._client: GitHub = self._make_client()
         self._rate_limit_remaining: Optional[int] = None
+        self._rate_limit_limit: Optional[int] = None
+        self._rate_limit_reset: Optional[int] = None
 
     # -----------------------------------------------------------------------
     # Contents API
@@ -64,6 +77,9 @@ class GitHubAPI:
         Returns a list of dicts with keys: name, path, type, download_url, size.
         Falls back to stale cache on network/auth failure.
         """
+        if self._check_rate_limit():
+            return []
+
         cache_key = f"contents/{_safe_key(path)}"
 
         if not force_refresh:
@@ -155,6 +171,9 @@ class GitHubAPI:
         Return the latest release metadata dict, or None on failure.
         Short TTL cache (15 min).
         """
+        if self._check_rate_limit():
+            return None
+
         cache_key = "releases/latest"
 
         if not force_refresh:
@@ -205,6 +224,76 @@ class GitHubAPI:
         except Exception as exc:
             self._on_status("warn", f"Unexpected error fetching release info: {exc}")
             return self._load_stale_json(cache_key)
+
+    # -----------------------------------------------------------------------
+    # User / collaborator API (used by github_auth)
+    # -----------------------------------------------------------------------
+
+    def get_authenticated_user(self) -> Optional[str]:
+        """Return the login name of the authenticated user, or None on failure."""
+        if self._check_rate_limit():
+            return None
+        try:
+            resp = self._client.rest.users.get_authenticated()
+            self._update_rate_limit(resp.headers)
+            return resp.parsed_data.login
+        except Exception:
+            return None
+
+    def get_collaborator_permission(
+        self, owner: str, repo: str, username: str
+    ) -> Optional[str]:
+        """Return the collaborator permission level for username, or None on failure."""
+        if self._check_rate_limit():
+            return None
+        try:
+            resp = self._client.rest.repos.get_collaborator_permission_level(
+                owner, repo, username
+            )
+            self._update_rate_limit(resp.headers)
+            return resp.parsed_data.permission
+        except Exception:
+            return None
+
+    # -----------------------------------------------------------------------
+    # Raw client escape hatch (used by ci_manager for DevTools-specific calls)
+    # -----------------------------------------------------------------------
+
+    @property
+    def client(self) -> GitHub:
+        """
+        Expose the underlying githubkit client for calls not wrapped by this class.
+
+        Callers must call self.update_rate_limit(resp.headers) after each response
+        so that rate limit state is tracked globally.
+        """
+        return self._client
+
+    def update_rate_limit(self, headers) -> None:
+        """Update rate limit state from a response's headers.
+
+        Use when calling self.client directly for operations not wrapped by this
+        class (e.g. ci_manager workflow/branch/release management calls).
+        """
+        self._update_rate_limit(headers)
+
+    def _check_rate_limit(self) -> bool:
+        """
+        Return True if this auth source is currently rate-limited (remaining == 0
+        and the reset window has not yet passed).
+
+        Fires on_status("rate_limit_exceeded", reset_str) so listeners can show a
+        dialog. Callers MUST return their fallback value immediately when True is
+        returned — no GitHub request should be made.
+        """
+        info = _rate_limit_global.get(self._auth_source)
+        if info is None:
+            return False
+        remaining, _limit, reset_ts = info
+        if remaining == 0 and reset_ts and time.time() < reset_ts:
+            self._on_status("rate_limit_exceeded", _format_reset_time(reset_ts))
+            return True
+        return False
 
     def download_asset(
         self,
@@ -278,6 +367,21 @@ class GitHubAPI:
         return self._rate_limit_remaining
 
     @property
+    def rate_limit_limit(self) -> Optional[int]:
+        return self._rate_limit_limit
+
+    @property
+    def rate_limit_reset(self) -> Optional[int]:
+        return self._rate_limit_reset
+
+    @staticmethod
+    def get_global_rate_limit_info() -> Optional[tuple]:
+        """Return (remaining, limit, reset_ts) from the most recent API call, or None."""
+        if not _rate_limit_global:
+            return None
+        return min(_rate_limit_global.values(), key=lambda v: v[0])
+
+    @property
     def auth_source(self) -> str:
         """Returns 'user_override', 'bundled', or 'unauthenticated'."""
         return self._auth_source
@@ -291,7 +395,14 @@ class GitHubAPI:
             return GitHub(auth=TokenAuthStrategy(self._token))
         return GitHub()
 
-    def _resolve_token(self, bundled_path: Optional[Path]) -> tuple[Optional[str], str]:
+    def _resolve_token(
+        self,
+        bundled_path: Optional[Path],
+        direct_token: Optional[str] = None,
+    ) -> tuple[Optional[str], str]:
+        # 0. Direct token (highest priority — used by DevTools auth/CI flows)
+        if direct_token:
+            return direct_token.strip(), "devtools"
         # 1. User override
         user_override = Path.home() / ".apf_manager" / "github_token.json"
         if user_override.exists():
@@ -325,9 +436,34 @@ class GitHubAPI:
     def _update_rate_limit(self, headers) -> None:
         try:
             remaining = headers.get("X-RateLimit-Remaining")
+            limit = headers.get("X-RateLimit-Limit")
+            reset = headers.get("X-RateLimit-Reset")
             if remaining is not None:
                 self._rate_limit_remaining = int(remaining)
-                if self._rate_limit_remaining < 10:
+            if limit is not None:
+                self._rate_limit_limit = int(limit)
+            if reset is not None:
+                self._rate_limit_reset = int(reset)
+            if self._rate_limit_remaining is not None:
+                limit_str = f"/{self._rate_limit_limit}" if self._rate_limit_limit is not None else ""
+                self._on_status(
+                    "debug",
+                    f"GitHub API: {self._rate_limit_remaining}{limit_str} requests remaining",
+                )
+                _rate_limit_global[self._auth_source] = (
+                    self._rate_limit_remaining,
+                    self._rate_limit_limit or 5000,
+                    self._rate_limit_reset or 0,
+                )
+                _save_rate_limit_cache()
+                if self._rate_limit_remaining == 0 and self._rate_limit_reset:
+                    # Fire immediately after the last successful call so the dialog
+                    # appears before the app attempts another request.
+                    self._on_status(
+                        "rate_limit_exceeded",
+                        _format_reset_time(self._rate_limit_reset),
+                    )
+                elif self._rate_limit_remaining < 10:
                     self._on_status(
                         "warn",
                         f"GitHub rate limit low: {self._rate_limit_remaining} requests remaining",
@@ -341,13 +477,16 @@ class GitHubAPI:
 
     def _handle_rate_limit(self, exc: RateLimitExceeded, cache_key: str, fallback):
         retry_secs = int(exc.retry_after.total_seconds()) if exc.retry_after else 0
-        reset_str = _format_reset_time(int(time.time()) + retry_secs) if retry_secs else "soon"
+        reset_ts = int(time.time()) + retry_secs if retry_secs else 0
+        reset_str = _format_reset_time(reset_ts) if reset_ts else "soon"
         stale = self._load_stale_json(cache_key)
         if stale is not None:
             self._on_status("warn", f"GitHub rate limit hit (resets ~{reset_str}) — using cached content")
-            return stale
-        self._on_status("error", f"GitHub rate limit hit (resets ~{reset_str}) — no cached content available")
-        return fallback
+        else:
+            self._on_status("error", f"GitHub rate limit hit (resets ~{reset_str}) — no cached content available")
+        # Signal callers that can show a dialog (level "rate_limit_exceeded", msg = reset time string)
+        self._on_status("rate_limit_exceeded", reset_str)
+        return stale if stale is not None else fallback
 
     def _handle_request_failed(self, exc: RequestFailed, cache_key: str, fallback):
         sc = exc.response.status_code
@@ -398,9 +537,61 @@ def _url_key(url: str) -> str:
 
 
 def _format_reset_time(unix_ts: int) -> str:
-    """Format a Unix timestamp as a human-readable local time string."""
+    """Format a Unix timestamp as '~N minutes (H:MM AM/PM TZ)' relative + absolute local time."""
     import datetime
+    import time as _time
     try:
-        return datetime.datetime.fromtimestamp(unix_ts).strftime("%H:%M:%S")
+        dt = datetime.datetime.fromtimestamp(unix_ts)
+        minutes = max(0, int((unix_ts - _time.time()) / 60))
+        hour_12 = str(int(dt.strftime("%I")))   # "%I" zero-pads; int() strips it
+        am_pm   = dt.strftime("%p")             # "AM" or "PM"
+        minute  = dt.strftime("%M")
+        tz      = _time.strftime("%Z")          # local timezone abbreviation e.g. "PST", "EST"
+        time_str = f"{hour_12}:{minute} {am_pm} {tz}"
+        if minutes <= 0:
+            return f"now ({time_str})"
+        if minutes == 1:
+            return f"~1 minute ({time_str})"
+        return f"~{minutes} minutes ({time_str})"
     except Exception:
         return str(unix_ts)
+
+
+def _load_rate_limit_cache() -> None:
+    """
+    Load persisted rate limit state into _rate_limit_global on app startup.
+
+    Only entries whose reset window has not yet passed are applied — stale
+    entries (reset_ts <= now) are ignored so expired limits don't block calls.
+    """
+    try:
+        if not _RATE_LIMIT_CACHE_PATH.exists():
+            return
+        data = json.loads(_RATE_LIMIT_CACHE_PATH.read_text(encoding="utf-8"))
+        now = time.time()
+        for source, info in data.items():
+            reset_ts = info.get("reset_ts", 0)
+            if now < reset_ts:  # window still active — restore to in-memory state
+                _rate_limit_global[source] = (
+                    info["remaining"], info["limit"], reset_ts
+                )
+    except Exception:
+        pass
+
+
+def _save_rate_limit_cache() -> None:
+    """Persist current _rate_limit_global to disk after every rate limit header update."""
+    try:
+        _RATE_LIMIT_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            src: {"remaining": r, "limit": l, "reset_ts": ts}
+            for src, (r, l, ts) in _rate_limit_global.items()
+        }
+        _RATE_LIMIT_CACHE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+# Load persisted state on module import so the proactive gate is active from the
+# first API call even if the app was restarted while rate-limited.
+_load_rate_limit_cache()

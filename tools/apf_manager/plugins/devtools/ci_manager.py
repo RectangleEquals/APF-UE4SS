@@ -1,5 +1,5 @@
 """
-CIManager — GitHub Actions and repo management via githubkit.
+CIManager — GitHub Actions and repo management via GitHubAPI wrapper.
 
 All public methods except dispatch_workflow() are synchronous.
 Callers wrap them in background threads.
@@ -27,9 +27,10 @@ class CIManager:
     # Helpers
     # -----------------------------------------------------------------------
 
-    def _gh(self, token: str):
-        from githubkit import GitHub, TokenAuthStrategy
-        return GitHub(TokenAuthStrategy(token))
+    def _api(self, token: str):
+        """Return a GitHubAPI instance using the given token directly."""
+        from ...core.remote.github_api import GitHubAPI
+        return GitHubAPI(self._owner, self._repo, direct_token=token)
 
     # -----------------------------------------------------------------------
     # Workflows — dispatch + poll
@@ -59,12 +60,16 @@ class CIManager:
         """
         def _run():
             try:
-                gh = self._gh(token)
+                api = self._api(token)
 
-                gh.rest.actions.create_workflow_dispatch(
+                resp = api.client.rest.actions.create_workflow_dispatch(
                     self._owner, self._repo, workflow_id,
                     {"ref": ref, "inputs": inputs or {}},
                 )
+                try:
+                    api.update_rate_limit(resp.headers)
+                except Exception:
+                    pass
                 on_status("dispatched")
 
                 time.sleep(_POST_DISPATCH_DELAY)
@@ -73,10 +78,11 @@ class CIManager:
                 while time.monotonic() < deadline:
                     try:
                         # Poll runs for this specific workflow (more accurate than repo-wide)
-                        resp = gh.rest.actions.list_workflow_runs(
+                        resp = api.client.rest.actions.list_workflow_runs(
                             self._owner, self._repo, workflow_id,
                             per_page=1,
                         )
+                        api.update_rate_limit(resp.headers)
                         runs = resp.parsed_data.workflow_runs
                         if runs:
                             run        = runs[0]
@@ -110,8 +116,9 @@ class CIManager:
         Return all workflows in the repo.
         Each dict: {id, name, path, state, html_url}
         """
-        gh = self._gh(token)
-        resp = gh.rest.actions.list_repo_workflows(self._owner, self._repo)
+        api = self._api(token)
+        resp = api.client.rest.actions.list_repo_workflows(self._owner, self._repo)
+        api.update_rate_limit(resp.headers)
         workflows = resp.parsed_data.workflows
         return [
             {
@@ -129,11 +136,12 @@ class CIManager:
         Return recent runs for a specific workflow.
         Each dict: {id, status, conclusion, created_at, html_url, head_branch}
         """
-        gh = self._gh(token)
-        resp = gh.rest.actions.list_workflow_runs(
+        api = self._api(token)
+        resp = api.client.rest.actions.list_workflow_runs(
             self._owner, self._repo, workflow_id,
             per_page=limit,
         )
+        api.update_rate_limit(resp.headers)
         runs = resp.parsed_data.workflow_runs
         return [
             {
@@ -150,8 +158,12 @@ class CIManager:
     def cancel_run(self, run_id: int, token: str) -> bool:
         """Cancel a running workflow run. Returns True on success."""
         try:
-            gh = self._gh(token)
-            gh.rest.actions.cancel_workflow_run(self._owner, self._repo, run_id)
+            api = self._api(token)
+            resp = api.client.rest.actions.cancel_workflow_run(self._owner, self._repo, run_id)
+            try:
+                api.update_rate_limit(resp.headers)
+            except Exception:
+                pass
             return True
         except Exception:
             return False
@@ -162,8 +174,9 @@ class CIManager:
 
     def list_tags(self, token: str, limit: int = 50) -> list[str]:
         """Return tag names (most recent first, up to limit)."""
-        gh = self._gh(token)
-        resp = gh.rest.repos.list_tags(self._owner, self._repo, per_page=limit)
+        api = self._api(token)
+        resp = api.client.rest.repos.list_tags(self._owner, self._repo, per_page=limit)
+        api.update_rate_limit(resp.headers)
         return [t.name for t in resp.parsed_data]
 
     # -----------------------------------------------------------------------
@@ -175,8 +188,9 @@ class CIManager:
         Return recent releases.
         Each dict: {id, tag_name, name, published_at, html_url, draft, prerelease}
         """
-        gh = self._gh(token)
-        resp = gh.rest.repos.list_releases(self._owner, self._repo, per_page=limit)
+        api = self._api(token)
+        resp = api.client.rest.repos.list_releases(self._owner, self._repo, per_page=limit)
+        api.update_rate_limit(resp.headers)
         return [
             {
                 "id":           r.id,
@@ -203,8 +217,8 @@ class CIManager:
         Create a GitHub release. Returns the release dict on success.
         Raises on API error.
         """
-        gh = self._gh(token)
-        resp = gh.rest.repos.create_release(
+        api = self._api(token)
+        resp = api.client.rest.repos.create_release(
             self._owner, self._repo,
             {
                 "tag_name":               tag,
@@ -215,6 +229,7 @@ class CIManager:
                 "generate_release_notes": not bool(body),
             },
         )
+        api.update_rate_limit(resp.headers)
         r = resp.parsed_data
         return {
             "id":       r.id,
@@ -232,8 +247,9 @@ class CIManager:
         Return all branches.
         Each dict: {name, protected}
         """
-        gh = self._gh(token)
-        resp = gh.rest.repos.list_branches(self._owner, self._repo, per_page=100)
+        api = self._api(token)
+        resp = api.client.rest.repos.list_branches(self._owner, self._repo, per_page=100)
+        api.update_rate_limit(resp.headers)
         return [
             {
                 "name":      b.name,
@@ -245,11 +261,15 @@ class CIManager:
     def create_branch(self, name: str, from_sha: str, token: str) -> bool:
         """Create a branch pointing at from_sha. Returns True on success."""
         try:
-            gh = self._gh(token)
-            gh.rest.git.create_ref(
+            api = self._api(token)
+            resp = api.client.rest.git.create_ref(
                 self._owner, self._repo,
                 {"ref": f"refs/heads/{name}", "sha": from_sha},
             )
+            try:
+                api.update_rate_limit(resp.headers)
+            except Exception:
+                pass
             return True
         except Exception:
             return False
@@ -257,8 +277,12 @@ class CIManager:
     def delete_branch(self, name: str, token: str) -> bool:
         """Delete a branch by name. Returns True on success."""
         try:
-            gh = self._gh(token)
-            gh.rest.git.delete_ref(self._owner, self._repo, f"heads/{name}")
+            api = self._api(token)
+            resp = api.client.rest.git.delete_ref(self._owner, self._repo, f"heads/{name}")
+            try:
+                api.update_rate_limit(resp.headers)
+            except Exception:
+                pass
             return True
         except Exception:
             return False

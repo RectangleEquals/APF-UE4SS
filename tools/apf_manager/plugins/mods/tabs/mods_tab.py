@@ -12,10 +12,8 @@ Disabled until at least 1 registry is added.
 
 from __future__ import annotations
 
-import re
 import webbrowser
 from typing import Optional, TYPE_CHECKING
-from urllib.parse import urljoin
 
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
@@ -28,41 +26,6 @@ if TYPE_CHECKING:
     from ...registry_service import RegistryService, RegistryModEntry
 
 
-# ---------------------------------------------------------------------------
-# Link resolution helper
-# ---------------------------------------------------------------------------
-
-def _resolve_links(html: str, raw_url: str) -> str:
-    """Resolve relative links in rendered HTML to absolute raw GitHub URLs.
-
-    All anchor links are given target="_blank" so they open in the system
-    browser instead of navigating the pywebview window (which would lose the
-    close button and cause a softlock).
-    """
-    def _fix_src(m: "re.Match") -> str:
-        url = m.group(1)
-        if url.startswith(("http", "data:", "#")):
-            return m.group(0)
-        return f'src="{urljoin(raw_url, url)}"'
-
-    def _fix_href(m: "re.Match") -> str:
-        url = m.group(1)
-        if url.startswith("#"):
-            return m.group(0)
-        if not url.startswith("http"):
-            url = urljoin(raw_url, url)
-        return f'href="{url}"'
-
-    html = re.sub(r'src="([^"]*)"', _fix_src, html)
-    html = re.sub(r'href="([^"]*)"', _fix_href, html)
-    # Open all links externally to prevent webview navigation.
-    html = re.sub(
-        r'<a\b([^>]*)>',
-        lambda m: m.group(0) if 'target=' in m.group(1)
-        else f'<a{m.group(1)} target="_blank" rel="noopener">',
-        html,
-    )
-    return html
 
 
 class ModsTab(MDBoxLayout):
@@ -281,23 +244,14 @@ class ModsTab(MDBoxLayout):
         if not svc:
             return
         docs = svc.get_mod_docs(mod)
-        if docs and self._host.has_service("html_viewer"):
-            viewer = self._host.get_service("html_viewer")
-            # Fetch and render the README
-            api = svc._make_api(mod.owner, mod.repo)
-            md_text = api.fetch_text(docs[0].raw_url)
-            if md_text:
-                try:
-                    from ....plugins.docs_viewer.md_to_html import convert
-                    html = convert(md_text, title=mod.name or mod.mod_id)
-                    html = _resolve_links(html, docs[0].raw_url)
-                    viewer.show(mod.name or mod.mod_id, html)
-                    return
-                except Exception:
-                    pass
-        # Fallback: open in browser
-        if docs:
-            webbrowser.open(docs[0].raw_url)
+        if not docs:
+            return
+        if self._host.has_service("docs_viewer"):
+            viewer = self._host.get_service("docs_viewer")
+            viewer.open_url(docs[0].raw_url, title=f"{mod.owner}/{mod.repo} — {mod.name or mod.mod_id}")
+            return
+        # Fallback: open in system browser
+        webbrowser.open(docs[0].raw_url)
 
     def _registry_svc(self) -> Optional["RegistryService"]:
         if self._host.has_service("registry"):

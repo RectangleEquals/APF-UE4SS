@@ -393,10 +393,24 @@ class RegistriesTab(MDBoxLayout):
                 height=dp(40),
                 spacing=dp(8),
             )
-            row.add_widget(MDLabel(
-                text=f"{r['owner']}/{r['repo']}  ★{r['stars']}",
-                size_hint=(1, 1),
+            info_box = MDBoxLayout(orientation="horizontal", adaptive_height=True, spacing=dp(4), size_hint_x=1)
+            info_box.add_widget(MDLabel(
+                text=f"{r['owner']}/{r['repo']}",
+                size_hint_x=1,
+                adaptive_height=True,
             ))
+            star_box = MDBoxLayout(orientation="horizontal", adaptive_height=True, size_hint_x=None, width=dp(70), spacing=dp(2))
+            star_box.add_widget(MDIcon(
+                icon="star",
+                size_hint=(None, None),
+                size=(dp(16), dp(16)),
+                theme_icon_color="Custom",
+                icon_color=(1, 0.84, 0, 1),
+                pos_hint={"center_y": 0.5},
+            ))
+            star_box.add_widget(MDLabel(text=str(r["stars"]), size_hint_x=None, width=dp(44), adaptive_height=True))
+            info_box.add_widget(star_box)
+            row.add_widget(info_box)
             row.add_widget(MDButton(
                 MDButtonText(text="Add"),
                 style="filled",

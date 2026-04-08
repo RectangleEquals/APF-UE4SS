@@ -177,21 +177,19 @@ class GitHubAuth:
         if not token:
             return False
         try:
-            from githubkit import GitHub, TokenAuthStrategy
-            gh = GitHub(TokenAuthStrategy(token))
+            from ...core.remote.github_api import GitHubAPI
+            api = GitHubAPI(repo_owner, repo_name, direct_token=token)
 
-            user_resp = gh.rest.users.get_authenticated()
-            self._username = user_resp.parsed_data.login
+            username = api.get_authenticated_user()
+            if not username:
+                self._permission = "none"
+                return False
+            self._username = username
 
-            try:
-                perm_resp = gh.rest.repos.get_collaborator_permission_level(
-                    repo_owner, repo_name, self._username
-                )
-                self._permission = perm_resp.parsed_data.permission
-            except Exception:
-                # App not installed on repo, or user is not a collaborator.
-                # Default to "read" — correct for public repos.
-                self._permission = "read"
+            permission = api.get_collaborator_permission(repo_owner, repo_name, username)
+            # None means App not installed or user is not a collaborator.
+            # Default to "read" — correct for public repos.
+            self._permission = permission or "read"
 
             return True
         except Exception:

@@ -103,6 +103,7 @@ class DocsPanel:
         title: str = "",
         sidebar_mode: str = "default",
         show_mode_toggle: bool = True,
+        show_sidebar: bool = True,
     ) -> None:
         """
         Open a local .md file in the full SPA viewer (sidebar, search, back/forward).
@@ -114,6 +115,7 @@ class DocsPanel:
                       "tree" (collapsible H1→H2→H3 hierarchy). Default: "default".
         show_mode_toggle: whether to show the Default/Verbose/Tree chips in the
                           sidebar footer so the user can switch modes. Default: True.
+        show_sidebar: whether to show the left sidebar. Default: True.
         """
         viewer = self._html_viewer()
         if viewer is None:
@@ -151,18 +153,14 @@ class DocsPanel:
             {doc_key: body_html}, ensure_ascii=False
         ).replace("</", "<\\/")
 
-        fw_version = _get_framework_version()
-        github_css = _load_github_css()
-        template = _load_spa_template()
-        spa_html = (
-            template
-            .replace("{TREE_JSON}", tree_json)
-            .replace("{DOCS_HTML_JSON}", docs_html_json)
-            .replace("{GITHUB_CSS}", github_css)
-            .replace("{FRAMEWORK_VERSION}", fw_version)
-            .replace("{SIDEBAR_MODE}", sidebar_mode)
-            .replace("{SHOW_MODE_TOGGLE}", "true" if show_mode_toggle else "false")
-            .replace("{INITIAL_PATH}", doc_key)
+        spa_html = self._build_spa_html(
+            tree_json=tree_json,
+            docs_html_json=docs_html_json,
+            fw_version=_get_framework_version(),
+            sidebar_mode=sidebar_mode,
+            show_mode_toggle=show_mode_toggle,
+            initial_path=doc_key,
+            show_sidebar=show_sidebar,
         )
 
         viewer.show(
@@ -170,6 +168,85 @@ class DocsPanel:
             spa_html,
             width=1100,
             height=780,
+            inject_titlebar=False,
+        )
+
+    def open_url(
+        self,
+        url: str,
+        title: str = "",
+        show_sidebar: bool = False,
+        show_mode_toggle: bool = False,
+    ) -> None:
+        """
+        Fetch a remote markdown document by raw URL and open it in the SPA viewer.
+
+        Defaults to no sidebar and no mode toggle — appropriate for single-doc views
+        like mod documentation. Falls back to opening in the system browser on fetch
+        failure.
+
+        url: raw URL to a .md file (e.g. raw.githubusercontent.com/…/README.md)
+        title: window + title bar label; derived from URL filename if empty
+        show_sidebar: whether to show the left nav sidebar. Default: False.
+        show_mode_toggle: whether to show the sidebar mode chips. Default: False.
+        """
+        import httpx
+        from .md_to_html import convert_body
+
+        viewer = self._html_viewer()
+        if viewer is None:
+            self._host.log("[docs_viewer] html_viewer service not available")
+            return
+
+        try:
+            resp = httpx.get(url, timeout=15, follow_redirects=True)
+            resp.raise_for_status()
+            md_text = resp.text
+        except Exception:
+            import webbrowser
+            webbrowser.open(url)
+            return
+
+        display_title = (
+            title or url.split("/")[-1].replace(".md", "").replace("-", " ").replace("_", " ").title()
+        )
+        body_html = convert_body(md_text)
+        doc_key = url.split("/")[-1] or "readme.md"
+
+        tree_json = json.dumps(
+            [
+                {
+                    "display_name": display_title,
+                    "path": doc_key,
+                    "download_url": url,
+                    "section": "",
+                    "commit": "",
+                    "commit_url": "",
+                }
+            ],
+            ensure_ascii=False,
+        ).replace("</", "<\\/")
+
+        docs_html_json = json.dumps(
+            {doc_key: body_html}, ensure_ascii=False
+        ).replace("</", "<\\/")
+
+        spa_html = self._build_spa_html(
+            tree_json=tree_json,
+            docs_html_json=docs_html_json,
+            fw_version=_get_framework_version(),
+            sidebar_mode="default",
+            show_mode_toggle=show_mode_toggle,
+            initial_path=doc_key,
+            show_sidebar=show_sidebar,
+            titlebar_text=display_title,
+        )
+
+        viewer.show(
+            display_title,
+            spa_html,
+            width=1000,
+            height=750,
             inject_titlebar=False,
         )
 
@@ -211,6 +288,7 @@ class DocsPanel:
                 force_dev_docs=force_dev_docs,
                 sidebar_mode=sidebar_mode,
                 show_mode_toggle=show_mode_toggle,
+                show_sidebar=True,
             )
 
     # -----------------------------------------------------------------------
@@ -254,6 +332,7 @@ class DocsPanel:
         show_mode_toggle: bool = True,
         initial_path: str | None = None,
         force_dev_docs: bool = False,
+        show_sidebar: bool = True,
     ) -> None:
         """
         Build and open the SPA docs browser window.
@@ -335,17 +414,14 @@ class DocsPanel:
 
         docs_html_json = json.dumps(docs_html, ensure_ascii=False).replace("</", "<\\/")
 
-        github_css = _load_github_css()
-        template = _load_spa_template()
-        spa_html = (
-            template
-            .replace("{TREE_JSON}", tree_json)
-            .replace("{DOCS_HTML_JSON}", docs_html_json)
-            .replace("{GITHUB_CSS}", github_css)
-            .replace("{FRAMEWORK_VERSION}", fw_version)
-            .replace("{SIDEBAR_MODE}", sidebar_mode)
-            .replace("{SHOW_MODE_TOGGLE}", "true" if show_mode_toggle else "false")
-            .replace("{INITIAL_PATH}", initial_path or "")
+        spa_html = self._build_spa_html(
+            tree_json=tree_json,
+            docs_html_json=docs_html_json,
+            fw_version=fw_version,
+            sidebar_mode=sidebar_mode,
+            show_mode_toggle=show_mode_toggle,
+            initial_path=initial_path or "",
+            show_sidebar=show_sidebar,
         )
 
         viewer.show(
@@ -390,6 +466,33 @@ class DocsPanel:
         if self._host.has_service("html_viewer"):
             return self._host.get_service("html_viewer")
         return None
+
+    def _build_spa_html(
+        self,
+        tree_json: str,
+        docs_html_json: str,
+        fw_version: str,
+        sidebar_mode: str = "default",
+        show_mode_toggle: bool = True,
+        initial_path: str = "",
+        show_sidebar: bool = True,
+        titlebar_text: str = "",
+    ) -> str:
+        """Build the full SPA HTML string by substituting all template placeholders."""
+        github_css = _load_github_css()
+        template = _load_spa_template()
+        return (
+            template
+            .replace("{TREE_JSON}", tree_json)
+            .replace("{DOCS_HTML_JSON}", docs_html_json)
+            .replace("{GITHUB_CSS}", github_css)
+            .replace("{FRAMEWORK_VERSION}", fw_version)
+            .replace("{SIDEBAR_MODE}", sidebar_mode)
+            .replace("{SHOW_MODE_TOGGLE}", "true" if show_mode_toggle else "false")
+            .replace("{SHOW_SIDEBAR}", "true" if show_sidebar else "false")
+            .replace("{INITIAL_PATH}", initial_path)
+            .replace("{TITLEBAR_TEXT}", titlebar_text)
+        )
 
     def _on_api_status(self, level: str, message: str) -> None:
         self._host.log(f"[docs_viewer] [{level.upper()}] {message}")

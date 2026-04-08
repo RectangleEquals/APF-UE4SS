@@ -22,7 +22,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText
-from kivymd.uix.label import MDLabel
+from kivymd.uix.label import MDIcon, MDLabel
 
 if TYPE_CHECKING:
     from ...registry_service import RegistryService
@@ -162,15 +162,28 @@ class QueueTab(MDBoxLayout):
                 text_color=(0.9, 0.3, 0.3, 1) if blocking else (0.9, 0.6, 0.1, 1),
             ))
             for e in errors:
-                icon = "✗" if e.severity == "error" else "⚠"
-                color = (0.9, 0.3, 0.3, 1) if e.severity == "error" else (0.9, 0.6, 0.1, 1)
-                self._content.add_widget(MDLabel(
-                    text=f"{icon} {e.message}",
+                is_err = e.severity == "error"
+                color = (0.9, 0.3, 0.3, 1) if is_err else (0.9, 0.6, 0.1, 1)
+                err_row = MDBoxLayout(
+                    orientation="horizontal",
                     size_hint_y=None,
                     height=dp(28),
+                    spacing=dp(6),
+                )
+                err_row.add_widget(MDIcon(
+                    icon="close-circle" if is_err else "alert",
+                    size_hint=(None, 1),
+                    width=dp(20),
                     theme_text_color="Custom",
                     text_color=color,
                 ))
+                err_row.add_widget(MDLabel(
+                    text=e.message,
+                    size_hint=(1, 1),
+                    theme_text_color="Custom",
+                    text_color=color,
+                ))
+                self._content.add_widget(err_row)
 
         if self._install_btn:
             if blocking:

@@ -508,6 +508,18 @@ class DevToolsPanel(PluginPanel):
                 req_btn.bind(on_release=lambda *_: self._show_request_write_dialog())
                 box.add_widget(req_btn)
 
+            # --- GitHub API Rate Limit ---
+            box.add_widget(MDDivider())
+            box.add_widget(MDLabel(
+                text="GitHub API",
+                font_style="Label",
+                role="medium",
+                adaptive_height=True,
+                theme_text_color="Secondary",
+            ))
+            self._build_rate_limit_section(box)
+
+
         # --- Tab 2: Source Control ---
         sc = self._box_source_control
         sc.clear_widgets()
@@ -543,6 +555,40 @@ class DevToolsPanel(PluginPanel):
         if not write_tier:
             self._branches_list = None
             self._status_labels.pop("branches", None)
+
+    # -----------------------------------------------------------------------
+    # Rate limit helpers
+    # -----------------------------------------------------------------------
+
+    def _build_rate_limit_section(self, box: MDBoxLayout) -> None:
+        from ...core.remote.github_api import GitHubAPI, _format_reset_time
+        rl = GitHubAPI.get_global_rate_limit_info()
+        if rl:
+            remaining, limit, reset_ts = rl
+            color = (0.9, 0.3, 0.3, 1) if remaining < 10 else (0.3, 0.8, 0.4, 1)
+            rl_row = MDBoxLayout(orientation="horizontal", adaptive_height=True, spacing=dp(8))
+            rl_row.add_widget(MDLabel(
+                text=f"Requests remaining: {remaining} / {limit}",
+                adaptive_height=True,
+                size_hint_x=0.6,
+                theme_text_color="Custom",
+                text_color=color,
+            ))
+            reset_text = f"Resets at: {_format_reset_time(reset_ts)}" if reset_ts else ""
+            rl_row.add_widget(MDLabel(
+                text=reset_text,
+                adaptive_height=True,
+                size_hint_x=0.4,
+                theme_text_color="Secondary",
+            ))
+            box.add_widget(rl_row)
+        else:
+            box.add_widget(MDLabel(
+                text="Rate limit: unknown (no API calls made yet)",
+                adaptive_height=True,
+                theme_text_color="Secondary",
+                font_style="Body",
+            ))
 
     # -----------------------------------------------------------------------
     # Tab content builders

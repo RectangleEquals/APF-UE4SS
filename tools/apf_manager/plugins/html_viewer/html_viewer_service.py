@@ -43,7 +43,7 @@ from typing import Callable, Optional
 
 
 # ---------------------------------------------------------------------------
-# Injected title bar snippet (prepended to <body> of every simple document)
+# Title bar styles
 # ---------------------------------------------------------------------------
 
 _TITLEBAR_STYLE = """
@@ -68,8 +68,9 @@ _TITLEBAR_STYLE = """
 </style>
 """
 
+
 def _inject_titlebar(title: str, html: str) -> str:
-    """Prepend a sticky draggable title bar with close button to the HTML body."""
+    """Prepend a sticky draggable title bar with a close button."""
     bar = (
         f'{_TITLEBAR_STYLE}'
         f'<div class="apf-titlebar" pywebview-drag-region>'
@@ -123,6 +124,7 @@ def _webview_process_main(
                 webbrowser.open(url)
 
     api = _API()
+
     win = webview.create_window(
         title,
         html=html,
@@ -202,7 +204,8 @@ class HTMLViewerService:
         width/height   — Requested window size; clamped to 90%/92% of main window
         extra_api      — Reserved; currently a no-op (process boundary)
         inject_titlebar — If True (default), prepend a draggable title bar with
-                          close button. Set False when the HTML already has its own.
+                          a close button before writing to temp file.
+                          Set False when the HTML already has its own chrome (e.g. SPA).
         on_closed      — Callback fired (on Kivy main thread) when window closes
         """
         from kivy.clock import Clock
@@ -210,9 +213,6 @@ class HTMLViewerService:
         from kivy.uix.modalview import ModalView
 
         # ── Fix 39-B: full-screen translucent scrim ────────────────────────
-        # ModalView.overlay_color draws behind the panel, not as the panel.
-        # Using background_color + size_hint=(1,1) + background='' gives a
-        # reliable full-screen semi-transparent dim.
         overlay = ModalView(
             size_hint=(1, 1),
             background="",
@@ -252,9 +252,9 @@ class HTMLViewerService:
 
         _KW.bind(on_minimize=_on_min, on_restore=_on_res)
 
+        # Inject title bar in parent before writing to temp file
         final_html = _inject_titlebar(title, html) if inject_titlebar else html
 
-        # Write HTML to a temp file to avoid process arg-length limits
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".html")
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:

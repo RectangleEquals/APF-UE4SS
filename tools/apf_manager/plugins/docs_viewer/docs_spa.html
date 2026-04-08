@@ -245,6 +245,8 @@ const FRAMEWORK_VERSION = "{FRAMEWORK_VERSION}";
 /* ── Sidebar mode config (embedded by Python) ────────────────────────── */
 const SIDEBAR_MODE_INIT = "{SIDEBAR_MODE}";
 const SHOW_MODE_TOGGLE = {SHOW_MODE_TOGGLE};
+const SHOW_SIDEBAR = {SHOW_SIDEBAR};
+const TITLEBAR_TEXT = "{TITLEBAR_TEXT}";  // empty → use default version-based title
 
 /* ── Initial doc path to navigate to (embedded by Python; empty = first) ── */
 const INITIAL_PATH = "{INITIAL_PATH}";
@@ -551,9 +553,9 @@ function _renderDoc(entry, jumpTarget) {
   // Update title bar — show framework version + per-doc commit chip (dev mode)
   var titleEl = document.getElementById('apf-title-text');
   if (titleEl) {
-    var baseTitle = FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?'
+    var baseTitle = TITLEBAR_TEXT || (FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?'
       ? 'Documentation \u2014 v' + FRAMEWORK_VERSION
-      : 'Documentation';
+      : 'Documentation');
     titleEl.textContent = baseTitle;
     if (entry.commit) {
       var chip = document.createElement('span');
@@ -738,10 +740,21 @@ function filterTree(query) {
     if (footer) footer.style.display = 'none';
   }
 
+  // Hide sidebar if caller requested no sidebar (e.g. single-doc views from mod docs)
+  if (!SHOW_SIDEBAR) {
+    var sb = document.getElementById('sidebar');
+    if (sb) sb.style.display = 'none';
+    // No layout change needed — .container is flexbox; hiding the sidebar expands content
+  }
+
   // Set initial title bar text
   var titleEl = document.getElementById('apf-title-text');
-  if (titleEl && FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?') {
-    titleEl.textContent = 'Documentation \u2014 v' + FRAMEWORK_VERSION;
+  if (titleEl) {
+    if (TITLEBAR_TEXT) {
+      titleEl.textContent = TITLEBAR_TEXT;
+    } else if (FRAMEWORK_VERSION && FRAMEWORK_VERSION !== '?') {
+      titleEl.textContent = 'Documentation \u2014 v' + FRAMEWORK_VERSION;
+    }
   }
 
   // Apply initial sidebar mode (updates chips; must run before navigateTo so _sidebarMode is correct)
