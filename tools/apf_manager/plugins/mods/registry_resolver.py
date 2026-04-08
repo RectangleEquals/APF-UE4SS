@@ -19,7 +19,6 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable
 
@@ -72,6 +71,7 @@ class RegistryResolver:
     def __init__(self, on_status: Optional[Callable[[str, str], None]] = None) -> None:
         self._on_status = on_status or (lambda level, msg: None)
         self._blacklist_cache: Optional[set[str]] = None  # in-memory only, never persisted
+        self._blacklist_cache_time: float = 0.0
 
     # -----------------------------------------------------------------------
     # Traversal
@@ -349,7 +349,7 @@ class RegistryResolver:
                 pass
 
         results = self._call_search_api(f"apf-ue4ss-registry-{game_id}")
-        if results is not None:
+        if results:
             cache.set(cache_key, json.dumps(results))
         return results or []
 
@@ -361,42 +361,9 @@ class RegistryResolver:
         return self._call_search_api(f"apf-ue4ss-registry-{game_id}-core") or []
 
     def _call_search_api(self, topic: str) -> Optional[list[dict]]:
-        import httpx
-        token = self._load_bundled_token()
-        headers = {
-            "User-Agent": "APFManager/1.0",
-            "Accept": "application/vnd.github+json",
-        }
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        try:
-            resp = httpx.get(
-                "https://api.github.com/search/repositories",
-                params={"q": f"topic:{topic}", "per_page": 30},
-                headers=headers,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            results = []
-            for item in resp.json().get("items", []):
-                pushed_at = item.get("pushed_at", "")
-                try:
-                    dt = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
-                    days = (datetime.now(timezone.utc) - dt).days
-                except Exception:
-                    days = 999
-                results.append({
-                    "owner": item["owner"]["login"],
-                    "repo": item["name"],
-                    "stars": item.get("stargazers_count", 0),
-                    "description": item.get("description", ""),
-                    "html_url": item.get("html_url", ""),
-                    "last_push_days": days,
-                })
-            return results
-        except Exception as exc:
-            self._on_status("warn", f"GitHub search failed: {exc}")
-            return None
+        api = self._make_api(_BLACKLIST_OWNER, _BLACKLIST_REPO)
+        results = api.search_repos(f"topic:{topic}")
+        return results if results is not None else None
 
     # -----------------------------------------------------------------------
     # Blacklist
@@ -404,28 +371,29 @@ class RegistryResolver:
 
     def fetch_blacklist(self) -> set[str]:
         """
-        Fetch blacklist.json live from the APF repo.  Never cached.
-        Result held in memory for the session.
+        Fetch blacklist.json live from the APF repo.  Never cached to disk.
+        In-memory TTL: 1 hour — ensures blacklist updates take effect within the session.
         """
-        if self._blacklist_cache is not None:
+        import time as _time
+        import json as _json
+        now = _time.time()
+        if self._blacklist_cache is not None and now - self._blacklist_cache_time < 3600:
             return self._blacklist_cache
 
-        token = self._load_bundled_token()
         raw_url = (
             f"https://raw.githubusercontent.com/{_BLACKLIST_OWNER}/"
             f"{_BLACKLIST_REPO}/master/tools/apf_manager/data/blacklist.json"
         )
-        import httpx
-        headers = {"User-Agent": "APFManager/1.0"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        api = self._make_api(_BLACKLIST_OWNER, _BLACKLIST_REPO)
+        text = api.fetch_text(raw_url, force_refresh=True)
         try:
-            resp = httpx.get(raw_url, headers=headers, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            data = _json.loads(text) if text else {}
             self._blacklist_cache = {r.lower() for r in data.get("repos", [])}
+            self._blacklist_cache_time = now
         except Exception:
-            self._blacklist_cache = set()
+            # On parse failure keep old cache and don't advance the timestamp
+            if self._blacklist_cache is None:
+                self._blacklist_cache = set()
         return self._blacklist_cache
 
     def is_blacklisted(self, owner: str, repo: str) -> bool:
@@ -435,6 +403,7 @@ class RegistryResolver:
     def invalidate_blacklist_cache(self) -> None:
         """Force a fresh blacklist fetch on next check."""
         self._blacklist_cache = None
+        self._blacklist_cache_time = 0.0
 
     # -----------------------------------------------------------------------
     # Helpers

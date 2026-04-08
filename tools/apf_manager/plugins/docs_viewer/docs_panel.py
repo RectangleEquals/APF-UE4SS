@@ -190,7 +190,6 @@ class DocsPanel:
         show_sidebar: whether to show the left nav sidebar. Default: False.
         show_mode_toggle: whether to show the sidebar mode chips. Default: False.
         """
-        import httpx
         from .md_to_html import convert_body
 
         viewer = self._html_viewer()
@@ -198,11 +197,34 @@ class DocsPanel:
             self._host.log("[docs_viewer] html_viewer service not available")
             return
 
+        # Parse owner/repo from raw.githubusercontent.com URL for cache namespacing.
+        # e.g. https://raw.githubusercontent.com/owner/repo/branch/path/README.md
         try:
-            resp = httpx.get(url, timeout=15, follow_redirects=True)
-            resp.raise_for_status()
-            md_text = resp.text
-        except Exception:
+            parts = url.replace("https://raw.githubusercontent.com/", "").split("/", 2)
+            r_owner, r_repo = parts[0], parts[1]
+        except (IndexError, ValueError):
+            r_owner, r_repo = "unknown", "unknown"
+
+        is_cached = [False]
+
+        def _silent_status(level: str, msg: str) -> None:
+            if level == "rate_limit_exceeded":
+                return  # doc fetch failure is silent — fall back to cache
+            if level == "warn" and "cached version" in msg:
+                is_cached[0] = True
+                return  # "(cached)" will appear in title bar instead
+            self._on_api_status(level, msg)
+
+        from ...core.remote.github_api import GitHubAPI
+        _token_path = _HERE / ".github_token"
+        _api = GitHubAPI(
+            repo_owner=r_owner,
+            repo_name=r_repo,
+            token_file_path=_token_path if _token_path.exists() else None,
+            on_status=_silent_status,
+        )
+        md_text = _api.fetch_text(url, force_refresh=True)
+        if not md_text:
             import webbrowser
             webbrowser.open(url)
             return
@@ -210,6 +232,8 @@ class DocsPanel:
         display_title = (
             title or url.split("/")[-1].replace(".md", "").replace("-", " ").replace("_", " ").title()
         )
+        if is_cached[0]:
+            display_title = f"{display_title} (cached)"
         body_html = convert_body(md_text)
         doc_key = url.split("/")[-1] or "readme.md"
 

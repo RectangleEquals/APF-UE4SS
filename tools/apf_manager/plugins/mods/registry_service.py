@@ -612,6 +612,10 @@ class RegistryService:
             from kivy.clock import Clock
             Clock.schedule_once(lambda dt, m=msg: self._show_rate_limit_dialog(m))
             return
+        if level == "rate_limit_exceeded_search":
+            from kivy.clock import Clock
+            Clock.schedule_once(lambda dt, m=msg: self._show_search_rate_limit_dialog(m))
+            return
         if level == "debug":
             self._host.log(f"[registry] {msg}")
             return
@@ -635,6 +639,33 @@ class RegistryService:
                 text=(
                     "Too many requests have been made to the GitHub API. "
                     "Registry browsing is unavailable until the limit resets.\n\n"
+                    f"Expected to reset at: {reset_str}"
+                )
+            ),
+            MDDialogButtonContainer(
+                MDButton(MDButtonText(text="OK"), style="text", on_release=_close),
+            ),
+        )
+        self._rate_limit_dialog.open()
+
+    def _show_search_rate_limit_dialog(self, reset_str: str) -> None:
+        if self._rate_limit_dialog is not None:
+            return  # dialog already open — don't stack duplicates
+        from kivymd.uix.dialog import (
+            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+            MDDialogButtonContainer,
+        )
+        from kivymd.uix.button import MDButton, MDButtonText
+        def _close(*_):
+            if self._rate_limit_dialog:
+                self._rate_limit_dialog.dismiss()
+            self._rate_limit_dialog = None
+        self._rate_limit_dialog = MDDialog(
+            MDDialogHeadlineText(text="GitHub Search Limit Reached"),
+            MDDialogSupportingText(
+                text=(
+                    "The GitHub search API allows 30 requests per minute. "
+                    "Registry search is temporarily unavailable.\n\n"
                     f"Expected to reset at: {reset_str}"
                 )
             ),

@@ -91,10 +91,14 @@ class LogPanel(MDBoxLayout):
         self._update_height()
 
     def append(self, message: str) -> None:
-        """Add a log line. Thread-safe via Clock.schedule_once."""
+        """Add a log line (or multiple lines for multiline messages). Thread-safe."""
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        line = f"[{ts}] {message}"
-        Clock.schedule_once(lambda dt: self._add_line(line))
+        lines = message.split("\n")
+        Clock.schedule_once(lambda dt: self._add_line(f"[{ts}] {lines[0]}"))
+        for cont in lines[1:]:
+            stripped = cont.strip()
+            if stripped:
+                Clock.schedule_once(lambda dt, l=stripped: self._add_line(f"  {l}"))
 
     def _add_line(self, line: str) -> None:
         self._lines.append(line)

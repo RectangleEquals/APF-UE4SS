@@ -255,6 +255,101 @@ class GitHubAPI:
         except Exception:
             return None
 
+    def search_repos(self, query: str, per_page: int = 30) -> list[dict]:
+        """
+        Search GitHub repositories by query string.
+
+        Example: search_repos('topic:apf-ue4ss-registry-palworld')
+        Maps to GET /search/repositories?q={query} — NOT /search/topics.
+        Returns list of {owner, repo, stars, description, html_url, last_push_days}.
+
+        Uses a separate rate limit key ('auth_source_search') so the search
+        limit (30 req/min) never pollutes the REST limit display (5000 req/hr).
+        Both limits are persisted to disk and show the warning dialog on exhaustion.
+        """
+        search_key = self._auth_source + "_search"
+        search_info = _rate_limit_global.get(search_key)
+        if search_info:
+            remaining, _limit, reset_ts = search_info
+            if remaining == 0 and reset_ts and time.time() < reset_ts:
+                self._on_status("rate_limit_exceeded_search", _format_reset_time(reset_ts))
+                return []
+
+        cache_key = f"search/{_safe_key(query)}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            try:
+                return json.loads(cached)
+            except Exception:
+                pass
+
+        try:
+            resp = self._client.rest.search.repos(q=query, per_page=per_page)
+            self._update_rate_limit(resp.headers, rate_limit_key=search_key)
+            from datetime import timezone, datetime as _dt
+            now_utc = _dt.now(timezone.utc)
+
+            # Try pydantic first; if the model is out of sync with GitHub's API
+            # (e.g. a required field was removed from responses), fall back to
+            # resp.json() — githubkit's own raw-JSON method, no additional network call.
+            try:
+                raw_items = [
+                    {"owner": item.owner.login if item.owner else "",
+                     "name":  item.name,
+                     "stars": item.stargazers_count,
+                     "desc":  item.description or "",
+                     "url":   item.html_url or "",
+                     "pushed": item.pushed_at}
+                    for item in resp.parsed_data.items
+                ]
+            except Exception:
+                raw_items = [
+                    {"owner": r.get("owner", {}).get("login", ""),
+                     "name":  r.get("name", ""),
+                     "stars": r.get("stargazers_count", 0),
+                     "desc":  r.get("description") or "",
+                     "url":   r.get("html_url") or "",
+                     "pushed": r.get("pushed_at")}
+                    for r in resp.json().get("items", [])
+                ]
+
+            result = []
+            for item in raw_items:
+                try:
+                    pushed = item["pushed"]
+                    if isinstance(pushed, str):
+                        pushed = _dt.fromisoformat(pushed.replace("Z", "+00:00"))
+                    if pushed and hasattr(pushed, "tzinfo") and pushed.tzinfo is None:
+                        pushed = pushed.replace(tzinfo=timezone.utc)
+                    days = (now_utc - pushed).days if pushed else 999
+                except Exception:
+                    days = 999
+                result.append({
+                    "owner":          item["owner"],
+                    "repo":           item["name"],
+                    "stars":          item["stars"],
+                    "description":    item["desc"],
+                    "html_url":       item["url"],
+                    "last_push_days": days,
+                })
+            self._cache.set(cache_key, json.dumps(result), 3600)
+            return result
+
+        except RateLimitExceeded as exc:
+            return self._handle_rate_limit(exc, cache_key, fallback=[])
+        except RequestFailed as exc:
+            return self._handle_request_failed(exc, cache_key, fallback=[])
+        except (_httpx.ConnectError, _httpx.TimeoutException) as exc:
+            stale = self._load_stale_json(cache_key)
+            if stale is not None:
+                self._on_status("warn", f"GitHub search unreachable — using cached results ({exc})")
+                return stale
+            self._on_status("error", f"GitHub search unreachable and no cached results ({exc})")
+            return []
+        except Exception as exc:
+            self._on_status("warn", f"GitHub search error: {exc}")
+            return self._load_stale_json(cache_key) or []
+
     # -----------------------------------------------------------------------
     # Raw client escape hatch (used by ci_manager for DevTools-specific calls)
     # -----------------------------------------------------------------------
@@ -376,10 +471,20 @@ class GitHubAPI:
 
     @staticmethod
     def get_global_rate_limit_info() -> Optional[tuple]:
-        """Return (remaining, limit, reset_ts) from the most recent API call, or None."""
-        if not _rate_limit_global:
+        """Return (remaining, limit, reset_ts) for REST API (lowest remaining), or None.
+        Excludes search keys so the 30/min search limit never pollutes the 5000/hr display."""
+        rest = {k: v for k, v in _rate_limit_global.items() if not k.endswith("_search")}
+        if not rest:
             return None
-        return min(_rate_limit_global.values(), key=lambda v: v[0])
+        return min(rest.values(), key=lambda v: v[0])
+
+    @staticmethod
+    def get_global_search_rate_limit_info() -> Optional[tuple]:
+        """Return (remaining, limit, reset_ts) for the search API (30 req/min), or None."""
+        search = {k: v for k, v in _rate_limit_global.items() if k.endswith("_search")}
+        if not search:
+            return None
+        return min(search.values(), key=lambda v: v[0])
 
     @property
     def auth_source(self) -> str:
@@ -433,41 +538,49 @@ class GitHubAPI:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
-    def _update_rate_limit(self, headers) -> None:
+    def _update_rate_limit(self, headers, rate_limit_key: Optional[str] = None) -> None:
         try:
             remaining = headers.get("X-RateLimit-Remaining")
             limit = headers.get("X-RateLimit-Limit")
             reset = headers.get("X-RateLimit-Reset")
-            if remaining is not None:
-                self._rate_limit_remaining = int(remaining)
-            if limit is not None:
-                self._rate_limit_limit = int(limit)
-            if reset is not None:
-                self._rate_limit_reset = int(reset)
-            if self._rate_limit_remaining is not None:
-                limit_str = f"/{self._rate_limit_limit}" if self._rate_limit_limit is not None else ""
+
+            rem_int = int(remaining) if remaining is not None else None
+            lim_int = int(limit)     if limit     is not None else None
+            rst_int = int(reset)     if reset     is not None else None
+
+            if rem_int is None:
+                return
+
+            key = rate_limit_key or self._auth_source
+
+            # Only clobber instance vars for primary (non-keyed) calls — prevents
+            # search's 30/min limit from overwriting the REST 5000/hr display values.
+            if rate_limit_key is None:
+                self._rate_limit_remaining = rem_int
+                if lim_int is not None:
+                    self._rate_limit_limit = lim_int
+                if rst_int is not None:
+                    self._rate_limit_reset = rst_int
+
+            _rate_limit_global[key] = (rem_int, lim_int or 5000, rst_int or 0)
+            _save_rate_limit_cache()
+
+            self._on_status(
+                "debug",
+                f"GitHub API: {rem_int}{'/' + str(lim_int) if lim_int else ''} requests remaining",
+            )
+
+            if rem_int == 0 and rst_int:
+                # Fire immediately on the last successful call so the dialog appears
+                # before the next request. Use a separate event for search limits so
+                # the dialog can show context-appropriate messaging.
+                event = "rate_limit_exceeded_search" if key.endswith("_search") else "rate_limit_exceeded"
+                self._on_status(event, _format_reset_time(rst_int))
+            elif rem_int < 10 and rate_limit_key is None:
                 self._on_status(
-                    "debug",
-                    f"GitHub API: {self._rate_limit_remaining}{limit_str} requests remaining",
+                    "warn",
+                    f"GitHub rate limit low: {rem_int} requests remaining",
                 )
-                _rate_limit_global[self._auth_source] = (
-                    self._rate_limit_remaining,
-                    self._rate_limit_limit or 5000,
-                    self._rate_limit_reset or 0,
-                )
-                _save_rate_limit_cache()
-                if self._rate_limit_remaining == 0 and self._rate_limit_reset:
-                    # Fire immediately after the last successful call so the dialog
-                    # appears before the app attempts another request.
-                    self._on_status(
-                        "rate_limit_exceeded",
-                        _format_reset_time(self._rate_limit_reset),
-                    )
-                elif self._rate_limit_remaining < 10:
-                    self._on_status(
-                        "warn",
-                        f"GitHub rate limit low: {self._rate_limit_remaining} requests remaining",
-                    )
         except Exception:
             pass
 
