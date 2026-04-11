@@ -13,7 +13,7 @@ Disabled until at least 1 registry is added.
 from __future__ import annotations
 
 import webbrowser
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Callable, TYPE_CHECKING
 
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
@@ -31,14 +31,16 @@ if TYPE_CHECKING:
 class ModsTab(MDBoxLayout):
     """Tab 3 — Mods (browse and stage from registry)."""
 
-    def __init__(self, host, **kwargs):
+    def __init__(self, host, on_staged_changed: Optional[Callable] = None, **kwargs):
         super().__init__(orientation="vertical", **kwargs)
         self._host = host
+        self._on_staged_changed = on_staged_changed
         self._content: Optional[MDBoxLayout] = None
         self._banner: Optional[MDBoxLayout] = None
         self._banner_icon: Optional[MDIcon] = None
         self._banner_lbl: Optional[MDLabel] = None
         self._game_id: str = ""
+        self._framework_candidates: list = []
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -56,8 +58,14 @@ class ModsTab(MDBoxLayout):
             padding=[dp(12), dp(4)],
         ))
 
-        # Framework mod status banner
-        self._banner = MDBoxLayout(
+        # Framework mod status banner (tappable for picker/detail)
+        from kivymd.uix.behaviors import CommonElevationBehavior
+        from kivy.uix.behaviors import ButtonBehavior
+
+        class _TapBox(ButtonBehavior, MDBoxLayout):
+            pass
+
+        self._banner = _TapBox(
             orientation="horizontal",
             size_hint_y=None,
             height=dp(36),
@@ -65,6 +73,7 @@ class ModsTab(MDBoxLayout):
             spacing=dp(8),
             md_bg_color=(0.12, 0.14, 0.16, 1),
         )
+        self._banner.bind(on_release=lambda *_: self._on_banner_tap())
         self._banner_icon = MDIcon(
             icon="help-circle-outline",
             size_hint=(None, 1),
@@ -117,6 +126,7 @@ class ModsTab(MDBoxLayout):
 
         # Update framework mod banner
         candidates = svc.get_framework_candidates(game_id)
+        self._framework_candidates = candidates
         if not candidates:
             self._banner_icon.icon = "close-circle"
             self._banner_icon.text_color = (0.9, 0.3, 0.3, 1)
@@ -225,7 +235,7 @@ class ModsTab(MDBoxLayout):
                 size_hint=(None, None),
                 size=(dp(80), dp(32)),
                 pos_hint={"center_y": 0.5},
-                on_release=lambda *_, mid=mod.mod_id: svc.unstage_mod(mid) or self.refresh(self._game_id),
+                on_release=lambda *_, mid=mod.mod_id, s=svc: self._do_unstage(mid, s),
             ))
         else:
             row.add_widget(MDButton(
@@ -234,10 +244,93 @@ class ModsTab(MDBoxLayout):
                 size_hint=(None, None),
                 size=(dp(80), dp(32)),
                 pos_hint={"center_y": 0.5},
-                on_release=lambda *_, mid=mod.mod_id: svc.stage_mod(mid) or self.refresh(self._game_id),
+                on_release=lambda *_, mid=mod.mod_id, s=svc: self._do_stage(mid, s),
             ))
 
         return row
+
+    def _do_stage(self, mod_id: str, svc: "RegistryService") -> None:
+        svc.stage_mod(mod_id)
+        self.refresh(self._game_id)
+        if self._on_staged_changed:
+            self._on_staged_changed()
+
+    def _do_unstage(self, mod_id: str, svc: "RegistryService") -> None:
+        svc.unstage_mod(mod_id)
+        self.refresh(self._game_id)
+        if self._on_staged_changed:
+            self._on_staged_changed()
+
+    def _on_banner_tap(self) -> None:
+        if not self._framework_candidates:
+            return
+        if len(self._framework_candidates) == 1:
+            self._show_framework_detail(self._framework_candidates[0])
+        else:
+            self._show_framework_picker(self._framework_candidates)
+
+    def _show_framework_detail(self, candidate) -> None:
+        from kivymd.uix.dialog import (
+            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+            MDDialogButtonContainer,
+        )
+        from kivymd.uix.button import MDButton, MDButtonText
+        name = candidate.entry.name or candidate.entry.mod_id
+        breakdown_text = "  ".join(
+            f"[{k} {'+' if v >= 0 else ''}{v}]"
+            for k, v in candidate.score_breakdown.items()
+        )
+        dlg = MDDialog(
+            MDDialogHeadlineText(text=f"Framework Mod: {name}"),
+            MDDialogSupportingText(
+                text=(
+                    f"Repo: {candidate.entry.owner}/{candidate.entry.repo}\n"
+                    f"Score: {candidate.score}\n"
+                    f"Breakdown: {breakdown_text or 'n/a'}"
+                )
+            ),
+            MDDialogButtonContainer(
+                MDButton(MDButtonText(text="OK"), style="text",
+                         on_release=lambda *_: dlg.dismiss()),
+            ),
+        )
+        dlg.open()
+
+    def _show_framework_picker(self, candidates: list) -> None:
+        from kivymd.uix.dialog import (
+            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+            MDDialogButtonContainer,
+        )
+        from kivymd.uix.button import MDButton, MDButtonText
+
+        lines = []
+        for i, c in enumerate(candidates, 1):
+            name = c.entry.name or c.entry.mod_id
+            breakdown_text = "  ".join(
+                f"[{k} {'+' if v >= 0 else ''}{v}]"
+                for k, v in c.score_breakdown.items()
+            )
+            lines.append(
+                f"{i}. {name}  ({c.entry.owner}/{c.entry.repo})\n"
+                f"   Score: {c.score}  {breakdown_text}"
+            )
+
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Multiple Framework Candidates"),
+            MDDialogSupportingText(
+                text=(
+                    "More than one framework mod was found. "
+                    "The highest-scoring candidate will be used. "
+                    "Remove conflicting registries if needed.\n\n"
+                    + "\n\n".join(lines)
+                )
+            ),
+            MDDialogButtonContainer(
+                MDButton(MDButtonText(text="OK"), style="text",
+                         on_release=lambda *_: dlg.dismiss()),
+            ),
+        )
+        dlg.open()
 
     def _on_view_docs(self, mod: "RegistryModEntry") -> None:
         svc = self._registry_svc()

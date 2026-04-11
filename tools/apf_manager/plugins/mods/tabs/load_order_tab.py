@@ -19,9 +19,7 @@ from typing import Optional, TYPE_CHECKING
 from kivy.metrics import dp
 from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.button import MDIconButton
@@ -36,6 +34,22 @@ if TYPE_CHECKING:
 
 _SCAN_EXCLUDE = {"shared"}
 
+
+def _mod_dep_status(mod, mod_by_id: dict, detection) -> str:
+    """Return 'error', 'warn', or 'ok' based on manifest dependency checks."""
+    for dep_str in mod.depends:
+        dep_id = dep_str.split(" ")[0].strip()
+        if dep_id not in mod_by_id:
+            return "error"
+    for incompat_id in mod.incompatible:
+        if incompat_id in mod_by_id:
+            return "error"
+    for ext_name in mod.requires_external:
+        folder = detection.mods_dir / ext_name if detection.mods_dir else None
+        if not (folder and folder.is_dir()):
+            return "warn"
+    return "ok"
+
 _ROW_BG_NORMAL   = (0.14, 0.14, 0.14, 1)
 _ROW_BG_WARN     = (0.22, 0.18, 0.08, 1)
 _ROW_BG_ERROR    = (0.22, 0.10, 0.10, 1)
@@ -45,7 +59,6 @@ _ROW_BG_KEYBINDS = (0.08, 0.08, 0.08, 1)
 
 _COL_REORDER = dp(100)
 _COL_STATUS  = dp(72)
-_COL_STEPS   = dp(80)
 _COL_VERSION = dp(72)
 _COL_TOGGLE  = dp(52)
 
@@ -78,7 +91,6 @@ class _HeaderRow(MDBoxLayout):
         self.add_widget(_col("Order", width=_COL_REORDER, halign="center"))
         self.add_widget(_col("Status", width=_COL_STATUS, halign="center"))
         self.add_widget(_col("Mod Name"))
-        self.add_widget(_col("", width=_COL_STEPS))
         self.add_widget(_col("Version", width=_COL_VERSION, halign="right"))
         self.add_widget(_col("Enabled", width=_COL_TOGGLE, halign="center"))
 
@@ -92,7 +104,6 @@ class _ModRow(MDBoxLayout):
         on_toggle,
         on_move_up,
         on_move_down,
-        on_manual_step,
         is_keybinds: bool = False,
         **kwargs,
     ):
@@ -133,7 +144,6 @@ class _ModRow(MDBoxLayout):
                 theme_text_color="Custom",
                 text_color=(0.4, 0.4, 0.4, 1),
             ))
-            self.add_widget(Widget(size_hint=(None, 1), width=_COL_STEPS))
             self.add_widget(MDLabel(
                 text="",
                 size_hint=(None, 1),
@@ -194,27 +204,7 @@ class _ModRow(MDBoxLayout):
             text_color=(0.5, 0.5, 0.5, 1) if not mod.is_ap_mod else (1, 1, 1, 0.87),
         ))
 
-        # Column 4: Manual step buttons
-        button_steps = [s for s in mod.manual_steps if s.when == "button" and s.caption]
-        if button_steps:
-            steps_box = MDBoxLayout(
-                orientation="horizontal",
-                size_hint=(None, 1),
-                width=_COL_STEPS,
-                spacing=dp(2),
-            )
-            for step in button_steps:
-                steps_box.add_widget(MDButton(
-                    MDButtonText(text=step.caption),
-                    style="text",
-                    size_hint=(1, 1),
-                    on_release=lambda *_, s=step: on_manual_step(mod, s),
-                ))
-            self.add_widget(steps_box)
-        else:
-            self.add_widget(Widget(size_hint=(None, 1), width=_COL_STEPS))
-
-        # Column 5: Version
+        # Column 4: Version
         self.add_widget(MDLabel(
             text=f"v{mod.version}" if mod.version else "",
             font_style="Label",
@@ -341,8 +331,6 @@ class LoadOrderTab(MDBoxLayout):
         self._do_refresh()
 
     def _do_refresh(self) -> None:
-        from ....plugins.deploy.validator import Validator
-
         self._list_layout.clear_widgets()
         self._rows = []
 
@@ -387,15 +375,10 @@ class LoadOrderTab(MDBoxLayout):
 
         self._header_row.opacity = 1
 
-        validator = None
-        if self._detection and self._mods_txt:
-            validator = Validator(self._detection, self._mods_txt, all_mods)
+        mod_by_id = {m.mod_id: m for m in all_mods if m.mod_id}
 
         for mod in visible:
-            status = "unknown"
-            if validator:
-                results = validator.validate_mod(mod)
-                status = Validator.worst_status(results)
+            status = _mod_dep_status(mod, mod_by_id, self._detection)
 
             enabled = True
             if self._mods_txt:
@@ -409,7 +392,6 @@ class LoadOrderTab(MDBoxLayout):
                 on_toggle=self._on_toggle,
                 on_move_up=self._on_move_up,
                 on_move_down=self._on_move_down,
-                on_manual_step=self._on_manual_step,
             )
             self._rows.append(row)
             self._list_layout.add_widget(row)
@@ -426,7 +408,6 @@ class LoadOrderTab(MDBoxLayout):
                 on_toggle=lambda *_: None,
                 on_move_up=lambda *_: None,
                 on_move_down=lambda *_: None,
-                on_manual_step=lambda *_: None,
                 is_keybinds=True,
             )
             self._list_layout.add_widget(kb_row)
@@ -553,34 +534,3 @@ class LoadOrderTab(MDBoxLayout):
         svc.reorder(new_full)
         self._do_refresh()
 
-    def _on_manual_step(self, mod: "ModInfo", step) -> None:
-        title = step.title or step.caption or "Manual Step"
-        if step.type == "file":
-            resolved = None
-            if self._profile and self._profile.source_project:
-                from pathlib import Path
-                p = Path(self._profile.source_project) / step.content
-                if p.exists():
-                    resolved = p
-            if resolved and self._host.has_service("docs_viewer"):
-                self._host.show_dialog("docs_viewer", path=str(resolved))
-                return
-
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
-
-        def _close(*_):
-            dlg.dismiss()
-
-        content = step.content or f"Follow the instructions for: {step.caption}"
-        dlg = MDDialog(
-            MDDialogHeadlineText(text=title),
-            MDDialogSupportingText(text=content[:2000]),
-            MDDialogButtonContainer(
-                Widget(),
-                MDButton(MDButtonText(text="OK"), style="text", on_release=_close),
-            ),
-        )
-        dlg.open()

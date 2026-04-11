@@ -103,6 +103,7 @@ class GitHubAPI:
                     "type": item.type,
                     "download_url": getattr(item, "download_url", None),
                     "size": getattr(item, "size", 0),
+                    "submodule_git_url": getattr(item, "submodule_git_url", None),
                 }
                 for item in data
             ]

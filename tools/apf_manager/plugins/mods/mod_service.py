@@ -69,27 +69,6 @@ class ItemOverrideDef:
 
 
 @dataclass
-class ManualStep:
-    type: str       # "text" | "file"
-    when: str       # "button" | "before_install" | "after_install" | "before_deploy" | "after_package"
-    caption: str = ""
-    title: str = ""
-    content: str = ""
-
-
-@dataclass
-class InstallStep:
-    step_type: str
-    params: dict = field(default_factory=dict)
-
-
-@dataclass
-class ValidationCheck:
-    check_type: str
-    params: dict = field(default_factory=dict)
-
-
-@dataclass
 class ModInfo:
     # Source location
     folder_name: str
@@ -115,13 +94,9 @@ class ModInfo:
     options: list = field(default_factory=list)        # list[OptionDef]
     item_overrides: list = field(default_factory=list) # list[ItemOverrideDef]
 
-    # install.json
+    # install.json (load-order hints only — scripting fields removed)
     prefers_after: list = field(default_factory=list)
     requires_external: list = field(default_factory=list)
-    manual_steps: list = field(default_factory=list)   # list[ManualStep]
-    install_steps: list = field(default_factory=list)  # list[InstallStep]
-    uninstall_steps: list = field(default_factory=list)
-    validate_checks: list = field(default_factory=list)# list[ValidationCheck]
 
     @property
     def is_ap_mod(self) -> bool:
@@ -260,35 +235,13 @@ class ModService:
             except Exception:
                 pass
 
-        # --- install.json ---
+        # --- install.json (load-order hints only) ---
         install_path = folder / "install.json"
         if install_path.exists():
             try:
                 raw = json.loads(install_path.read_text(encoding="utf-8"))
                 info.prefers_after = raw.get("prefers_after", [])
                 info.requires_external = raw.get("requires_external", [])
-                info.manual_steps = [
-                    ManualStep(
-                        type=s.get("type", "text"),
-                        when=s.get("when", "button"),
-                        caption=s.get("caption", ""),
-                        title=s.get("title", ""),
-                        content=s.get("content", ""),
-                    )
-                    for s in raw.get("manual_steps", [])
-                ]
-                info.install_steps = [
-                    InstallStep(step_type=s.get("type", ""), params={k: v for k, v in s.items() if k != "type"})
-                    for s in raw.get("install", [])
-                ]
-                info.uninstall_steps = [
-                    InstallStep(step_type=s.get("type", ""), params={k: v for k, v in s.items() if k != "type"})
-                    for s in raw.get("uninstall", [])
-                ]
-                info.validate_checks = [
-                    ValidationCheck(check_type=s.get("type", ""), params={k: v for k, v in s.items() if k != "type"})
-                    for s in raw.get("validate", [])
-                ]
             except Exception:
                 pass
 

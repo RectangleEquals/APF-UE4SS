@@ -113,7 +113,7 @@ class RegistriesTab(MDBoxLayout):
         )
         add_bar.add_widget(self._url_field)
         add_bar.add_widget(MDButton(
-            MDButtonText(text="Add"),
+            MDButtonText(text="View"),
             style="filled",
             size_hint=(None, None),
             size=(dp(72), dp(40)),
@@ -267,12 +267,10 @@ class RegistriesTab(MDBoxLayout):
                 text=f"{entry.owner}/{entry.repo}",
                 size_hint=(1, 1),
             ))
-            row.add_widget(MDButton(
-                MDButtonText(text="Report"),
-                style="text",
-                size_hint=(None, None),
-                size=(dp(72), dp(36)),
-                pos_hint={"center_y": 0.5},
+            row.add_widget(MDIconButton(
+                icon="flag",
+                theme_icon_color="Custom",
+                icon_color=(0.9, 0.2, 0.2, 1),
                 on_release=lambda *_, u=entry.url: self._on_report(u),
             ))
             row.add_widget(MDIconButton(
@@ -304,14 +302,18 @@ class RegistriesTab(MDBoxLayout):
             self._show_import_dialog(urls)
             return
 
-        # Duplicate check — avoid full traversal for already-added URLs
-        existing = svc.get_user_registries()  # unfiltered for dup check
-        if any(e.url.rstrip("/") == url.rstrip("/") for e in existing):
-            self._set_add_status("Already in list.", (0.9, 0.6, 0.1, 1))
-            return
+        # Blacklist check — never open viewer for blacklisted repos
+        from ...mods.registry_resolver import parse_github_url
+        parsed = parse_github_url(url)
+        if parsed:
+            owner, repo = parsed
+            resolver_svc = svc._get_resolver() if hasattr(svc, "_get_resolver") else None
+            if resolver_svc and resolver_svc.is_blacklisted(owner, repo):
+                self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
+                return
 
-        self._set_add_status("Adding…", (0.7, 0.7, 0.7, 1))
-        svc.add_registry(url, on_done=self._on_add_done)
+        self._set_add_status("Loading…", (0.7, 0.7, 0.7, 1))
+        svc.add_registry_with_viewer(url, self._game_id, on_done=self._on_add_done)
 
     def _on_add_done(self, success: bool, msg: str) -> None:
         color = (0.3, 0.8, 0.4, 1) if success else (0.9, 0.3, 0.3, 1)
@@ -380,6 +382,19 @@ class RegistriesTab(MDBoxLayout):
                 height=dp(32),
             ))
             return
+
+        svc = self._registry_svc()
+
+        # Sort results by freshness + stars score (descending) before display.
+        def _search_score(r: dict) -> int:
+            days = r.get("last_push_days", 999)
+            stars = r.get("stars", 0)
+            freshness = 3 if days <= 30 else (2 if days <= 90 else 0)
+            import math
+            star_pts = min(5, int(math.log10(stars + 1) * 5)) if stars >= 0 else 0
+            return freshness + star_pts
+        results = sorted(results, key=_search_score, reverse=True)
+
         self._search_results.add_widget(MDLabel(
             text=f"Found {len(results)} public registry repo(s):",
             font_style="Label",
@@ -387,19 +402,62 @@ class RegistriesTab(MDBoxLayout):
             height=dp(28),
         ))
         for r in results:
+            owner, repo = r["owner"], r["repo"]
+            is_bl = svc.is_blacklisted(owner, repo) if svc else False
+            if is_bl:
+                self._host.log(
+                    f"[registry] [WARN] Search result {owner}/{repo} is blacklisted — Add disabled"
+                )
+
+            card = MDBoxLayout(
+                orientation="vertical",
+                adaptive_height=True,
+                spacing=0,
+            )
+
             row = MDBoxLayout(
                 orientation="horizontal",
                 size_hint_y=None,
                 height=dp(40),
                 spacing=dp(8),
             )
-            info_box = MDBoxLayout(orientation="horizontal", adaptive_height=True, spacing=dp(4), size_hint_x=1)
+            info_box = MDBoxLayout(
+                orientation="horizontal",
+                adaptive_height=True,
+                spacing=dp(4),
+                size_hint_x=1,
+            )
             info_box.add_widget(MDLabel(
-                text=f"{r['owner']}/{r['repo']}",
+                text=f"{owner}/{repo}",
                 size_hint_x=1,
                 adaptive_height=True,
             ))
-            star_box = MDBoxLayout(orientation="horizontal", adaptive_height=True, size_hint_x=None, width=dp(70), spacing=dp(2))
+
+            # Freshness dot
+            days = r.get("last_push_days", 999)
+            if days <= 30:
+                dot_color = (0.3, 0.8, 0.4, 1)    # green
+            elif days <= 90:
+                dot_color = (0.9, 0.7, 0.2, 1)    # yellow
+            else:
+                dot_color = (0.5, 0.5, 0.5, 1)    # grey
+            info_box.add_widget(MDIcon(
+                icon="circle-small",
+                size_hint=(None, None),
+                size=(dp(20), dp(20)),
+                theme_icon_color="Custom",
+                icon_color=dot_color,
+                pos_hint={"center_y": 0.5},
+            ))
+
+            # Star count
+            star_box = MDBoxLayout(
+                orientation="horizontal",
+                adaptive_height=True,
+                size_hint_x=None,
+                width=dp(60),
+                spacing=dp(2),
+            )
             star_box.add_widget(MDIcon(
                 icon="star",
                 size_hint=(None, None),
@@ -408,22 +466,76 @@ class RegistriesTab(MDBoxLayout):
                 icon_color=(1, 0.84, 0, 1),
                 pos_hint={"center_y": 0.5},
             ))
-            star_box.add_widget(MDLabel(text=str(r["stars"]), size_hint_x=None, width=dp(44), adaptive_height=True))
+            star_box.add_widget(MDLabel(
+                text=str(r["stars"]),
+                size_hint_x=None,
+                width=dp(36),
+                adaptive_height=True,
+            ))
             info_box.add_widget(star_box)
             row.add_widget(info_box)
+            row.add_widget(MDIconButton(
+                icon="flag",
+                theme_icon_color="Custom",
+                icon_color=(0.9, 0.2, 0.2, 1),
+                pos_hint={"center_y": 0.5},
+                on_release=lambda *_, url=r["html_url"]: self._on_report(url),
+            ))
             row.add_widget(MDButton(
-                MDButtonText(text="Add"),
+                MDButtonText(text="View"),
                 style="filled",
                 size_hint=(None, None),
                 size=(dp(64), dp(32)),
                 pos_hint={"center_y": 0.5},
+                disabled=is_bl,
                 on_release=lambda *_, url=r["html_url"]: self._on_add_from_search(url),
             ))
-            self._search_results.add_widget(row)
+            card.add_widget(row)
+
+            if is_bl:
+                warn_row = MDBoxLayout(
+                    orientation="horizontal",
+                    size_hint_y=None,
+                    height=dp(22),
+                    spacing=dp(4),
+                    padding=[dp(4), 0],
+                )
+                warn_row.add_widget(MDIcon(
+                    icon="block-helper",
+                    size_hint=(None, None),
+                    size=(dp(16), dp(16)),
+                    theme_icon_color="Custom",
+                    icon_color=(0.9, 0.3, 0.3, 1),
+                    pos_hint={"center_y": 0.5},
+                ))
+                warn_row.add_widget(MDLabel(
+                    text="On block list.",
+                    size_hint_y=None,
+                    height=dp(22),
+                    theme_text_color="Custom",
+                    text_color=(0.9, 0.3, 0.3, 1),
+                    font_style="Body",
+                    role="small",
+                ))
+                card.add_widget(warn_row)
+
+            self._search_results.add_widget(card)
 
     def _on_add_from_search(self, url: str) -> None:
-        self._url_field.text = url
-        self._on_add()
+        svc = self._registry_svc()
+        if not svc:
+            return
+        # Blacklist check — never open viewer for blacklisted repos
+        from ...mods.registry_resolver import parse_github_url
+        parsed = parse_github_url(url)
+        if parsed:
+            owner, repo = parsed
+            resolver_svc = svc._get_resolver() if hasattr(svc, "_get_resolver") else None
+            if resolver_svc and resolver_svc.is_blacklisted(owner, repo):
+                self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
+                return
+        self._set_add_status("Loading…", (0.7, 0.7, 0.7, 1))
+        svc.add_registry_with_viewer(url, self._game_id, on_done=self._on_add_done)
 
     def _on_share(self) -> None:
         svc = self._registry_svc()

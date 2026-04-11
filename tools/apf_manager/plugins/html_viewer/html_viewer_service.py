@@ -95,6 +95,7 @@ def _webview_process_main(
     width: int,
     height: int,
     shm_name: str,
+    output_file: str = "",
 ) -> None:
     """
     Runs in a separate process. Opens a frameless pywebview window and blocks
@@ -106,6 +107,10 @@ def _webview_process_main(
     shm_name — name of a SharedMemory segment written by the parent process
     every ~150ms with layout: struct.pack('iiiii', main_x, main_y, main_w, main_h, minimized)
     The tracking thread reads this and calls win.move()/hide()/show() accordingly.
+
+    output_file — optional path to a file where confirm(data) will write the
+    result string before closing. Used by SPA dialogs (e.g. Repo Viewer) to
+    pass structured data back to the parent process across the process boundary.
     """
     import webview
     import webbrowser
@@ -113,6 +118,7 @@ def _webview_process_main(
 
     html = Path(html_path).read_text(encoding="utf-8")
     win_ref = [None]
+    _out = output_file  # captured by _API methods below
 
     class _API:
         def close(self):
@@ -122,6 +128,15 @@ def _webview_process_main(
         def open_url(self, url):
             if url.startswith(("http://", "https://")):
                 webbrowser.open(url)
+
+        def confirm(self, data: str) -> None:
+            """Write result data to output_file then close the window."""
+            if _out:
+                try:
+                    Path(_out).write_text(data, encoding="utf-8")
+                except Exception:
+                    pass
+            self.close()
 
     api = _API()
 
@@ -195,6 +210,7 @@ class HTMLViewerService:
         extra_api=None,           # Reserved; not used (process boundary prevents this)
         inject_titlebar: bool = True,
         on_closed: Optional[Callable[[], None]] = None,
+        output_file: str = "",
     ) -> None:
         """
         Open a frameless pywebview window showing the given HTML.
@@ -207,6 +223,8 @@ class HTMLViewerService:
                           a close button before writing to temp file.
                           Set False when the HTML already has its own chrome (e.g. SPA).
         on_closed      — Callback fired (on Kivy main thread) when window closes
+        output_file    — Optional path where JS can write result data via
+                          pywebview.api.confirm(data). Read by parent after on_closed.
         """
         from kivy.clock import Clock
         from kivy.core.window import Window as _KW
@@ -269,7 +287,7 @@ class HTMLViewerService:
             try:
                 proc = multiprocessing.Process(
                     target=_webview_process_main,
-                    args=(tmp_path, title, final_w, final_h, shm.name),
+                    args=(tmp_path, title, final_w, final_h, shm.name, output_file),
                     daemon=True,
                 )
                 proc.start()

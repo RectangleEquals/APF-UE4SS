@@ -190,15 +190,16 @@ class RegistryService:
                 _ui(lambda: on_done(False, f"Traversal failed: {exc}"))
                 return
 
-            if not any(m.mod_id for m in mods):
+            has_real_mods = any(m.mod_id for m in mods)
+            has_templates = any(m.templates_paths for m in mods)
+            if not has_real_mods and not has_templates:
                 _ui(lambda: on_done(
                     False,
-                    "No AP mods found in this repository — is this a valid APF registry?"
+                    "No AP mods or templates found — is this a valid APF registry?"
                 ))
                 return
 
-            real_count = sum(1 for m in mods if m.mod_id)
-            # Derive game_id from the 2nd component of the first real mod's mod_id.
+            # Derive game_id from mod_id (2nd component) or template path dir name.
             derived_game_id = ""
             for m in mods:
                 if m.mod_id:
@@ -206,9 +207,154 @@ class RegistryService:
                     if len(parts) >= 2:
                         derived_game_id = parts[1].lower()
                     break
-            self._host.config.add_user_registry(url, game_id=derived_game_id)
-            self._invalidate_mods_cache()
-            _ui(lambda: on_done(True, f"Registry added — {real_count} mod(s) found."))
+            if not derived_game_id:
+                for m in mods:
+                    for tp in m.templates_paths:
+                        game_dir = tp.split("/")[-1] if "/" in tp else tp
+                        if game_dir:
+                            derived_game_id = game_dir.lower()
+                            break
+                    if derived_game_id:
+                        break
+
+            # Reject if the registry targets a different game than the current profile.
+            current_game_id = self._get_game_id() or ""
+            if current_game_id and derived_game_id and derived_game_id != current_game_id:
+                _ui(lambda: on_done(
+                    False,
+                    f"No content found for '{current_game_id}' — this registry targets a different game."
+                ))
+                return
+
+            # Count selectable content items to decide whether to show the viewer.
+            mod_items = [m for m in mods if m.mod_id]
+            tpl_items = [tp for m in mods for tp in m.templates_paths]
+            content_count = len(mod_items) + len(tpl_items)
+
+            # Compute existing mod_ids for conflict detection in the viewer.
+            existing_mod_ids: set = set()
+            for reg_entry in self.get_user_registries():
+                try:
+                    reg_mods = resolver.traverse(reg_entry.url, cache)
+                    existing_mod_ids.update(m.mod_id for m in reg_mods if m.mod_id)
+                except Exception:
+                    pass
+
+            def _finalize(selected_mods):
+                """Called by Repo Viewer on_confirm (main thread) or directly."""
+                real_count = sum(1 for m in selected_mods if m.mod_id)
+                self._host.config.add_user_registry(url, game_id=derived_game_id)
+                self._invalidate_mods_cache()
+                _ui(lambda: on_done(True, f"Registry added — {real_count} mod(s) found."))
+
+            if content_count > 1 and self._host.has_service("repo_viewer"):
+                game_id_for_viewer = current_game_id or derived_game_id
+                _eids = existing_mod_ids
+                _ui(lambda: self._host.show_dialog(
+                    "repo_viewer",
+                    repo_url=url,
+                    game_id=game_id_for_viewer,
+                    traversal_result=mods,
+                    existing_mod_ids=_eids,
+                    on_confirm=_finalize,
+                    on_cancel=lambda: _ui(lambda: on_done(False, "Cancelled.")),
+                ))
+            else:
+                _finalize(mods)
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def add_registry_with_viewer(
+        self,
+        url: str,
+        game_id: str,
+        on_done: Callable[[bool, str], None],
+    ) -> None:
+        """
+        Like add_registry(), but always opens the Repo Viewer (unless blacklisted).
+        Passes the full folder tree to the viewer so the sidebar shows real structure.
+        """
+        from .registry_resolver import parse_github_url, FolderTreeNode
+        parsed = parse_github_url(url)
+        if not parsed:
+            on_done(False, "Invalid GitHub URL — expected https://github.com/owner/repo")
+            return
+
+        owner, repo = parsed
+        resolver = self._get_resolver()
+        if resolver.is_blacklisted(owner, repo):
+            on_done(False, "This repository is on the block list and cannot be added.")
+            return
+
+        def _bg():
+            cache = self._get_cache()
+            try:
+                mods = resolver.traverse(url, cache)
+            except Exception as exc:
+                _ui(lambda: on_done(False, f"Traversal failed: {exc}"))
+                return
+
+            # For the viewer we accept any repo (empty repos show empty tree)
+            # Derive game_id to save with config
+            derived_game_id = game_id or ""
+            if not derived_game_id:
+                for m in mods:
+                    if m.mod_id:
+                        parts = m.mod_id.split(".")
+                        if len(parts) >= 2:
+                            derived_game_id = parts[1].lower()
+                        break
+            if not derived_game_id:
+                for m in mods:
+                    for tp in m.templates_paths:
+                        gdir = tp.split("/")[-1] if "/" in tp else tp
+                        if gdir:
+                            derived_game_id = gdir.lower()
+                            break
+                    if derived_game_id:
+                        break
+
+            # Existing mod_ids for conflict detection
+            existing_mod_ids: set = set()
+            for reg_entry in self.get_user_registries():
+                try:
+                    reg_mods = resolver.traverse(reg_entry.url, cache)
+                    existing_mod_ids.update(m.mod_id for m in reg_mods if m.mod_id)
+                except Exception:
+                    pass
+
+            # Build folder tree
+            try:
+                folder_tree = resolver.get_folder_tree(
+                    url, cache, game_id=derived_game_id or game_id,
+                    existing_mod_ids=existing_mod_ids,
+                )
+            except Exception:
+                folder_tree = None
+
+            def _finalize(selected_mods):
+                real_count = sum(1 for m in selected_mods if m.mod_id)
+                self._host.config.add_user_registry(url, game_id=derived_game_id)
+                self._invalidate_mods_cache()
+                _ui(lambda: on_done(True, f"Registry added — {real_count} mod(s) found."))
+
+            if not self._host.has_service("repo_viewer"):
+                # Fallback: add directly without viewer
+                _finalize(mods)
+                return
+
+            _ft = folder_tree
+            _eids = existing_mod_ids
+            _ui(lambda: self._host.show_dialog(
+                "repo_viewer",
+                repo_url=url,
+                game_id=derived_game_id or game_id,
+                traversal_result=mods,
+                folder_tree=_ft,
+                existing_mod_ids=_eids,
+                on_confirm=_finalize,
+                on_cancel=lambda: _ui(lambda: on_done(False, "Cancelled.")),
+            ))
 
         threading.Thread(target=_bg, daemon=True).start()
 

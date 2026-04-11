@@ -6,7 +6,7 @@ Tabs (in order):
   2 — Templates    puzzle-outline
   3 — Mods         magnify
   4 — Queue        tray-arrow-down
-  5 — Deploy       rocket-launch
+  5 — Install      package-variant-plus
   6 — Load Order   format-list-numbered
 
 A persistent warning bar is shown at the top when UE4SS is not detected.
@@ -28,7 +28,7 @@ from .tabs.registries_tab import RegistriesTab
 from .tabs.templates_tab import TemplatesTab
 from .tabs.mods_tab import ModsTab
 from .tabs.queue_tab import QueueTab
-from .tabs.deploy_tab import DeployTab
+from .tabs.install_tab import InstallTab
 from .tabs.load_order_tab import LoadOrderTab
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ _TABS = [
     ("Templates",   "puzzle-outline"),
     ("Mods",        "magnify"),
     ("Queue",       "tray-arrow-down"),
-    ("Deploy",      "rocket-launch"),
+    ("Install",     "package-variant-plus"),
     ("Load Order",  "format-list-numbered"),
 ]
 
@@ -60,7 +60,7 @@ class ModsPanel(PluginPanel):
         self._tab_templates: Optional[TemplatesTab] = None
         self._tab_mods: Optional[ModsTab] = None
         self._tab_queue: Optional[QueueTab] = None
-        self._tab_deploy: Optional[DeployTab] = None
+        self._tab_install: Optional[InstallTab] = None
         self._tab_load_order: Optional[LoadOrderTab] = None
 
         self._build_ui()
@@ -117,16 +117,16 @@ class ModsPanel(PluginPanel):
         # Instantiate tab content widgets and add to carousel.
         self._tab_registries = RegistriesTab(host=self.host, on_registry_changed=self._refresh_other_tabs)
         self._tab_templates = TemplatesTab(host=self.host)
-        self._tab_mods = ModsTab(host=self.host)
+        self._tab_mods = ModsTab(host=self.host, on_staged_changed=self._refresh_queue_tab)
         self._tab_queue = QueueTab(host=self.host)
-        self._tab_deploy = DeployTab(host=self.host)
+        self._tab_install = InstallTab(host=self.host)
         self._tab_load_order = LoadOrderTab(host=self.host)
 
         carousel.add_widget(self._tab_registries)
         carousel.add_widget(self._tab_templates)
         carousel.add_widget(self._tab_mods)
         carousel.add_widget(self._tab_queue)
-        carousel.add_widget(self._tab_deploy)
+        carousel.add_widget(self._tab_install)
         carousel.add_widget(self._tab_load_order)
 
         self.add_widget(tabs)
@@ -182,9 +182,9 @@ class ModsPanel(PluginPanel):
         if self._tab_queue:
             self._tab_queue.refresh(game_id)
 
-        # Deploy and Load Order need profile + detection.
-        if self._tab_deploy:
-            self._tab_deploy.refresh(self._profile, self._detection)
+        # Install and Load Order need profile + detection.
+        if self._tab_install:
+            self._tab_install.refresh(self._profile, self._detection)
 
         if self._tab_load_order:
             self._tab_load_order.refresh(self._profile, self._detection)
@@ -198,6 +198,11 @@ class ModsPanel(PluginPanel):
             self._tab_mods.refresh(game_id)
         if self._tab_queue:
             self._tab_queue.refresh(game_id)
+
+    def _refresh_queue_tab(self) -> None:
+        """Called by ModsTab whenever a mod is staged or unstaged."""
+        if self._tab_queue:
+            self._tab_queue.refresh(self._game_id())
 
     def _game_id(self) -> str:
         """Derive game_id from the registry service or fall back to profile."""

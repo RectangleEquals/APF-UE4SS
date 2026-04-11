@@ -30,8 +30,7 @@ class GameProfile:
     custom_thumbnail: Optional[str] = None  # Absolute path to user-supplied image
     repo_api_url: str = ""                  # GitHub API URL for player-mode update checks
     # Dev-only fields:
-    # source_project: root of the APF source repo — deploy plugin uses this to
-    #   resolve manual_steps file content and packager uses it for source files.
+    # source_project: root of the APF source repo — packager uses this for source files.
     source_project: str = ""
     # build_dir: path to compiled DLL output (e.g. build/Release/bin) —
     #   deploy plugin copies APFrameworkCore.dll + APClientLib.dll from here.
