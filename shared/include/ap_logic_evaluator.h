@@ -12,7 +12,8 @@
  *     and_expr   := primary ('AND' primary)*
  *     primary    := '(' expression ')'
  *                 | '(Item:' NAME ')'
- *                 | '(Item:' NAME ':' INT ')'
+ *                 | '(Item:' NAME OP INT ')'
+ *                 | '(Item:' NAME OP '{' OPTION_KEY '}' ')'
  *                 | '(Can Access:' NAME ')'
  *                 | '(Option:' NAME ')'
  *                 | '(Option:' NAME OP VALUE ')'
@@ -40,7 +41,7 @@ namespace ap {
 enum class LogicNodeType
 {
     Const,     ///< True or False literal
-    Item,      ///< (Item: Name) or (Item: Name : Count)
+    Item,      ///< (Item: Name) or (Item: Name OP INT) or (Item: Name OP {option_name})
     CanAccess, ///< (Can Access: Region)
     Option,    ///< (Option: Name) or (Option: Name OP Value)
     Checked,   ///< (Checked: LocationName) — valid in goal logic only
@@ -63,7 +64,9 @@ struct LogicNode
 
     // Item
     std::string item_name;
+    std::string item_op = ">=";           ///< ">=" | ">" | "<=" | "<" | "==" | "!="
     int item_count = 1;
+    std::string item_count_option;        ///< non-empty when RHS is {option_name}; resolved by evaluate_options()
 
     // CanAccess
     std::string region;
@@ -81,7 +84,9 @@ struct LogicNode
 
     // -- Factory helpers --
     static LogicNode make_const(bool value);
-    static LogicNode make_item(const std::string &name, int count = 1);
+    static LogicNode make_item(const std::string &name, int count = 1,
+                               const std::string &op = ">=",
+                               const std::string &count_option = "");
     static LogicNode make_can_access(const std::string &region);
     static LogicNode make_option(const std::string &name, const std::string &op = "",
                                  const std::string &value = "");
@@ -178,7 +183,8 @@ struct ScoredNode
  * @brief Build a scored AST tree for a logic expression.
  *
  * Each node gets its own score:
- * - ItemNode:      min(received / required, 1.0)
+ * - ItemNode (>=): min(received / required, 1.0) — proportional partial progress
+ * - ItemNode (other ops): 1.0 if satisfied, 0.0 if not — binary
  * - CanAccessNode: reachable ? 1.0 : 0.0
  * - ConstNode:     true -> 1.0, false -> 0.0
  * - AndNode:       average of children scores; children individually scored

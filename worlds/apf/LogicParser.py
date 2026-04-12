@@ -3,7 +3,8 @@ Logic expression parser for the AP Framework World.
 
 Parses human-readable logic strings like:
     (Item: Grass Boss Victory) AND (Can Access: Post-Grass Boss)
-    (Item: Tech Points : 5)
+    (Item: Tech Points >= 5)
+    (Item: Heart Piece >= {hp_required})
     (Option: difficulty >= 3) AND (Item: Legendary Weapon)
     ((Item: Jetpack) OR (Item: Grappling Gun Mk3)) AND (Item: Heat Resistant Armor)
     True
@@ -13,7 +14,8 @@ Grammar:
     and_expr   := primary ('AND' primary)*
     primary    := '(' expression ')'
                | '(Item:' NAME ')'
-               | '(Item:' NAME ':' INT ')'
+               | '(Item:' NAME OP INT ')'
+               | '(Item:' NAME OP '{' OPTION_KEY '}' ')'
                | '(Can Access:' NAME ')'
                | '(Option:' NAME ')'
                | '(Option:' NAME OP VALUE ')'
@@ -23,11 +25,15 @@ Grammar:
                | '(Checked:' NAME ')'
                | 'True' | 'False'
 
+OP := '>=' | '<=' | '!=' | '==' | '>' | '<'
+OPTION_KEY := a range or toggle option name declared in the mod's options array.
+
 Option expressions are evaluated at generation time (static). Item and region
 expressions compile to CollectionState lambdas for runtime AP logic.
 """
 
 import logging
+import operator
 import re
 from typing import List, Tuple, Optional, Callable, Dict, Any, Union
 from dataclasses import dataclass
@@ -41,9 +47,11 @@ from BaseClasses import CollectionState
 
 @dataclass
 class ItemNode:
-    """Has >= count of the named item."""
+    """Has OP count of the named item. op defaults to '>=' (has at least N)."""
     name: str
     count: int = 1
+    op: str = ">="                      # ">=" | ">" | "<=" | "<" | "==" | "!="
+    count_option: Optional[str] = None  # non-empty when RHS is {option_name}; resolved at gen-time
 
 
 @dataclass
@@ -127,19 +135,58 @@ def tokenize(logic: str) -> List[Token]:
         if logic[i] == '(':
             rest = logic[i:]
 
-            # (Item: NAME) or (Item: NAME : COUNT)
+            # (Item: NAME) or (Item: NAME OP INT) or (Item: NAME OP {option_key})
             if rest.startswith('(Item:'):
                 i += len('(Item:')
                 close = logic.find(')', i)
                 if close == -1:
                     raise ValueError(f"Unclosed '(Item:' starting near position {i}")
                 content = logic[i:close].strip()
-                # Split on last ':' for optional count
-                parts = content.rsplit(':', 1)
-                if len(parts) == 2 and parts[1].strip().isdigit():
-                    tokens.append((ITEM, (parts[0].strip(), int(parts[1].strip()))))
+
+                # Scan for operator in longest-first order to avoid prefix collision
+                _OPS = ['>=', '<=', '!=', '==', '>', '<']
+                _found_op: Optional[str] = None
+                _op_pos: int = -1
+                for _op in _OPS:
+                    _idx = content.find(_op)
+                    if _idx != -1:
+                        _found_op = _op
+                        _op_pos = _idx
+                        break
+
+                if _found_op is not None:
+                    item_name = content[:_op_pos].strip()
+                    rhs = content[_op_pos + len(_found_op):].strip()
+                    if rhs.startswith('{') and rhs.endswith('}'):
+                        count_key = rhs[1:-1].strip()
+                        if not count_key:
+                            raise ValueError(
+                                f"Empty option name in '(Item: {content})' — "
+                                f"expected '{{option_name}}'"
+                            )
+                        tokens.append((ITEM, (item_name, 1, _found_op, count_key)))
+                    else:
+                        try:
+                            count = int(rhs)
+                        except ValueError:
+                            raise ValueError(
+                                f"Invalid Item count '{rhs}' in '(Item: {content})' — "
+                                f"expected an integer or {{option_name}}"
+                            )
+                        tokens.append((ITEM, (item_name, count, _found_op, None)))
                 else:
-                    tokens.append((ITEM, (content, 1)))
+                    # No operator — check for old ':N' syntax and give migration hint
+                    _parts = content.rsplit(':', 1)
+                    if len(_parts) == 2 and _parts[1].strip().lstrip('-').isdigit():
+                        _old_name = _parts[0].strip()
+                        _old_count = _parts[1].strip()
+                        raise ValueError(
+                            f"Outdated Item count syntax '(Item: {content})'. "
+                            f"Use '(Item: {_old_name} >= {_old_count})' instead."
+                        )
+                    # Plain item name — no count specified, default >= 1
+                    tokens.append((ITEM, (content, 1, '>=', None)))
+
                 i = close + 1
                 continue
 
@@ -306,8 +353,8 @@ class Parser:
 
         if typ == ITEM:
             self.consume()
-            name, count = token[1]
-            return ItemNode(name=name, count=count)
+            name, count, op, count_option = token[1]
+            return ItemNode(name=name, count=count, op=op, count_option=count_option)
 
         if typ == CAN_ACCESS:
             self.consume()
@@ -390,13 +437,32 @@ def evaluate_options(node, options: Dict[str, Any]):
 
         return ConstNode(value=result)
 
+    if isinstance(node, ItemNode):
+        if node.count_option is None:
+            return node  # literal count — unchanged
+        value = options.get(node.count_option)
+        if value is None:
+            # Should not reach here in normal flow — validate_item_count_options() in Rules.py
+            # catches unknown keys earlier. Guard here for direct/test callers.
+            raise ValueError(
+                f"Unknown option '{node.count_option}' used as Item count threshold — "
+                f"check that this option is declared in your manifest."
+            )
+        if isinstance(value, str):
+            # text_choice with a free-text string — also caught by pre-validation.
+            raise ValueError(
+                f"Option '{node.count_option}' has a string value and cannot be used "
+                f"as an Item count threshold."
+            )
+        return ItemNode(name=node.name, count=max(0, int(value)), op=node.op)
+
     if isinstance(node, AndNode):
         return AndNode(children=[evaluate_options(c, options) for c in node.children])
 
     if isinstance(node, OrNode):
         return OrNode(children=[evaluate_options(c, options) for c in node.children])
 
-    # ItemNode, CanAccessNode, CheckedNode, ConstNode — unchanged
+    # CanAccessNode, CheckedNode, ConstNode — unchanged
     return node
 
 
@@ -458,8 +524,22 @@ def compile_rule(node, player: int) -> Callable[[CollectionState], bool]:
         return lambda state, v=val: v
 
     if isinstance(node, ItemNode):
-        name, count = node.name, node.count
-        return lambda state, n=name, c=count, p=player: state.has(n, p, c)
+        if node.count_option is not None:
+            raise ValueError(
+                f"Unresolved ItemNode count_option '{node.count_option}' — "
+                f"call evaluate_options() before compile_rule()"
+            )
+        name, count, op = node.name, node.count, node.op
+        if op == '>=':
+            return lambda state, n=name, c=count, p=player: state.has(n, p, c)
+        _ops_fn = {
+            '>':  operator.gt,
+            '<=': operator.le,
+            '<':  operator.lt,
+            '==': operator.eq,
+            '!=': operator.ne,
+        }[op]
+        return lambda state, n=name, c=count, p=player, f=_ops_fn: f(state.count(n, p), c)
 
     if isinstance(node, CanAccessNode):
         region = node.region

@@ -182,6 +182,12 @@ class APFrameworkWorld(World):
         # Resolve item amount expressions (must run after location_table is built for % forms)
         self._resolve_item_amounts(self._build_option_values())
 
+        # Validate {option_key} references in Item count expressions.
+        # Must run after item_table and location_table are built (needed for softlock check).
+        # Raises ValueError on type mismatch or unknown key; warns on Toggle use or softlock risk.
+        from . import Rules as _Rules
+        _Rules.validate_item_count_options(self)
+
         # Apply this player's canonical remap to local item/location tables.
         # Must run BEFORE the hints loop below — the local/early hints read
         # item_table[name].code and add it to multiworld.local_items[player].

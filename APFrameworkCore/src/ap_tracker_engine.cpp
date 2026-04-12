@@ -770,6 +770,14 @@ std::unordered_set<int64_t> APTrackerEngine::get_out_of_logic_location_ids() con
     return result;
 }
 
+const LogicNode *APTrackerEngine::get_goal_logic_node() const
+{
+    // goal_logic_node_ defaults to make_const(false) — only valid when initialized and goal is active
+    if (!initialized_ || !active_goal_.has_value())
+        return nullptr;
+    return &goal_logic_node_;
+}
+
 // =============================================================================
 // Ecosystem Metadata Building
 // =============================================================================

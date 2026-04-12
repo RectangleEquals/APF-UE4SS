@@ -22,12 +22,16 @@ LogicNode LogicNode::make_const(bool value)
     return n;
 }
 
-LogicNode LogicNode::make_item(const std::string &name, int count)
+LogicNode LogicNode::make_item(const std::string &name, int count,
+                               const std::string &op,
+                               const std::string &count_option)
 {
     LogicNode n;
     n.type = LogicNodeType::Item;
     n.item_name = name;
+    n.item_op = op.empty() ? ">=" : op;
     n.item_count = count;
+    n.item_count_option = count_option;
     return n;
 }
 
@@ -97,9 +101,12 @@ enum class TokenType
 struct Token
 {
     TokenType type;
-    // Item: (name, count)
+    // Item: (name, count) and Option: (name, op, value) both use str_val
     std::string str_val;
     int int_val = 1;
+    // Item operator fields
+    std::string item_op = ">=";
+    std::string item_count_option;  // non-empty when RHS is {option_name}
     // Option: (name, op, value)
     std::string opt_op;
     std::string opt_value;
@@ -134,7 +141,7 @@ std::vector<Token> tokenize(const std::string &logic)
         {
             auto rest = logic.substr(i);
 
-            // (Item: NAME) or (Item: NAME : COUNT)
+            // (Item: NAME) or (Item: NAME OP INT) or (Item: NAME OP {option_key})
             if (rest.rfind("(Item:", 0) == 0)
             {
                 i += 6; // skip "(Item:"
@@ -146,34 +153,79 @@ std::vector<Token> tokenize(const std::string &logic)
                 Token tok;
                 tok.type = TokenType::Item;
 
-                // Split on last ':' for optional count
-                auto colon = content.rfind(':');
-                if (colon != std::string::npos)
+                // Scan for operator in longest-first order to avoid prefix collision
+                static const std::vector<std::string> item_ops = {">=", "<=", "!=", "==", ">", "<"};
+                std::string found_op;
+                size_t op_pos = std::string::npos;
+                for (const auto &op : item_ops)
                 {
-                    std::string after = trim(content.substr(colon + 1));
-                    bool all_digits = !after.empty();
-                    for (char c : after)
+                    auto p = content.find(op);
+                    if (p != std::string::npos)
                     {
-                        if (!std::isdigit(static_cast<unsigned char>(c)))
-                        {
-                            all_digits = false;
-                            break;
-                        }
+                        found_op = op;
+                        op_pos = p;
+                        break;
                     }
-                    if (all_digits)
+                }
+
+                if (!found_op.empty())
+                {
+                    tok.str_val = trim(content.substr(0, op_pos));
+                    tok.item_op = found_op;
+                    std::string rhs = trim(content.substr(op_pos + found_op.size()));
+
+                    if (!rhs.empty() && rhs.front() == '{' && rhs.back() == '}')
                     {
-                        tok.str_val = trim(content.substr(0, colon));
-                        tok.int_val = std::stoi(after);
+                        // {option_key} reference — resolved later by evaluate_options()
+                        std::string key = trim(rhs.substr(1, rhs.size() - 2));
+                        if (key.empty())
+                            throw std::runtime_error(
+                                "Empty option name in '(Item: " + content + ")' — "
+                                "expected '{option_name}'");
+                        tok.item_count_option = key;
+                        tok.int_val = 1;
                     }
                     else
                     {
-                        tok.str_val = content;
-                        tok.int_val = 1;
+                        try
+                        {
+                            tok.int_val = std::stoi(rhs);
+                        }
+                        catch (...)
+                        {
+                            throw std::runtime_error(
+                                "Invalid Item count '" + rhs + "' in '(Item: " + content + ")' — "
+                                "expected an integer or {option_name}");
+                        }
                     }
                 }
                 else
                 {
+                    // No operator — check for old ':N' syntax and give migration hint
+                    auto colon = content.rfind(':');
+                    if (colon != std::string::npos)
+                    {
+                        std::string after = trim(content.substr(colon + 1));
+                        bool all_digits = !after.empty();
+                        for (char c : after)
+                        {
+                            if (!std::isdigit(static_cast<unsigned char>(c)))
+                            {
+                                all_digits = false;
+                                break;
+                            }
+                        }
+                        if (all_digits)
+                        {
+                            std::string old_name = trim(content.substr(0, colon));
+                            throw std::runtime_error(
+                                "Outdated Item count syntax '(Item: " + content + ")'. "
+                                "Use '(Item: " + old_name + " >= " + after + ")' instead.");
+                        }
+                    }
+                    // Plain item name — no count specified, default >= 1
                     tok.str_val = content;
+                    tok.item_op = ">=";
                     tok.int_val = 1;
                 }
 
@@ -453,7 +505,7 @@ class Parser
         {
         case TokenType::Item: {
             auto t = consume();
-            return LogicNode::make_item(t.str_val, t.int_val);
+            return LogicNode::make_item(t.str_val, t.int_val, t.item_op, t.item_count_option);
         }
         case TokenType::CanAccess: {
             auto t = consume();
@@ -600,8 +652,31 @@ LogicNode evaluate_options(const LogicNode &node, const std::map<std::string, st
         return LogicNode::make_or(std::move(children));
     }
 
+    case LogicNodeType::Item: {
+        if (node.item_count_option.empty())
+            return node;  // literal count — unchanged
+        auto it = options.find(node.item_count_option);
+        if (it == options.end())
+        {
+            APLogger::get()->log(LogLevel::Warn, "APLogicEval",
+                "Unknown option '" + node.item_count_option + "' in Item count — defaulting to 1");
+            return LogicNode::make_item(node.item_name, 1, node.item_op);
+        }
+        try
+        {
+            int count = std::max(0, static_cast<int>(std::stod(it->second)));
+            return LogicNode::make_item(node.item_name, count, node.item_op);
+        }
+        catch (...)
+        {
+            APLogger::get()->log(LogLevel::Warn, "APLogicEval",
+                "Non-numeric option '" + node.item_count_option + "' in Item count — defaulting to 1");
+            return LogicNode::make_item(node.item_name, 1, node.item_op);
+        }
+    }
+
     default:
-        // Item, CanAccess, Checked, Const — unchanged
+        // CanAccess, Checked, Const — unchanged
         return node;
     }
 }
@@ -688,10 +763,12 @@ std::string logic_node_to_display(const LogicNode &node)
     case LogicNodeType::Const:
         return node.const_value ? "True" : "False";
 
-    case LogicNodeType::Item:
-        if (node.item_count > 1)
-            return "(Item: " + node.item_name + " : " + std::to_string(node.item_count) + ")";
+    case LogicNodeType::Item: {
+        const std::string &op = node.item_op.empty() ? ">=" : node.item_op;
+        if (node.item_count > 1 || op != ">=")
+            return "(Item: " + node.item_name + " " + op + " " + std::to_string(node.item_count) + ")";
         return "(Item: " + node.item_name + ")";
+    }
 
     case LogicNodeType::CanAccess:
         return "(Can Access: " + node.region + ")";
@@ -754,9 +831,27 @@ ScoredNode evaluate_scored(const LogicNode &node, const TrackerState &state)
         auto it = state.received_items.find(node.item_name);
         int have = (it != state.received_items.end()) ? it->second : 0;
         if (node.item_count <= 0)
+        {
             scored.score = 1.0f;
-        else
+            break;
+        }
+        const std::string &op = node.item_op.empty() ? ">=" : node.item_op;
+        if (op == ">=")
+        {
+            // Proportional — partial progress signal (e.g., 3/5 = 0.6)
             scored.score = std::min(static_cast<float>(have) / static_cast<float>(node.item_count), 1.0f);
+        }
+        else
+        {
+            // Binary for non-ascending operators — no meaningful partial progress
+            bool result =
+                (op == ">")  ? have >  node.item_count :
+                (op == "<=") ? have <= node.item_count :
+                (op == "<")  ? have <  node.item_count :
+                (op == "==") ? have == node.item_count :
+                (op == "!=") ? have != node.item_count : false;
+            scored.score = result ? 1.0f : 0.0f;
+        }
         break;
     }
 

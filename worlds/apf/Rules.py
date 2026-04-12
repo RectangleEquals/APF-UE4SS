@@ -3,11 +3,12 @@ Access rules for the AP Framework World.
 
 Rules are built from logic expression strings parsed by LogicParser.
 Logic expressions support:
-- (Item: Name)          — has at least 1 of item
-- (Item: Name : N)      — has at least N of item
-- (Can Access: Region)  — can reach a region
-- (Option: Name)        — boolean option check (resolved at generation time)
-- (Option: Name OP Val) — option comparison (resolved at generation time)
+- (Item: Name)              — has at least 1 of item
+- (Item: Name OP N)         — item count satisfies OP (>=, >, <=, <, ==, !=) against N
+- (Item: Name OP {key})     — item count satisfies OP against option key's integer value
+- (Can Access: Region)      — can reach a region
+- (Option: Name)            — boolean option check (resolved at generation time)
+- (Option: Name OP Val)     — option comparison (resolved at generation time)
 - AND, OR, True, False, grouping with ()
 
 Logic is only applied when logic_mode is "basic". When "none", all locations
@@ -34,6 +35,98 @@ def _collect_option_values(world: "APFrameworkWorld") -> Dict[str, Any]:
         if opt is not None and hasattr(opt, 'value'):
             options_dict[attr_name] = opt.value
     return options_dict
+
+
+def _walk_ast_items_with_option(node):
+    """Yield all ItemNode instances in the AST that have a count_option set."""
+    if isinstance(node, LogicParser.ItemNode) and node.count_option:
+        yield node
+    if isinstance(node, (LogicParser.AndNode, LogicParser.OrNode)):
+        for child in node.children:
+            yield from _walk_ast_items_with_option(child)
+
+
+def validate_item_count_options(world: "APFrameworkWorld") -> None:
+    """Pre-generation validation for {option_key} usage in Item count expressions.
+
+    Called from generate_early() after item_table is built, before create_regions().
+
+    Raises ValueError if:
+    - An option key referenced as a count threshold doesn't exist on world.options
+    - The option is a Choice or TextChoice (enum indices/strings, not meaningful counts)
+
+    Emits log.warning() (but does NOT block) if:
+    - The option is a Toggle (valid values 0/1 but unusual as a count threshold)
+    - In goal logic: the option's range_end exceeds the planned item pool count for that item
+      (Archipelago's own can_beat_game() will also catch this at fill time with a generic error;
+       this warning provides earlier, actionable diagnostics.)
+
+    Note: Region/location gates with item thresholds are not checked for softlocks here —
+    Archipelago's fill algorithm detects unreachable regions naturally.
+    """
+    from Options import Range, Toggle  # Archipelago base option types
+
+    all_logic: list = []  # list of (label: str, logic_str: str, is_goal: bool)
+    for rname, rlogic in world.region_table.items():
+        if rlogic:
+            all_logic.append((f"region '{rname}'", rlogic, False))
+    for lname, ldata in world.location_table.items():
+        if ldata.logic:
+            all_logic.append((f"location '{lname}'", ldata.logic, False))
+    for goal in world.capabilities.get("goals", []):
+        if goal.get("logic"):
+            all_logic.append((f"goal '{goal['name']}'", goal["logic"], True))
+
+    for label, logic_str, is_goal in all_logic:
+        try:
+            ast = LogicParser.parse(logic_str)
+        except ValueError:
+            continue  # Parse errors are reported separately
+        for inode in _walk_ast_items_with_option(ast):
+            key = inode.count_option
+            opt_obj = getattr(world.options, key, None)
+
+            if opt_obj is None or not hasattr(opt_obj, "value"):
+                raise ValueError(
+                    f"In {label}: (Item: {inode.name} {inode.op} {{{key}}}) — "
+                    f"unknown option '{key}'. "
+                    f"Check that it is declared in your manifest's 'options' array."
+                )
+
+            if isinstance(opt_obj, Toggle):
+                world.log.warning(
+                    f"In {label}: (Item: {inode.name} {inode.op} {{{key}}}) — "
+                    f"'{key}' is a Toggle option (values: 0 or 1). "
+                    f"The count threshold will be 0 or 1. If intentional, ignore this warning.",
+                    "Rules",
+                )
+            elif not isinstance(opt_obj, Range):
+                # Choice, TextChoice, or any other non-numeric type
+                raise ValueError(
+                    f"In {label}: (Item: {inode.name} {inode.op} {{{key}}}) — "
+                    f"option '{key}' is a {type(opt_obj).__name__}, not a Range or Toggle option. "
+                    f"Item count thresholds require an option with a numeric integer value. "
+                    f"'choice' and 'text_choice' options store enum indices or strings, "
+                    f"not meaningful item counts. Use a 'range' option instead."
+                )
+            else:
+                # Range (or NamedRange which extends Range) — check softlock for goals
+                if is_goal and inode.op in (">=", ">"):
+                    range_end = getattr(opt_obj, "range_end", None)
+                    if range_end is not None:
+                        item_entry = world.item_table.get(inode.name)
+                        pool_count = item_entry.count if item_entry and item_entry.count >= 0 else 0
+                        effective = range_end + (1 if inode.op == ">" else 0)
+                        if effective > pool_count:
+                            world.log.warning(
+                                f"In {label}: (Item: {inode.name} {inode.op} {{{key}}}) — "
+                                f"option '{key}' range_end ({range_end}) exceeds the planned item "
+                                f"pool count for '{inode.name}' ({pool_count}). "
+                                f"Players who set '{key}' > {pool_count} will never complete this goal. "
+                                f"Archipelago will also report a fill error if this makes the game unbeatable. "
+                                f"Reduce range_end to ≤ {pool_count}, or add more '{inode.name}' items.",
+                                "Rules",
+                            )
 
 
 def set_rules(world: "APFrameworkWorld") -> None:

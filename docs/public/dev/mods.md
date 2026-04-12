@@ -108,7 +108,8 @@ Location and region access in `manifest.json` is expressed using logic strings. 
 | Predicate | Example | Notes |
 |---|---|---|
 | `(Item: Name)` | `(Item: Iron Key)` | Player has at least 1 of the item |
-| `(Item: Name : N)` | `(Item: Crystal Key : 3)` | Player has at least N of the item |
+| `(Item: Name OP N)` | `(Item: Crystal Key >= 3)` | Item count satisfies OP (`>=`, `>`, `<=`, `<`, `==`, `!=`) against literal N |
+| `(Item: Name OP {key})` | `(Item: Heart Piece >= {hp_required})` | Count compared against a `range`/`toggle` option's integer value; resolved at generation time |
 | `(Can Access: Region)` | `(Can Access: Mountain Pass)` | Region is reachable |
 | `(Option: key)` | `(Option: include_traps)` | Toggle option is enabled |
 | `(Option: key OP val)` | `(Option: difficulty == hard)` | Option comparison |

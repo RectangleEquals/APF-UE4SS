@@ -477,10 +477,13 @@ void APMessageRouter::check_and_send_goal_completion()
         if (!active_goal.has_value() || active_goal->logic.empty())
             return;
 
-        // Parse and evaluate goal logic against current item state (item-only logic)
-        auto node = parse_logic(active_goal->logic);
-        node = evaluate_options(node, {}); // goals have no (Option:) nodes — pass empty map
-        node = simplify(node);
+        // Use the pre-parsed, fully resolved goal logic AST from APTrackerEngine.
+        // This was built at initialize() time with real option_values, so {option_key}
+        // Item count thresholds are correctly resolved (unlike re-parsing with an empty map).
+        const LogicNode *goal_node_ptr = tracker->get_goal_logic_node();
+        if (!goal_node_ptr)
+            return;
+        LogicNode node = *goal_node_ptr;  // copy of already-resolved, simplified AST
 
         TrackerState eval_state;
         auto counts = APStateManager::get()->get_all_item_progression_counts();

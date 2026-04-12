@@ -155,6 +155,8 @@ Options can be referenced in logic expressions on any entry type:
 
 See [logic.md](logic.md) for the full option expression reference.
 
+**Item count thresholds can reference options.** Write `(Item: Name >= {option_key})` to require at least as many of `Name` as the player's configured value for `option_key`. The `{option_key}` must be a `range` or `toggle` option — `choice` and `text_choice` options are rejected at generation time with a descriptive error. See [logic.md — Item Count with Option Reference](logic.md#item-count-with-option-reference).
+
 ---
 
 ## Goals

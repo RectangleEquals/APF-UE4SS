@@ -225,6 +225,18 @@ class AP_API APTrackerEngine
      */
     std::unordered_set<int64_t> get_out_of_logic_location_ids() const;
 
+    /**
+     * @brief Returns a pointer to the pre-parsed, fully resolved goal logic AST.
+     *
+     * The returned node was built at initialize() time with real option_values — NOT an empty map.
+     * Using this avoids the empty-options bug in ap_message_router.cpp where goal logic was
+     * re-parsed with evaluate_options(node, {}), leaving {option_key} Item thresholds unresolved.
+     *
+     * Returns nullptr if the tracker has not been initialized or no goal is active.
+     * The pointer is valid for the lifetime of this APTrackerEngine instance.
+     */
+    const LogicNode *get_goal_logic_node() const;
+
     // =========================================================================
     // Computation
     // =========================================================================

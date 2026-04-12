@@ -25,7 +25,8 @@ Practical examples showing common patterns at a glance. These use the figurative
 | **Multi-option OR** | `(Option: logic_difficulty == standard) OR (Option: logic_difficulty == expert)` | Included for standard or expert |
 | **Cross-region** | `(Can Access: Mountain Pass) AND (Can Access: Deep Caves)` | Both regions must be reachable |
 | **Nested condition** | `(Can Access: Deep Caves) AND ((Item: Iron Key) OR (Item: Lantern))` | In Deep Caves, and has one of two items |
-| **Item count** | `(Item: Crystal Key : 3)` | Player needs at least 3 Crystal Keys |
+| **Item count** | `(Item: Crystal Key >= 3)` | Player needs at least 3 Crystal Keys |
+| **Option-driven count** | `(Item: Heart Piece >= {hp_required})` | Player needs at least as many Heart Pieces as the `hp_required` option value |
 
 ---
 
@@ -36,7 +37,8 @@ expression  := and_expr ('OR' and_expr)*
 and_expr    := primary ('AND' primary)*
 primary     := '(' expression ')'
              | '(Item:' NAME ')'
-             | '(Item:' NAME ':' INT ')'
+             | '(Item:' NAME OP INT ')'
+             | '(Item:' NAME OP '{' OPTION_KEY '}' ')'
              | '(Can Access:' NAME ')'
              | '(Option:' NAME ')'
              | '(Option:' NAME OP VALUE ')'
@@ -47,10 +49,11 @@ primary     := '(' expression ')'
              | 'True'
              | 'False'
 
-OP  := '>=' | '<=' | '>' | '<' | '==' | '!='
-NAME := any characters up to the closing ')'
-INT  := decimal integer
-VALUE := any characters up to the closing ')'
+OP         := '>=' | '<=' | '!=' | '==' | '>' | '<'
+NAME       := any characters up to the closing ')'
+INT        := decimal integer
+VALUE      := any characters up to the closing ')'
+OPTION_KEY := name of a 'range' or 'toggle' option declared in the mod's 'options' array
 ```
 
 **Operator precedence:** AND binds more tightly than OR. Use parentheses to override: `A OR (B AND C)` vs `(A OR B) AND C`.
@@ -62,7 +65,8 @@ VALUE := any characters up to the closing ')'
 | Expression | Example | Meaning |
 |---|---|---|
 | `(Item: Name)` | `(Item: Iron Key)` | Player has at least 1 of the named item |
-| `(Item: Name : N)` | `(Item: Crystal Key : 3)` | Player has at least N of the named item |
+| `(Item: Name OP N)` | `(Item: Crystal Key >= 3)` | Item count satisfies the operator (see below for all operators) |
+| `(Item: Name OP {key})` | `(Item: Heart Piece >= {hp_required})` | Count compared against a player option's integer value; resolved at generation time |
 | `(Can Access: Region)` | `(Can Access: Mountain Pass)` | The named region is reachable |
 | `(Option: key)` | `(Option: include_traps)` | Toggle option is enabled (truthy) |
 | `(Option: key == val)` | `(Option: logic_difficulty == expert)` | Option equals the value |
@@ -263,7 +267,8 @@ struct ScoredNode {
 |---|---|
 | `Const(true)` | `1.0` |
 | `Const(false)` | `0.0` |
-| `Item(name, count)` | `min(received / required, 1.0)` — partial credit for partial items |
+| `Item(name, >= N)` | `min(received / N, 1.0)` — proportional partial credit (e.g. 3/5 = 0.6) |
+| `Item(name, other OP N)` | `1.0` if satisfied, `0.0` if not — binary (no partial progress for `>`, `<`, `==`, etc.) |
 | `CanAccess(region)` | `1.0` if region is reachable, `0.0` otherwise |
 | `Checked(location)` | `1.0` if location is in `checked_locations`, `0.0` otherwise |
 | `Option(...)` | `1.0` (options are resolved before scoring; unknown options default to true) |
@@ -323,9 +328,32 @@ Satisfied when the player has received at least one `Iron Key`. Score: `min(rece
 
 ### Item count requirement
 ```
-(Item: Crystal Key : 3)
+(Item: Crystal Key >= 3)
 ```
 Satisfied when the player has received at least 3 `Crystal Key` items. Score at 1 owned: `0.33`, at 2: `0.67`, at 3: `1.0`.
+
+### Item count with operator
+
+All six comparison operators are supported on item counts:
+
+| Expression | Meaning |
+|---|---|
+| `(Item: X >= N)` | At least N of X *(primary use case — proportional score)* |
+| `(Item: X > N)` | More than N of X |
+| `(Item: X <= N)` | At most N of X |
+| `(Item: X < N)` | Fewer than N of X |
+| `(Item: X == N)` | Exactly N of X |
+| `(Item: X != N)` | Not exactly N of X |
+
+For `>=`, the score is proportional (`min(have/N, 1.0)`). For all other operators, the score is binary: `1.0` if satisfied, `0.0` otherwise.
+
+### Item count with option reference
+
+```
+(Item: Heart Piece >= {hp_required})
+```
+
+The `{option_key}` form resolves the option's integer value at generation time. See [Item Count with Option Reference](#item-count-with-option-reference-1) below for details and constraints.
 
 ### Region gate
 ```
@@ -376,6 +404,64 @@ Located in the `Mountain Pass` region for AP sphere purposes and display groupin
   "logic": "(Item: Iron Key) AND (Item: Lantern)" }
 ```
 `Deep Caves` becomes reachable only when the player holds both `Iron Key` and `Lantern`. All locations requiring `(Can Access: Deep Caves)` are unreachable until then.
+
+---
+
+## Item Count with Option Reference
+
+Use `{option_key}` as the RHS of an Item operator to compare against a player-configured value:
+
+```json
+{
+  "options": [
+    { "name": "hp_required", "type": "range", "range_start": 1, "range_end": 18 }
+  ],
+  "regions": [
+    { "name": "Hearts: Collected", "logic": "(Item: Heart Piece >= {hp_required})" }
+  ],
+  "goals": [
+    { "name": "heart_hunt", "display": "Heart Piece Hunt", "logic": "(Can Access: Hearts: Collected)" }
+  ]
+}
+```
+
+The `{option_key}` notation uses the same syntax as the `amount` field in `manifest.json` — it always means **"the integer value of the named option"**. The resolution happens at generation time; the compiled rule uses the player's actual option value, not a placeholder.
+
+### Valid option types
+
+| Option type | Valid? | Notes |
+|---|---|---|
+| `range` | ✅ | `.value` is an integer in `[range_start, range_end]`. Primary use case. |
+| `toggle` | ⚠️ | `.value` is 0 or 1. Generates a warning — valid but unusual. |
+| `choice` | ❌ | `.value` is an enum index (0, 1, 2…). Rejected at generation time with a descriptive error. |
+| `text_choice` | ❌ | `.value` is a string or enum index. Rejected at generation time with a descriptive error. |
+
+The framework validates option types at generation time (`generate_early()`). Invalid types raise a `ValueError` that stops generation with a descriptive message identifying the exact logic string, option name, and reason.
+
+### `{option_key}` vs `(Option: key)`
+
+These two forms are **not interchangeable**:
+
+| Syntax | What it means | Valid as Item RHS? |
+|---|---|---|
+| `{option_key}` | The option's **integer value** | ✅ Yes |
+| `(Option: key OP value)` | A **boolean predicate** | ❌ No |
+
+Use `{option_key}` when you want a count threshold that varies with the player's settings. Use `(Option: key OP value)` when you want to conditionally include/exclude an entry based on an option value.
+
+### Softlock warning
+
+If `option.range_end` exceeds the number of items of that name in the pool, players who set the option to its maximum will never satisfy the condition in a goal. The framework emits a **warning** at generation time when it detects this:
+
+```
+WARNING: In goal 'heart_hunt': (Item: Heart Piece >= {hp_required}) — option 'hp_required'
+range_end (18) exceeds the planned item pool count for 'Heart Piece' (15).
+Players who set 'hp_required' > 15 will never complete this goal.
+```
+
+Archipelago's fill algorithm will also raise its own error at fill time if the game becomes unbeatable. The APF warning fires earlier and identifies the exact cause. To resolve: reduce `range_end` to ≤ the item pool count, or add more items of that name to your manifest.
+
+> **Note:** The softlock check only applies to **goal** logic. Region and location gates with item thresholds are intentional reachability gates — Archipelago's fill algorithm handles those naturally.
 
 ---
 
