@@ -8,6 +8,7 @@ Re-scans automatically when the active game changes.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -15,6 +16,18 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost
     from ...core.config import GameProfile
+
+
+# ---------------------------------------------------------------------------
+# Module-level constants
+# ---------------------------------------------------------------------------
+
+# Framework mod id must match exactly: archipelago.<game_id>.framework
+_FRAMEWORK_MOD_RE = re.compile(r"^archipelago\.[a-z0-9_]+\.framework$")
+
+# Folder names inside mods_dir that are never AP mods — excluded from all scans.
+# "shared" is the UE4SS built-in Lua library: no manifest.json, no main.lua.
+_SCAN_EXCLUDE: frozenset[str] = frozenset({"shared"})
 
 
 # ---------------------------------------------------------------------------
@@ -162,40 +175,82 @@ class ModService:
     def build_capabilities(
         self,
         mods: Optional[list[ModInfo]] = None,
-        game: str = "APFramework",
+        game: str = "",
         strict: bool = False,
     ) -> dict:
         """
         Build aggregated capabilities from AP mods.
-        Uses templates_dirs auto-resolved from the game's root directory.
+        `game` should be the actual game name (e.g. "Palworld") used as the
+        Templates/<game>/ subdirectory name. Falls back to profile game_id.
         """
         from .capabilities_builder import CapabilitiesBuilder
         if mods is None:
             mods = self.get_ap_mods()
-        templates_dirs = self._resolve_templates_dirs()
-        return CapabilitiesBuilder().from_mod_infos(mods, game=game, templates_dirs=templates_dirs, strict=strict)
+        game_name = game or (self._game_id or "")
+        templates_dirs = self._resolve_templates_dirs(game_name)
+        return CapabilitiesBuilder().from_mod_infos(
+            mods, game=game_name, templates_dirs=templates_dirs, strict=strict
+        )
 
-    def _resolve_templates_dirs(self) -> list[Path]:
+    # -----------------------------------------------------------------------
+    # Framework mod — content-based detection (mirrors ap_path_util.cpp)
+    # -----------------------------------------------------------------------
+
+    def _find_framework_mod_dirs(self) -> list[Path]:
         """
-        Locate Templates/<game>/ directories relative to the active game root.
-        Searches common UE4 directory layouts.
+        Scan mods_dir for all folders containing framework_config.json +
+        manifest.json whose mod_id matches 'archipelago.<game_id>.framework'.
+
+        Returns:
+          []       — framework mod not installed
+          [path]   — exactly one found (normal state)
+          [p1, p2] — conflict: multiple framework mods present
         """
-        dirs: list[Path] = []
-        if not self._mods_dir:
-            return dirs
-        # Typical layout: game_root/Pal/Binaries/Win64/Mods/ → game_root/
-        # Walk up looking for a Templates/ directory (up to 6 levels)
-        candidate = self._mods_dir
-        for _ in range(6):
-            templates = candidate / "Templates"
-            if templates.is_dir():
-                dirs.append(templates)
-                break
-            parent = candidate.parent
-            if parent == candidate:
-                break
-            candidate = parent
-        return dirs
+        results: list[Path] = []
+        if not self._mods_dir or not self._mods_dir.is_dir():
+            return results
+        for entry in sorted(self._mods_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            if not (entry / "framework_config.json").exists():
+                continue
+            manifest_path = entry / "manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if _FRAMEWORK_MOD_RE.match(raw.get("mod_id", "")):
+                    results.append(entry)
+            except Exception:
+                pass
+        return results
+
+    def get_framework_mod_dir(self) -> Optional[Path]:
+        """Return the unique framework mod directory, or None if absent or conflicted."""
+        found = self._find_framework_mod_dirs()
+        return found[0] if len(found) == 1 else None
+
+    def get_framework_mod_conflict(self) -> list[Path]:
+        """Return multiple paths when more than one framework mod is deployed (conflict state)."""
+        found = self._find_framework_mod_dirs()
+        return found if len(found) > 1 else []
+
+    def _resolve_templates_dirs(self, game_name: str = "") -> list[Path]:
+        """
+        Return [<framework_mod>/Templates/<game_name>/] if the framework mod is
+        deployed and the game-level template dir exists.
+
+        The returned path is the game-level dir — callers use it as:
+          - vocab: td / "Items.json"
+          - includes: td / "logic" / inc_path
+        """
+        if not game_name:
+            return []
+        fw_dir = self.get_framework_mod_dir()
+        if not fw_dir:
+            return []
+        game_dir = fw_dir / "Templates" / game_name
+        return [game_dir] if game_dir.is_dir() else []
 
     # -----------------------------------------------------------------------
     # Internal scanning
@@ -217,6 +272,8 @@ class ModService:
 
         for entry in sorted(mods_dir.iterdir()):
             if not entry.is_dir():
+                continue
+            if entry.name in _SCAN_EXCLUDE:
                 continue
             info = ModService._load_mod(entry)
             if info.is_ap_mod and install_state is not None:

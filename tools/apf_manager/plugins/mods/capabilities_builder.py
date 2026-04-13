@@ -173,6 +173,11 @@ class CapabilitiesBuilder:
         Fragment files (logic/*.json) contain partial capabilities dicts:
           {"regions": [...], "items": [...], "locations": [...]}
         Included content is PREPENDED to the manifest's own arrays (C++ behavior).
+
+        templates_dirs should contain game-level dirs (e.g. Templates/Palworld/).
+        Include paths are resolved relative to the logic/ subdirectory of each,
+        mirroring ap_mod_registry.cpp::resolve_includes() which uses:
+          shared_logic_dir = framework_folder / Templates / game_name / logic
         """
         if _visited is None:
             _visited = set()
@@ -184,8 +189,10 @@ class CapabilitiesBuilder:
         if not include_paths:
             return manifest_raw
 
-        # Build search order: manifest_dir first, then templates_dirs
-        search_dirs = [manifest_dir] + list(templates_dirs)
+        # Search order (mirrors C++ two-tier resolution):
+        #   1. manifest_dir (local mod folder)
+        #   2. <templates_game_dir>/logic/ (shared framework templates)
+        search_dirs = [manifest_dir] + [td / "logic" for td in templates_dirs]
 
         merged_items: list[dict] = []
         merged_locations: list[dict] = []
@@ -337,10 +344,11 @@ class CapabilitiesBuilder:
     def _validate_vocabulary(
         m: _ManifestData,
         templates_dirs: list[Path],
-        game: str,
     ) -> list[str]:
         """
-        Validate item/location/region names against Templates/<game>/{Items,Locations,Regions}.json.
+        Validate item/location names against Templates/<GameName>/{Items,Locations}.json.
+        templates_dirs should contain game-level dirs (e.g. Templates/Palworld/) so that
+        vocab files are found at td / "Items.json" — mirrors ap_vocabulary.cpp behavior.
         Returns list of warning strings. Never raises (matching C++ behavior).
         """
         if not m.vocab_validation:
@@ -350,7 +358,7 @@ class CapabilitiesBuilder:
 
         def load_vocab(filename: str) -> Optional[set[str]]:
             for td in templates_dirs:
-                p = td / game / filename
+                p = td / filename
                 if p.exists():
                     try:
                         data = json.loads(p.read_text(encoding="utf-8"))
@@ -471,7 +479,7 @@ class CapabilitiesBuilder:
         vocab_warnings: list[str] = []
         if templates_dirs:
             for m in ordered:
-                vocab_warnings.extend(self._validate_vocabulary(m, templates_dirs, game))
+                vocab_warnings.extend(self._validate_vocabulary(m, templates_dirs))
         if vocab_warnings:
             import warnings as _w
             for w in vocab_warnings:
@@ -505,15 +513,25 @@ class CapabilitiesBuilder:
                 entry["id"] = loc_ids[name]
                 all_locations.append(entry)
 
-        all_goals: list[dict] = []
-        seen_goals: set[str] = set()
+        # Goals: same-named goals across mods get their logic OR-merged.
+        # Mirrors ap_capabilities.cpp which combines: "(mod1_logic) or (mod2_logic)".
+        # All other fields (display_name, description, condition) come from first occurrence.
+        goals_by_name: dict[str, dict] = {}
         for m in ordered:
             for g in m.goals:
                 name = g.get("name", "")
-                if not name or name in seen_goals:
+                if not name:
                     continue
-                seen_goals.add(name)
-                all_goals.append(dict(g))
+                if name not in goals_by_name:
+                    goals_by_name[name] = dict(g)
+                else:
+                    existing = goals_by_name[name].get("logic", "")
+                    new_logic = g.get("logic", "")
+                    if existing and new_logic and existing != new_logic:
+                        goals_by_name[name]["logic"] = f"({existing}) or ({new_logic})"
+                    elif new_logic and not existing:
+                        goals_by_name[name]["logic"] = new_logic
+        all_goals: list[dict] = list(goals_by_name.values())
 
         all_options: list[dict] = []
         seen_opts: set[str] = set()

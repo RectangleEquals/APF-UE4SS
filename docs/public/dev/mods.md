@@ -442,4 +442,68 @@ Most game mods should be regular mods. Use the priority prefix only for infrastr
 
 ---
 
+---
+
+## Blueprint Component
+
+A mod folder can include a Blueprint Logic Mod component by placing Unreal Engine pak files in a `LogicMods/` subdirectory:
+
+```
+MyMod/
+├── manifest.json
+├── scripts/
+│   └── main.lua
+└── LogicMods/
+    ├── MyMod_P.pak
+    ├── MyMod_P.ucas
+    └── MyMod_P.utoc
+```
+
+APF Manager detects `LogicMods/*.pak` automatically and deploys the pak files to `Content/Paks/LogicMods/` in the game directory. No manifest field is required.
+
+**Requirements:**
+- `BPModLoaderMod` must be present and enabled in `mods.txt`. It is included with all UE4SS releases.
+- Blueprint mods do **not** get a `mods.txt` entry — only Lua and C++ components do.
+- There is no `load_order.txt` support for Blueprint mods in APF Manager currently.
+
+**Lua↔Blueprint interop:**
+
+Blueprint mods can receive data from Lua mods via `ModActor_C` hooks. The typical pattern is to expose a function in your Lua mod and call it from your Blueprint Actor's Event Graph via `UE4SS Lua Function Call` nodes.
+
+**APF Manager display:**
+
+The Content tab shows a `blueprint` badge on mods that include a Blueprint component. When a BP mod is checked for queuing, an inline notice is shown: *"Requires BPModLoaderMod (included with UE4SS)"*.
+
+---
+
+## C++ Component (Current Limitation)
+
+A mod folder can include a C++ UE4SS module by placing a compiled DLL in a `dlls/` subdirectory:
+
+```
+MyMod/
+├── manifest.json
+├── scripts/
+│   └── main.lua        ← Lua bridge (currently required)
+└── dlls/
+    └── main.dll        ← C++ UE4SS module
+```
+
+APF Manager detects `dlls/main.dll` automatically and deploys it to `ue4ss/Mods/<ModName>/dlls/main.dll`. The mod gets a single `mods.txt` entry regardless of how many components it has.
+
+**UE4SS load order guarantee:**
+
+C++ modules are loaded by UE4SS before any Lua scripts, regardless of their order in `mods.txt`. APF Manager visualizes this with a separator line in the Load Order tab between C++ and Lua-only mods.
+
+**Current limitation — Lua bridge required:**
+
+Full standalone C++ mod support (APClientLib linkage without any Lua) is not yet implemented. The current workflow is:
+- C++ module handles game-native code (hooks into Unreal Engine internals, Blueprint interop)
+- Lua module handles AP framework communication via `APClientLib`
+- The two communicate via shared state or direct function calls within the same mod folder
+
+A combined Lua+C++ mod uses one `manifest.json`, one mod identity, and appears as a single row in both the Installed tab and Load Order tab with both component badges shown.
+
+---
+
 *See also: [manifest.md](manifest.md) for the full manifest schema | [logic.md](logic.md) for the full logic expression reference | [framework.md](framework.md) for lifecycle states and IPC protocol | [tracker.md](tracker.md) for subscribing to tracker data*

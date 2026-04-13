@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import shutil
 import threading
+from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...core.config import GameProfile
     from ...core.ue4ss import UE4SSResult
     from .mods_txt import ModsTextManager
-    from .mod_service import ModInfo
+    from .mod_service import ModInfo, ModService
 
 
 class DeployService:
@@ -74,14 +75,12 @@ class DeployService:
                 self._mods_txt.save()
 
     def _get_framework_folder(self) -> Optional[str]:
-        """Find the framework mod folder name via ModService (mod_id ends with .framework)."""
+        """Return the framework mod folder name (delegates to ModService for pattern-correct detection)."""
         mods_svc = self._host.get_service("mods")
         if not mods_svc:
             return None
-        for mod in mods_svc.get_ap_mods():
-            if mod.mod_id and mod.mod_id.endswith(".framework"):
-                return mod.folder_name
-        return None
+        fw_dir = mods_svc.get_framework_mod_dir()
+        return fw_dir.name if fw_dir else None
 
     def _enforce_framework_order(self, order: list[str]) -> list[str]:
         """
@@ -154,6 +153,119 @@ class DeployService:
         if self._profile:
             from .install_state import InstallStateManager
             InstallStateManager(self._profile.game_id).remove(mod_info.folder_name)
+
+    # -----------------------------------------------------------------------
+    # Template deployment
+    # -----------------------------------------------------------------------
+
+    def get_templates_dir(self, game_name: str) -> Optional[Path]:
+        """
+        Return <framework_mod_dir>/Templates/<game_name>/, or None if the
+        framework mod is absent or in a conflict state.
+        """
+        mods_svc = self._host.get_service("mods")
+        if not mods_svc:
+            return None
+        fw_dir = mods_svc.get_framework_mod_dir()
+        if not fw_dir:
+            return None
+        return fw_dir / "Templates" / game_name
+
+    def deploy_template(self, cache_path: Path, game_name: str) -> None:
+        """
+        Copy template files from cache_path into <framework_mod>/Templates/<game_name>/
+        additively (existing files from other registries are not removed).
+        """
+        target = self.get_templates_dir(game_name)
+        if not target:
+            raise RuntimeError("Cannot deploy templates: framework mod not found or in conflict state")
+        target.mkdir(parents=True, exist_ok=True)
+        for src in cache_path.rglob("*"):
+            if src.is_dir():
+                continue
+            rel = src.relative_to(cache_path)
+            dst = target / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src), str(dst))
+
+    def undeploy_template(self, game_name: str, file_paths: list[str]) -> None:
+        """
+        Remove specific files (given as paths relative to Templates/<game_name>/)
+        from the framework mod's template directory. Only removes files this
+        source contributed — does not touch files from other registries.
+        """
+        target = self.get_templates_dir(game_name)
+        if not target:
+            return
+        for rel_path in file_paths:
+            full = target / rel_path
+            try:
+                full.unlink(missing_ok=True)
+            except Exception:
+                pass
+        # Prune empty directories left behind
+        for dirpath in sorted(target.rglob("*"), reverse=True):
+            if dirpath.is_dir():
+                try:
+                    dirpath.rmdir()
+                except OSError:
+                    pass
+
+    def get_template_status(self, template_entry, game_name: str) -> dict:
+        """
+        Return {relative_path: bool} for each file expected from template_entry.
+        True = file is present on disk in the framework mod's Templates dir.
+        """
+        target = self.get_templates_dir(game_name)
+        if not target:
+            return {}
+        result = {}
+        paths = getattr(template_entry, "file_paths", []) or []
+        for rel_path in paths:
+            result[rel_path] = (target / rel_path).exists()
+        return result
+
+    # -----------------------------------------------------------------------
+    # Framework mod cascade analysis
+    # -----------------------------------------------------------------------
+
+    def get_framework_uninstall_impact(self) -> dict:
+        """
+        Analyse the cascading damage caused by uninstalling the framework mod.
+
+        Returns:
+          {
+            "affected_mods": [ModInfo, ...],    # installed AP mods with capabilities.include
+            "template_dirs_removed": [Path, ...] # Template subdirs that would be deleted
+          }
+
+        Scans all installed AP mods for capabilities.include entries.  Any mod
+        that has at least one include path is affected — its includes resolve
+        into the framework mod's Templates/logic/ tree, which is removed with
+        the framework mod.
+        """
+        mods_svc = self._host.get_service("mods")
+        if not mods_svc:
+            return {"affected_mods": [], "template_dirs_removed": []}
+
+        fw_dir = mods_svc.get_framework_mod_dir()
+        affected: list = []
+        template_dirs: list[Path] = []
+
+        if fw_dir:
+            templates_root = fw_dir / "Templates"
+            if templates_root.is_dir():
+                template_dirs = [templates_root]
+
+        for mod in mods_svc.get_ap_mods():
+            includes = getattr(mod, "capabilities_includes", [])
+            if includes:
+                affected.append(mod)
+
+        return {
+            "affected_mods": affected,
+            "template_dirs_removed": template_dirs,
+        }
 
     def get_component_status(self, mod_info: "ModInfo", detection: Optional["UE4SSResult"]) -> dict:
         """

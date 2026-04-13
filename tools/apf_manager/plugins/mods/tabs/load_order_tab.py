@@ -1,15 +1,15 @@
 """
-Tab 6 — Load Order
-
-Current DeployPanel load order content minus Deploy All and Validate.
-Calls DeployService / ModsTextManager with Bug A/B fixes applied.
+Tab 5 — Load Order
 
 Row behaviour:
-  - Framework mod row: ▲▼ work normally.  ▼ cascades adjacent AP mods down
+  - Framework mod row: ▲▼ work normally. ▼ cascades adjacent AP mods down
     when a non-AP slot exists below; blocked when no non-AP mod is below the cluster.
   - Keybinds row: shown at absolute bottom when present in mods.txt; not movable.
   - Non-AP mod rows: dimmed text, freely reorderable.
-  - Enable/disable toggle for AP mods.
+  - BP-only mods (neither "lua" nor "cpp" in components) are excluded — no mods.txt entry.
+  - Manually installed (orphaned) mods: shown with folder-account badge and _ROW_BG_WARN background.
+  - C++ mods: "code-braces" badge. UE4SS guarantees C++ loads before Lua regardless of list position.
+  - Auto-validate after every toggle: update row colors.
 """
 
 from __future__ import annotations
@@ -25,14 +25,13 @@ from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.button import MDIconButton
 
 from ....gui.widgets.tip_icon_button import TipIconButton
+from ..mod_service import _SCAN_EXCLUDE, _FRAMEWORK_MOD_RE
 
 if TYPE_CHECKING:
     from ...mods.mod_service import ModInfo
     from ..mods_txt import ModsTextManager
     from ....core.config import GameProfile
     from ....core.ue4ss import UE4SSResult
-
-_SCAN_EXCLUDE = {"shared"}
 
 
 def _mod_dep_status(mod, mod_by_id: dict, detection) -> str:
@@ -149,11 +148,12 @@ class _ModRow(MDBoxLayout):
             return
 
         # Normal mod row
+        is_orphaned = getattr(mod, "is_orphaned", False)
         if mod.is_ap_mod:
             self.md_bg_color = (
                 _ROW_BG_DISABLED if not enabled
                 else _ROW_BG_ERROR if status == "error"
-                else _ROW_BG_WARN if status == "warn"
+                else _ROW_BG_WARN if (status == "warn" or is_orphaned)
                 else _ROW_BG_NORMAL
             )
         else:
@@ -189,16 +189,52 @@ class _ModRow(MDBoxLayout):
         ))
         self.add_widget(status_box)
 
-        # Column 3: Name
-        self.add_widget(MDLabel(
+        # Column 3: Name (with optional C++ badge and orphaned marker)
+        name_box = MDBoxLayout(
+            orientation="horizontal", size_hint=(1, 1), spacing=dp(4),
+        )
+        components = getattr(mod, "components", ["lua"])
+        if "cpp" in components:
+            name_box.add_widget(MDIcon(
+                icon="code-braces",
+                size_hint=(None, 1), width=dp(18),
+                theme_icon_color="Custom", icon_color=(0.4, 0.7, 1.0, 1),
+            ))
+
+        is_orphaned = getattr(mod, "is_orphaned", False)
+        if is_orphaned:
+            name_box.add_widget(MDIcon(
+                icon="folder-account",
+                size_hint=(None, 1), width=dp(18),
+                theme_icon_color="Custom", icon_color=(0.85, 0.60, 0.15, 1),
+            ))
+
+        # Name + optional "Manual" sub-label stacked vertically
+        name_col = MDBoxLayout(orientation="vertical", size_hint=(1, 1))
+        name_col.add_widget(MDLabel(
             text=mod.display_name,
             font_style="Body",
-            size_hint=(1, 1),
+            size_hint=(1, None),
+            height=dp(20),
             halign="left",
             valign="middle",
             theme_text_color="Custom" if not mod.is_ap_mod else "Primary",
             text_color=(0.5, 0.5, 0.5, 1) if not mod.is_ap_mod else (1, 1, 1, 0.87),
         ))
+        if is_orphaned:
+            name_col.add_widget(MDLabel(
+                text="Manually installed",
+                font_style="Label",
+                role="small",
+                size_hint=(1, None),
+                height=dp(14),
+                halign="left",
+                valign="middle",
+                theme_text_color="Custom",
+                text_color=(0.85, 0.60, 0.15, 0.75),
+            ))
+        name_box.add_widget(name_col)
+        self.add_widget(name_box)
 
         # Column 4: Version
         self.add_widget(MDLabel(
@@ -288,9 +324,10 @@ class LoadOrderTab(MDBoxLayout):
         # Tab subtitle
         self.add_widget(MDLabel(
             text=(
-                "Adjust the load order of your mods. The AP framework mod must stay above all "
+                "Adjust the load order of your AP mods. The framework mod must stay above all "
                 "other AP mods — use the arrow buttons to reorder. Non-AP mods (greyed out) "
-                "can be placed anywhere. Keybinds is always pinned at the bottom."
+                "can be placed anywhere. Keybinds is always pinned at the bottom. "
+                "Note: UE4SS always loads C++ mods before Lua regardless of their position here."
             ),
             size_hint_y=None,
             adaptive_height=True,
@@ -326,6 +363,19 @@ class LoadOrderTab(MDBoxLayout):
         self._detection = detection
         self._do_refresh()
 
+    def get_error_count(self) -> int:
+        """Return the number of rows with dependency errors (for badge coloring)."""
+        if not self._rows:
+            return 0
+        mods_svc = self._host.get_service("mods")
+        if not mods_svc or not (self._detection and getattr(self._detection, "valid", False)):
+            return 0
+        mod_by_id = {m.mod_id: m for m in mods_svc.scan() if m.mod_id}
+        return sum(
+            1 for row in self._rows
+            if _mod_dep_status(row._mod, mod_by_id, self._detection) == "error"
+        )
+
     def _do_refresh(self) -> None:
         self._list_layout.clear_widgets()
         self._rows = []
@@ -345,15 +395,28 @@ class LoadOrderTab(MDBoxLayout):
         all_mods = mods_svc.scan() if mods_svc else []
         all_mods = [m for m in all_mods if m.folder_name not in _SCAN_EXCLUDE]
 
+        def _has_mods_txt_entry(m) -> bool:
+            """BP-only mods have no mods.txt entry and are excluded from Load Order."""
+            components = getattr(m, "components", ["lua"])
+            return "lua" in components or "cpp" in components
+
         if self._mods_txt:
             order = self._mods_txt.get_order()
             order_idx = {name: i for i, name in enumerate(order)}
-            visible = [m for m in all_mods if (m.is_ap_mod or self._show_all)
-                       and m.folder_name.lower() != "keybinds"]
+            visible = [
+                m for m in all_mods
+                if (m.is_ap_mod or self._show_all)
+                and m.folder_name.lower() != "keybinds"
+                and _has_mods_txt_entry(m)
+            ]
             visible.sort(key=lambda m: order_idx.get(m.folder_name, len(order)))
         else:
-            visible = [m for m in all_mods if (m.is_ap_mod or self._show_all)
-                       and m.folder_name.lower() != "keybinds"]
+            visible = [
+                m for m in all_mods
+                if (m.is_ap_mod or self._show_all)
+                and m.folder_name.lower() != "keybinds"
+                and _has_mods_txt_entry(m)
+            ]
 
         if not visible and not (self._mods_txt and self._mods_txt.has_footer):
             self._header_row.opacity = 0
@@ -394,8 +457,8 @@ class LoadOrderTab(MDBoxLayout):
 
         # Keybinds row — always at absolute bottom when present
         if self._mods_txt and self._mods_txt.has_footer:
-            from ...mods.mod_service import ModInfo
             from pathlib import Path
+            from ...mods.mod_service import ModInfo
             keybinds_mod = ModInfo(folder_name="Keybinds", folder_path=Path("."))
             kb_row = _ModRow(
                 mod=keybinds_mod,
@@ -429,6 +492,8 @@ class LoadOrderTab(MDBoxLayout):
         svc = self._deploy_svc
         if svc:
             svc.set_enabled(mod.folder_name, enabled)
+        # Auto-validate and refresh row colors
+        self._do_refresh()
 
     def _on_move_up(self, mod: "ModInfo") -> None:
         idx = next(
@@ -447,7 +512,7 @@ class LoadOrderTab(MDBoxLayout):
         if idx is None or idx >= len(self._rows) - 1:
             return
 
-        if mod.mod_id and mod.mod_id.endswith(".framework"):
+        if mod.mod_id and _FRAMEWORK_MOD_RE.match(mod.mod_id):
             self._cascade_framework_down(idx)
         else:
             self._swap_displayed(idx, idx + 1)

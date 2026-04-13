@@ -268,6 +268,12 @@ class RegistriesTab(MDBoxLayout):
                 size_hint=(1, 1),
             ))
             row.add_widget(MDIconButton(
+                icon="eye",
+                theme_icon_color="Custom",
+                icon_color=(0.5, 0.75, 1.0, 1),
+                on_release=lambda *_, e=entry: self._on_view(e),
+            ))
+            row.add_widget(MDIconButton(
                 icon="flag",
                 theme_icon_color="Custom",
                 icon_color=(0.9, 0.2, 0.2, 1),
@@ -328,6 +334,19 @@ class RegistriesTab(MDBoxLayout):
         if self._add_status:
             self._add_status.text = text
             self._add_status.text_color = color
+
+    def _on_view(self, entry) -> None:
+        """Open the registry viewer for an already-added registry (re-uses cached data)."""
+        svc = self._registry_svc()
+        if not svc:
+            return
+        self._set_add_status("Opening viewer…", (0.7, 0.7, 0.7, 1))
+        svc.add_registry_with_viewer(
+            entry.url, self._game_id,
+            on_done=lambda ok, msg: self._set_add_status(
+                "" if ok else msg, (0.9, 0.3, 0.3, 1)
+            ),
+        )
 
     def _on_remove(self, entry) -> None:
         svc = self._registry_svc()

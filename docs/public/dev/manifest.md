@@ -20,6 +20,43 @@ Mod folder names should begin with the game name to avoid collisions when multip
 
 ---
 
+## Repo Structure
+
+APF Manager auto-detects mod component types entirely from directory structure — no manifest field is needed. A single `<ModName>/` subfolder can contain any combination of components; they all share the same `manifest.json` and the same mod identity.
+
+```
+MyMod/
+├── manifest.json           ← AP Framework identity + capabilities
+├── README.md               ← Optional: shown in APF Manager Content tab preview
+├── scripts/                ← Lua component (detected by scripts/main.lua)
+│   └── main.lua
+├── dlls/                   ← C++ component (detected by dlls/main.dll)
+│   └── main.dll
+└── LogicMods/              ← Blueprint component (detected by LogicMods/*.pak)
+    ├── MyMod_P.pak
+    ├── MyMod_P.ucas
+    └── MyMod_P.utoc
+```
+
+Any combination of these subdirectories is valid:
+
+| Combination | Components | mods.txt entry |
+|---|---|---|
+| `scripts/main.lua` only | Lua | Yes |
+| `dlls/main.dll` only | C++ | Yes |
+| `LogicMods/*.pak` only | Blueprint | No |
+| `scripts/` + `dlls/` | Lua + C++ | Yes (one entry) |
+| `scripts/` + `LogicMods/` | Lua + Blueprint | Yes (one entry for Lua) |
+| All three | Lua + C++ + Blueprint | Yes (one entry) |
+
+**Notes:**
+- Combined Lua+C++ mod has a single `manifest.json`, a single mod identity, and a single `mods.txt` entry.
+- C++ components always load before Lua components regardless of `mods.txt` order — this is a UE4SS guarantee.
+- Blueprint components require `BPModLoaderMod` (included with all UE4SS releases).
+- APF Manager detects and deploys all components automatically from this structure.
+
+---
+
 ## Top-Level Fields
 
 | Field | Type | Required | Description |
