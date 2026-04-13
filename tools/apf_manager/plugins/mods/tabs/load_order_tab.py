@@ -28,7 +28,7 @@ from ....gui.widgets.tip_icon_button import TipIconButton
 
 if TYPE_CHECKING:
     from ...mods.mod_service import ModInfo
-    from ...deploy.mods_txt import ModsTextManager
+    from ..mods_txt import ModsTextManager
     from ....core.config import GameProfile
     from ....core.ue4ss import UE4SSResult
 
@@ -44,10 +44,6 @@ def _mod_dep_status(mod, mod_by_id: dict, detection) -> str:
     for incompat_id in mod.incompatible:
         if incompat_id in mod_by_id:
             return "error"
-    for ext_name in mod.requires_external:
-        folder = detection.mods_dir / ext_name if detection.mods_dir else None
-        if not (folder and folder.is_dir()):
-            return "warn"
     return "ok"
 
 _ROW_BG_NORMAL   = (0.14, 0.14, 0.14, 1)

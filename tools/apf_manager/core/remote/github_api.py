@@ -6,7 +6,7 @@ Used for: docs fetching, release checks, and any future GitHub feature
 
 Auth token resolution (priority order):
   1. User override  → ~/.apf_manager/github_token.json  {"token": "ghp_..."}
-  2. Bundled token  → token_file_path (e.g. plugins/docs_viewer/.github_token)
+  2. Bundled token  → token_file_path (e.g. data/.github_token via _BUNDLED_TOKEN_PATH)
   3. Unauthenticated fallback (60 req/hr)
 
 All methods are cache-aware and fall back to stale cache on network/auth failure.
@@ -27,6 +27,9 @@ import httpx as _httpx
 from .github_cache import GitHubCache, TTL_CONTENTS, TTL_FILES, TTL_RELEASES
 
 _USER_AGENT = "APFManager/1.0"
+
+# Bundled PAT — centralized location for all plugins that need GitHub auth
+_BUNDLED_TOKEN_PATH = Path(__file__).parent.parent.parent / "data" / ".github_token"
 
 # Module-level cache so any plugin can read the most recent rate limit state
 # without holding a reference to a specific GitHubAPI instance.
@@ -225,6 +228,66 @@ class GitHubAPI:
         except Exception as exc:
             self._on_status("warn", f"Unexpected error fetching release info: {exc}")
             return self._load_stale_json(cache_key)
+
+    def list_releases(
+        self,
+        tag_prefix: str = "",
+        per_page: int = 30,
+        force_refresh: bool = False,
+    ) -> list[dict]:
+        """
+        Return a list of release metadata dicts, optionally filtered by tag prefix.
+        Cached with the same TTL as get_latest_release().
+        """
+        if self._check_rate_limit():
+            return []
+
+        cache_key = f"releases/list/{tag_prefix or 'all'}"
+
+        if not force_refresh:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                try:
+                    return json.loads(cached)
+                except Exception:
+                    pass
+
+        try:
+            resp = self._client.rest.repos.list_releases(
+                self._owner, self._repo, per_page=per_page
+            )
+            self._update_rate_limit(resp.headers)
+            releases = resp.parsed_data or []
+            results = []
+            for release in releases:
+                tag = release.tag_name or ""
+                if tag_prefix and not tag.startswith(tag_prefix):
+                    continue
+                results.append({
+                    "tag_name": tag,
+                    "published_at": str(release.published_at),
+                    "body": release.body or "",
+                    "assets": [
+                        {
+                            "name": a.name,
+                            "browser_download_url": a.browser_download_url,
+                            "size": a.size,
+                        }
+                        for a in (release.assets or [])
+                    ],
+                })
+            self._cache.set(cache_key, json.dumps(results), TTL_RELEASES)
+            return results
+
+        except RateLimitExceeded as exc:
+            return self._handle_rate_limit(exc, cache_key, fallback=[])
+
+        except RequestFailed as exc:
+            return self._handle_request_failed(exc, cache_key, fallback=[]) or []
+
+        except Exception as exc:
+            self._on_status("warn", f"Unexpected error listing releases: {exc}")
+            return json.loads(self._load_stale_json(cache_key) or "[]")
 
     # -----------------------------------------------------------------------
     # User / collaborator API (used by github_auth)

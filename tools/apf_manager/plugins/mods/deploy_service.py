@@ -1,17 +1,14 @@
 """
-DeployService — public service API for the deploy plugin.
+DeployService — service API for mod deployment operations.
 
-Registered as the "deploy" service so other plugins can call:
-    svc = host.get_service("deploy")
-    svc.set_enabled("MyMod", True)
-    svc.reorder(["APFrameworkMod", "MyMod", "OtherMod"])
-    svc.remove_entry("MyMod")
+Registered as the "deploy" service by the mods plugin.
 
-Also owns the shared ModsTextManager instance so all tabs share the same in-memory state.
+Owns the shared ModsTextManager instance so all tabs share the same in-memory state.
 """
 
 from __future__ import annotations
 
+import shutil
 import threading
 from typing import Optional, TYPE_CHECKING
 
@@ -19,6 +16,7 @@ if TYPE_CHECKING:
     from ...core.config import GameProfile
     from ...core.ue4ss import UE4SSResult
     from .mods_txt import ModsTextManager
+    from .mod_service import ModInfo
 
 
 class DeployService:
@@ -123,3 +121,68 @@ class DeployService:
         """Force re-read mods.txt from disk."""
         with self._lock:
             self._reload_mods_txt()
+
+    # -----------------------------------------------------------------------
+    # Deploy / undeploy
+    # -----------------------------------------------------------------------
+
+    def undeploy_mod(self, mod_info: "ModInfo", detection: Optional["UE4SSResult"]) -> None:
+        """
+        Remove all deployed components for a mod from the install target.
+        Does not touch the download cache. Does not remove dependency DLLs.
+        """
+        if not detection:
+            return
+
+        components = getattr(mod_info, "components", ["lua"])
+
+        if any(c in components for c in ("lua", "cpp")):
+            shutil.rmtree(str(mod_info.folder_path), ignore_errors=True)
+            with self._lock:
+                if self._mods_txt:
+                    self._mods_txt.remove_entry(mod_info.folder_name)
+                    self._mods_txt.save()
+
+        if "blueprint" in components and detection.logicmods_dir:
+            for pak in getattr(mod_info, "bp_pak_files", []):
+                pak_path = detection.logicmods_dir / pak
+                try:
+                    pak_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        if self._profile:
+            from .install_state import InstallStateManager
+            InstallStateManager(self._profile.game_id).remove(mod_info.folder_name)
+
+    def get_component_status(self, mod_info: "ModInfo", detection: Optional["UE4SSResult"]) -> dict:
+        """
+        Return per-component presence status for a deployed mod.
+        Keys: "lua", "cpp", "blueprint" — values: bool.
+        """
+        if not detection:
+            return {}
+
+        components = getattr(mod_info, "components", ["lua"])
+        bp_pak_files = getattr(mod_info, "bp_pak_files", [])
+        status = {}
+
+        if "lua" in components:
+            status["lua"] = (
+                detection.mods_dir / mod_info.folder_name / "scripts" / "main.lua"
+            ).exists()
+
+        if "cpp" in components:
+            status["cpp"] = (
+                detection.mods_dir / mod_info.folder_name / "dlls" / "main.dll"
+            ).exists()
+
+        if "blueprint" in components:
+            if bp_pak_files and detection.logicmods_dir:
+                status["blueprint"] = all(
+                    (detection.logicmods_dir / f).exists() for f in bp_pak_files
+                )
+            else:
+                status["blueprint"] = False
+
+        return status

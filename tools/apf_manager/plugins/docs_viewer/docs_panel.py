@@ -215,12 +215,11 @@ class DocsPanel:
                 return  # "(cached)" will appear in title bar instead
             self._on_api_status(level, msg)
 
-        from ...core.remote.github_api import GitHubAPI
-        _token_path = _HERE / ".github_token"
+        from ...core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
         _api = GitHubAPI(
             repo_owner=r_owner,
             repo_name=r_repo,
-            token_file_path=_token_path if _token_path.exists() else None,
+            token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
             on_status=_silent_status,
         )
         md_text = _api.fetch_text(url, force_refresh=True)
@@ -466,12 +465,11 @@ class DocsPanel:
 
             repo_owner = self._meta.get("repo_owner", "")
             repo_name = self._meta.get("repo_name", "")
-            token_path = _HERE / ".github_token"
-
+            from ...core.remote.github_api import _BUNDLED_TOKEN_PATH
             self._api = GitHubAPI(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
-                token_file_path=token_path if token_path.exists() else None,
+                token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
                 on_status=self._on_api_status,
             )
         return self._api

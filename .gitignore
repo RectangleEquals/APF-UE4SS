@@ -155,4 +155,4 @@ tools/apf_manager/__version__.py
 tools/apf_manager/.apf_manager_config.json
 tools/apf_manifesto/build_cache/
 tools/apf_manifesto/*.md
-tools/apf_manager/plugins/docs_viewer/.github_token
+tools/apf_manager/data/.github_token

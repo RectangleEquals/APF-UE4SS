@@ -94,9 +94,14 @@ class ModInfo:
     options: list = field(default_factory=list)        # list[OptionDef]
     item_overrides: list = field(default_factory=list) # list[ItemOverrideDef]
 
-    # install.json (load-order hints only — scripting fields removed)
-    prefers_after: list = field(default_factory=list)
-    requires_external: list = field(default_factory=list)
+    # Component detection (determined from filesystem structure)
+    components: list = field(default_factory=lambda: ["lua"])
+    bp_pak_files: list = field(default_factory=list)
+    is_orphaned: bool = False
+
+    @property
+    def is_managed(self) -> bool:
+        return not self.is_orphaned and bool(self.mod_id)
 
     @property
     def is_ap_mod(self) -> bool:
@@ -116,17 +121,20 @@ class ModService:
         self._host = host
         self._mods: list[ModInfo] = []
         self._mods_dir: Optional[Path] = None
+        self._game_id: Optional[str] = None
 
     # Called by PluginHost when game context changes
     def on_game_changed(self, profile: Optional["GameProfile"]) -> None:
         if profile is None:
             self._mods = []
             self._mods_dir = None
+            self._game_id = None
             return
+        self._game_id = getattr(profile, "game_id", None)
         detection = self._host.get_detection()
         if detection and detection.mods_dir:
             self._mods_dir = detection.mods_dir
-            self._mods = self._scan(detection.mods_dir)
+            self._mods = self._scan_with_state(detection.mods_dir, self._game_id)
 
     # -----------------------------------------------------------------------
     # Public API (the "mods" service interface)
@@ -139,7 +147,7 @@ class ModService:
     def rescan(self) -> list[ModInfo]:
         """Re-read the Mods directory and return the updated list."""
         if self._mods_dir:
-            self._mods = self._scan(self._mods_dir)
+            self._mods = self._scan_with_state(self._mods_dir, self._game_id)
         return list(self._mods)
 
     def get_mod(self, folder_name: str) -> Optional[ModInfo]:
@@ -194,14 +202,25 @@ class ModService:
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def _scan(mods_dir: Path) -> list[ModInfo]:
+    def _scan_with_state(mods_dir: Path, game_id: Optional[str]) -> list[ModInfo]:
         results: list[ModInfo] = []
         if not mods_dir.is_dir():
             return results
+
+        install_state = None
+        if game_id:
+            try:
+                from .install_state import InstallStateManager
+                install_state = InstallStateManager(game_id)
+            except Exception:
+                pass
+
         for entry in sorted(mods_dir.iterdir()):
             if not entry.is_dir():
                 continue
             info = ModService._load_mod(entry)
+            if info.is_ap_mod and install_state is not None:
+                info.is_orphaned = not install_state.is_managed(info.folder_name)
             results.append(info)
         return results
 
@@ -235,15 +254,22 @@ class ModService:
             except Exception:
                 pass
 
-        # --- install.json (load-order hints only) ---
-        install_path = folder / "install.json"
-        if install_path.exists():
-            try:
-                raw = json.loads(install_path.read_text(encoding="utf-8"))
-                info.prefers_after = raw.get("prefers_after", [])
-                info.requires_external = raw.get("requires_external", [])
-            except Exception:
-                pass
+        # --- Component detection (from filesystem structure) ---
+        detected = []
+        if (folder / "scripts" / "main.lua").exists():
+            detected.append("lua")
+        if (folder / "dlls" / "main.dll").exists():
+            detected.append("cpp")
+        logicmods_subdir = folder / "LogicMods"
+        if logicmods_subdir.is_dir():
+            pak_files = [
+                f.name for f in logicmods_subdir.iterdir()
+                if f.suffix.lower() in (".pak", ".ucas", ".utoc")
+            ]
+            if pak_files:
+                detected.append("blueprint")
+                info.bp_pak_files = pak_files
+        info.components = detected or ["lua"]
 
         return info
 

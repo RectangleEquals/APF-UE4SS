@@ -47,7 +47,7 @@ Source: "{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; cx_Freeze lib/ (library.zip + bundled modules, including webview/ package data)
 Source: "{#BuildDir}\lib\*"; DestDir: "{app}\lib"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Built-in plugins (includes docs_viewer/assets/, html_viewer/, docs_viewer/.github_token)
+; Built-in plugins (includes docs_viewer/assets/, html_viewer/)
 Source: "{#BuildDir}\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Data assets (icons, theme) — optional; silently skipped if absent or empty

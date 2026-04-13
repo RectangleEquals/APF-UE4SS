@@ -32,44 +32,14 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Semver helpers
+# Semver helpers — imported from core/semver.py
 # ---------------------------------------------------------------------------
 
-_SEMVER_RE = re.compile(
-    r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
-    r"(?:-(?P<pre>[a-zA-Z0-9._-]+))?"
-    r"(?:\+(?P<build>[a-zA-Z0-9._-]+))?$"
-)
+from ...core.semver import _SemVer
 
 _DEP_RE = re.compile(
     r"^(?P<mod_id>\S+?)(?:\s+\((?P<op>>=|<=|>|<|==|!=|~=)\s*(?P<ver>[^\)]+)\))?$"
 )
-
-
-@dataclass
-class _SemVer:
-    major: int
-    minor: int
-    patch: int
-    pre: str = ""
-
-    @classmethod
-    def parse(cls, s: str) -> Optional["_SemVer"]:
-        m = _SEMVER_RE.match(s.strip())
-        if not m:
-            return None
-        return cls(int(m.group("major")), int(m.group("minor")), int(m.group("patch")), m.group("pre") or "")
-
-    def _tuple(self):
-        # Pre-release < release; empty pre-release = release version
-        pre_key = (0, "") if not self.pre else (1, self.pre)
-        return (self.major, self.minor, self.patch, pre_key)
-
-    def __lt__(self, other):  return self._tuple() < other._tuple()
-    def __le__(self, other):  return self._tuple() <= other._tuple()
-    def __gt__(self, other):  return self._tuple() > other._tuple()
-    def __ge__(self, other):  return self._tuple() >= other._tuple()
-    def __eq__(self, other):  return self._tuple() == other._tuple()
 
 
 def _parse_dep_string(dep: str) -> tuple[str, Optional[str], Optional[str]]:

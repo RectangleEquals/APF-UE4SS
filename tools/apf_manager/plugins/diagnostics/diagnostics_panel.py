@@ -209,40 +209,19 @@ class DiagnosticsPanel(PluginPanel):
         for missing in (self._detection.missing or []):
             _add(f"Missing: {missing}", "", "error")
 
-        # Mod validation (via deploy service's mods_txt + validator)
+        # Mod validation (via ValidationService)
+        validation_svc = self._host.get_service("validation")
         mods_svc = self._host.get_service("mods")
-        deploy_svc = self._host.get_service("deploy")
-        if mods_svc and deploy_svc and deploy_svc.mods_txt:
-            from ...plugins.deploy.validator import Validator
-            mods_txt = deploy_svc.mods_txt
+        if validation_svc and mods_svc:
             mods = mods_svc.scan()
-            validator = Validator(self._detection, mods_txt, mods)
-        elif mods_svc and self._detection.mods_txt:
-            from ...plugins.deploy.mods_txt import ModsTextManager
-            from ...plugins.deploy.validator import Validator
-            mods_txt = ModsTextManager(self._detection.mods_txt)
-            mods_txt.load()
-            mods = mods_svc.scan()
-            validator = Validator(self._detection, mods_txt, mods)
-        else:
-            validator = None
-            mods = []
-
-        if validator:
-            for mod in mods:
-                results = validator.validate_mod(mod)
-                for r in results:
-                    if r.status != "ok":
-                        _add(f"{mod.display_name}: {r.label}", r.detail, r.status)
-
-            if not any(
-                r.status != "ok"
-                for mod in mods
-                for r in validator.validate_mod(mod)
-            ):
+            results = validation_svc.validate_installed(mods, self._detection)
+            for r in results:
+                if r.status != "ok":
+                    _add(f"{r.source}: {r.label}", r.detail, r.status)
+            if not any(r.status != "ok" for r in results):
                 _add("All mod checks passed", "", "ok")
         else:
-            _add("Mod validation skipped", "Mods service not available", "warn")
+            _add("Mod validation skipped", "Validation service not available", "warn")
 
         self._host.log("Validation complete.")
 

@@ -100,14 +100,13 @@ class UE4SSDetector:
             else:
                 result.mods_txt = mods_txt
 
-            logicmods_dir = _find_dir_ci(mods_dir, "LogicMods")
-            if logicmods_dir:
-                result.logicmods_dir = logicmods_dir
-
         # --- Content/Paks ---
         content_paks = UE4SSDetector._find_content_paks(root)
         if content_paks:
             result.content_paks_dir = content_paks
+            logicmods = _find_dir_ci(content_paks, "LogicMods")
+            if logicmods:
+                result.logicmods_dir = logicmods
 
         result.valid = len(result.missing) == 0
         return result

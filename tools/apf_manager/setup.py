@@ -6,7 +6,7 @@ Usage:
     python setup.py build_exe
 
 Prerequisites:
-    plugins/docs_viewer/.github_token must exist (fine-grained PAT, contents:read).
+    data/.github_token must exist (fine-grained PAT, contents:read).
     See Developer Setup in the plan for instructions.
 
 Output: build/APFManager/
@@ -73,7 +73,7 @@ except FileNotFoundError:
 # Build prerequisite checks
 # ---------------------------------------------------------------------------
 
-token_file = HERE / "plugins" / "docs_viewer" / ".github_token"
+token_file = HERE / "data" / ".github_token"
 if "build_exe" in sys.argv and not token_file.exists():
     raise FileNotFoundError(
         f"Missing required build credential: {token_file}\n"
@@ -327,7 +327,7 @@ def _post_build():
         return
 
     # Copy built-in plugins → build/APFManager/plugins/
-    # Includes: docs_viewer/assets/, html_viewer/, docs_viewer/.github_token
+    # Note: .github_token is now in data/ — the copy below handles it
     plugins_dst = build_dir / "plugins"
     plugins_src = HERE / "plugins"
     if plugins_dst.exists():

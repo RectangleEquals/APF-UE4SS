@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Callable
 
-# Bundled PAT lives alongside the docs_viewer plugin
-_BUNDLED_PAT = Path(__file__).parent.parent / "docs_viewer" / ".github_token"
+# Bundled PAT — use centralized path from github_api.py
+from ...core.remote.github_api import _BUNDLED_TOKEN_PATH as _BUNDLED_PAT
 
 # Blacklist is fetched from this repo's own source tree (never cached)
 _BLACKLIST_OWNER = "RectangleEquals"
@@ -73,6 +73,8 @@ class DiscoveredMod:
     templates_paths: list = field(default_factory=list)  # e.g. ["Templates/Palworld"]
     external_source_url: str = ""          # Nexus/CurseForge/Thunderstore URL (docs-only)
     submodule_of: str = ""                 # "owner/repo" of the parent if from a submodule
+    components: list = field(default_factory=lambda: ["lua"])
+    bp_pak_files: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +161,14 @@ class RegistryResolver:
         if cached:
             try:
                 raw = json.loads(cached)
-                return [DiscoveredMod(**d) for d in raw]
+                return [
+                    DiscoveredMod(
+                        components=d.pop("components", ["lua"]),
+                        bp_pak_files=d.pop("bp_pak_files", []),
+                        **d,
+                    )
+                    for d in raw
+                ]
             except Exception:
                 pass
 
@@ -238,6 +247,30 @@ class RegistryResolver:
             # Attach ue4ss_info only to the framework mod in this repo
             mod_ue4ss = ue4ss_info if manifest["mod_id"].endswith(".framework") else None
 
+            # Component detection from sub_contents directory structure
+            _detected = []
+            if any(e["name"].lower() == "scripts" and e["type"] == "dir" for e in sub_contents):
+                _detected.append("lua")
+            if any(e["name"].lower() == "dlls" and e["type"] == "dir" for e in sub_contents):
+                _detected.append("cpp")
+            _bp_pak_files = []
+            _lm_entry = next(
+                (e for e in sub_contents if e["name"].lower() == "logicmods" and e["type"] == "dir"),
+                None,
+            )
+            if _lm_entry:
+                try:
+                    _lm_contents = api.list_contents(_lm_entry["path"]) or []
+                    _bp_pak_files = [
+                        e["name"] for e in _lm_contents
+                        if e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
+                    ]
+                except Exception:
+                    pass
+                if _bp_pak_files:
+                    _detected.append("blueprint")
+            _components = _detected or ["lua"]
+
             mods.append(DiscoveredMod(
                 owner=owner,
                 repo=repo,
@@ -247,6 +280,8 @@ class RegistryResolver:
                 readme_url=readme_url,
                 ue4ss_info=mod_ue4ss,
                 templates_paths=templates_paths,
+                components=_components,
+                bp_pak_files=_bp_pak_files,
             ))
 
         # Follow submodules recursively.
@@ -324,6 +359,8 @@ class RegistryResolver:
                         "readme_url": m.readme_url,
                         "ue4ss_info": m.ue4ss_info,
                         "templates_paths": m.templates_paths,
+                        "components": m.components,
+                        "bp_pak_files": m.bp_pak_files,
                     }
                     for m in mods
                 ]
@@ -504,6 +541,16 @@ class RegistryResolver:
         _eparts = epath.split("/")
         if len(_eparts) == 2 and _eparts[0] == "Templates":
             node_type = "template_dir"
+
+        # Component directory types — only if not already classified
+        if node_type == "dir":
+            _ename_lower = ename.lower()
+            if _ename_lower == "scripts":
+                node_type = "lua_dir"
+            elif _ename_lower == "dlls":
+                node_type = "cpp_dir"
+            elif _ename_lower == "logicmods":
+                node_type = "bp_dir"
 
         is_conflict = bool(
             mod and existing_mod_ids and mod.mod_id in existing_mod_ids

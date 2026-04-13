@@ -53,6 +53,8 @@ class RegistryModEntry:
     registry: Optional[RegistryEntry] = None
     ue4ss_info: Optional[dict] = None
     templates_paths: list = field(default_factory=list)
+    components: list = field(default_factory=lambda: ["lua"])
+    bp_pak_files: list = field(default_factory=list)
 
 
 @dataclass
@@ -444,6 +446,8 @@ class RegistryService:
                     registry=entry,
                     ue4ss_info=mod.ue4ss_info,
                     templates_paths=mod.templates_paths,
+                    components=mod.components,
+                    bp_pak_files=mod.bp_pak_files,
                 ))
 
         return results
@@ -876,6 +880,8 @@ def _to_discovered(entry: RegistryModEntry) -> "DiscoveredMod":
         readme_url=entry.readme_url,
         ue4ss_info=entry.ue4ss_info,
         templates_paths=entry.templates_paths,
+        components=entry.components,
+        bp_pak_files=entry.bp_pak_files,
     )
 
 

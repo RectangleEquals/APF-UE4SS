@@ -309,11 +309,6 @@ class GameHubScreen(MDScreen):
         is_steam_game = bool(getattr(profile, "steam_app_id", None))
 
         # Determine which options are available
-        deploy_svc = self._host.get_service("deploy")
-        has_framework = (
-            deploy_svc is not None
-            and bool(deploy_svc.get_framework_manifest_files(profile.game_id))
-        )
         has_mods_svc = self._host.has_service("mods")
         has_sessions_svc = self._host.has_service("sessions")
         has_ue4ss = (
@@ -359,8 +354,6 @@ class GameHubScreen(MDScreen):
 
         if has_mods_svc:
             _add_row("mods", "Remove deployed AP mods")
-        if has_framework:
-            _add_row("framework", "Remove AP Framework binaries")
         # Session removal is split into two separate switches:
         #   "deployed_session" — deletes output/session_state.json
         #   "sessions"         — deletes all backups from ~/.apf_manager/sessions/<game_id>/
@@ -422,29 +415,11 @@ class GameHubScreen(MDScreen):
                     try:
                         for mod in mods_svc.scan():
                             if mod.is_ap_mod:
-                                deploy_svc.uninstall_mod(mod, profile.game_id)
+                                deploy_svc.undeploy_mod(mod, detection)
                     except Exception as exc:
                         errors.append(str(exc))
 
-            # 2. Remove AP Framework binaries
-            if switches.get("framework") and switches["framework"].active:
-                deploy_svc = self._host.get_service("deploy")
-                if deploy_svc:
-                    try:
-                        for f in deploy_svc.get_framework_manifest_files(profile.game_id):
-                            try:
-                                Path(f).unlink(missing_ok=True)
-                            except Exception as exc:
-                                errors.append(f"Could not remove {Path(f).name}: {exc}")
-                        manifest = (
-                            Path.home() / ".apf_manager" / "deployments"
-                            / f"{profile.game_id}_framework.json"
-                        )
-                        manifest.unlink(missing_ok=True)
-                    except Exception as exc:
-                        errors.append(str(exc))
-
-            # 3a. Remove deployed session file
+            # 2a. Remove deployed session file
             if switches.get("deployed_session") and switches["deployed_session"].active:
                 if detection and detection.mods_dir:
                     state_path = (
@@ -456,7 +431,7 @@ class GameHubScreen(MDScreen):
                     except Exception as exc:
                         errors.append(f"Could not remove deployed session: {exc}")
 
-            # 3b. Remove session history (backups)
+            # 2b. Remove session history (backups)
             if switches.get("sessions") and switches["sessions"].active:
                 sessions_svc = self._host.get_service("sessions")
                 if sessions_svc:
@@ -465,7 +440,7 @@ class GameHubScreen(MDScreen):
                     except Exception as exc:
                         errors.append(str(exc))
 
-            # 4. Uninstall UE4SS
+            # 3. Uninstall UE4SS
             if switches.get("ue4ss") and switches["ue4ss"].active:
                 if detection and detection.ue4ss_dir:
                     try:
@@ -473,7 +448,7 @@ class GameHubScreen(MDScreen):
                     except Exception as exc:
                         errors.append(f"Could not remove UE4SS: {exc}")
 
-            # 5. Remove from library only if that switch is checked
+            # 4. Remove from library only if that switch is checked
             if switches.get("library") and switches["library"].active:
                 self._config.remove_game(profile.game_id)
                 Clock.schedule_once(lambda dt: self._after_remove(errors), 0)

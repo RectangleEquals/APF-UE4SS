@@ -225,6 +225,12 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
             spa_type = "template"
         elif ntype == "file":
             spa_type = "docs"
+        elif ntype == "lua_dir":
+            spa_type = "lua_dir"
+        elif ntype == "cpp_dir":
+            spa_type = "cpp_dir"
+        elif ntype == "bp_dir":
+            spa_type = "bp_dir"
         else:
             spa_type = "dir"
 
@@ -268,6 +274,8 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
                 "score_breakdown": bd,
                 "ue4ss_present": bool(m.ue4ss_info),
                 "ue4ss_info": m.ue4ss_info or {},
+                "components": getattr(m, "components", ["lua"]),
+                "bp_pak_files": getattr(m, "bp_pak_files", []),
                 "selectable": node.game_id_match and not node.conflict,
                 "checked": node.game_id_match and not node.conflict,
                 "disabled": not node.game_id_match,
@@ -281,6 +289,13 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
                 "checked": node.game_id_match and not node.conflict,
                 "disabled": not node.game_id_match,
             })
+
+        elif spa_type == "lua_dir":
+            base.update({"component_label": "Lua scripts"})
+        elif spa_type == "cpp_dir":
+            base.update({"component_label": "C++ module"})
+        elif spa_type == "bp_dir":
+            base.update({"component_label": "Blueprint Logic Mod"})
 
         # Children
         if node.children:

@@ -58,7 +58,7 @@ Each mod that calls `require("APClientLib")` gets its own independent context �
 1. Create a `Mods/YourModName/` folder
 2. Write `manifest.json` with a `mod_id` and declare your items and locations
 3. Write `Scripts/main.lua` to register callbacks and call `APClient.connect()`
-4. Write an `install.json` deployment descriptor for your mod, then configure APF Manager's **Setup tab** (game root, mode) and use **Deploy** — it copies all files and updates `mods.txt`. See [apf_manager.md](../apf_manager.md) for details.
+4. Configure APF Manager's **Setup tab** (game root, mode) and use the **Content tab** to queue and install your mod — it copies all files and updates `mods.txt`. See [apf_manager.md](../apf_manager.md) for details.
 5. Generate a multiworld with `apf.apworld` installed — your mod's items and locations appear automatically
 6. Launch the game — the framework connects to the AP server using settings from `framework_config.json`
 
