@@ -25,7 +25,7 @@ from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonText
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
@@ -67,6 +67,11 @@ class _QueueItem:
             owner = getattr(self.mod, "owner", "")
             repo  = getattr(self.mod, "repo", "")
             return f"tmpl:{owner}+{repo}/{path}"
+        if self.category == "other":
+            owner = getattr(self.mod, "owner", "")
+            repo  = getattr(self.mod, "repo", "")
+            tag   = getattr(self.mod, "tag", getattr(self.mod, "name", str(id(self.mod))))
+            return f"other:{owner}+{repo}/{tag}"
         folder = getattr(self.mod, "folder", getattr(self.mod, "mod_id", ""))
         owner  = getattr(self.mod, "owner", "")
         repo   = getattr(self.mod, "repo",  "")
@@ -77,6 +82,8 @@ class _QueueItem:
         if self.category == "template":
             path = getattr(self.mod, "path", "")
             return path.rsplit("/", 1)[-1] if path else "Template"
+        if self.category == "other":
+            return getattr(self.mod, "name", "Other")
         return getattr(self.mod, "name", self.key)
 
     @property
@@ -98,6 +105,8 @@ class _CacheItem:
     bp_pak_files: list = field(default_factory=list)
     mod_ref: Optional[object] = None   # RegistryModEntry if still known
     category: str = "mod"              # "mod" | "template" | "other"
+    game_name: str = ""
+    install_type: str = ""
 
     @property
     def display_name(self) -> str:
@@ -137,7 +146,9 @@ class DownloadsTab(MDBoxLayout):
         self._detection = None
         self._ue4ss_detected: bool = False
         self._framework_detected: bool = False
-        self._selected_cache: set[str] = set()   # set of cache_path str for checked rows
+        self._selected_cache: set[str] = set()        # set of cache_path str for checked rows
+        self._collapsed_sections: set[str] = set()   # collapsed section/sub-section keys
+        self._expanded_cache: set[str] = set()        # expanded cached-row detail panels
         self._build_ui()
 
     # -----------------------------------------------------------------------
@@ -226,6 +237,7 @@ class DownloadsTab(MDBoxLayout):
         threading.Thread(target=_bg, daemon=True).start()
 
     def _scan_cache(self) -> list[_CacheItem]:
+        import json as _json
         items = []
         if not _CACHE_DIR.is_dir():
             return items
@@ -235,29 +247,69 @@ class DownloadsTab(MDBoxLayout):
             for m in (registry_svc.get_mods(self._game_id) or []):
                 mod_by_folder[getattr(m, "folder", "")] = m
 
+        _SKIP = {"github", "_framework"}
+
+        def _read_meta(folder_dir: Path) -> tuple[str, str, str]:
+            """Return (category, game_name, install_type) from .apf_meta.json or defaults."""
+            meta_file = folder_dir / ".apf_meta.json"
+            if meta_file.exists():
+                try:
+                    m = _json.loads(meta_file.read_text())
+                    return m.get("category", "mod"), m.get("game_name", ""), m.get("install_type", "")
+                except Exception:
+                    pass
+            return "mod", "", ""
+
+        def _add_item(folder_dir: Path, owner: str, repo: str) -> None:
+            category, game_name, install_type = _read_meta(folder_dir)
+            mod_ref = mod_by_folder.get(folder_dir.name)
+            components = _detect_components(folder_dir)
+            bp_files = _detect_bp_paks(folder_dir)
+            items.append(_CacheItem(
+                folder_name=folder_dir.name,
+                owner=owner, repo=repo,
+                cache_path=folder_dir,
+                components=components,
+                bp_pak_files=bp_files,
+                mod_ref=mod_ref,
+                category=category,
+                game_name=game_name,
+                install_type=install_type,
+            ))
+
         for repo_dir in _CACHE_DIR.iterdir():
             if not repo_dir.is_dir():
                 continue
-            # Skip internal caches that are not user content
-            if repo_dir.name in ("github", "_framework"):
+            if repo_dir.name in _SKIP:
                 continue
+            # _other/ — two levels deep: _other/<owner+repo>/<tag>/
+            if repo_dir.name == "_other":
+                for ue4ss_repo_dir in repo_dir.iterdir():
+                    if not ue4ss_repo_dir.is_dir():
+                        continue
+                    parts = ue4ss_repo_dir.name.split("+", 1)
+                    owner = parts[0] if len(parts) >= 1 else ""
+                    repo  = parts[1] if len(parts) == 2 else ""
+                    for tag_dir in ue4ss_repo_dir.iterdir():
+                        if tag_dir.is_dir():
+                            _add_item(tag_dir, owner, repo)
+                continue
+
+            parts = repo_dir.name.split("+", 1)
+            owner = parts[0] if len(parts) >= 1 else ""
+            repo  = parts[1] if len(parts) == 2 else ""
+
             for folder_dir in repo_dir.iterdir():
                 if not folder_dir.is_dir():
                     continue
-                parts = repo_dir.name.split("+", 1)
-                owner = parts[0] if len(parts) >= 1 else ""
-                repo  = parts[1] if len(parts) == 2 else ""
-                mod_ref = mod_by_folder.get(folder_dir.name)
-                components = _detect_components(folder_dir)
-                bp_files = _detect_bp_paks(folder_dir)
-                items.append(_CacheItem(
-                    folder_name=folder_dir.name,
-                    owner=owner, repo=repo,
-                    cache_path=folder_dir,
-                    components=components,
-                    bp_pak_files=bp_files,
-                    mod_ref=mod_ref,
-                ))
+                # Check if this is a Templates/ sub-directory (extra depth for templates)
+                if folder_dir.name == "Templates":
+                    for game_dir in folder_dir.iterdir():
+                        if game_dir.is_dir():
+                            _add_item(game_dir, owner, repo)
+                    continue
+                _add_item(folder_dir, owner, repo)
+
         return items
 
     def _set_cached(self, items: list) -> None:
@@ -293,25 +345,29 @@ class DownloadsTab(MDBoxLayout):
         error_items   = [q for q in queue_snapshot if q.status == "error"]
 
         if queue_snapshot:
+            queue_collapsed = "Queue" in self._collapsed_sections
             self._content.add_widget(self._section_header(
                 "Queue", "tray-arrow-down",
                 count=len(active_items),
                 subtitle=f"{len(error_items)} error(s)" if error_items else "",
                 accent_color=(0.3, 0.5, 0.9, 1),
+                collapsed=queue_collapsed,
             ))
-            # Group queue items by category
-            self._add_items_by_category(queue_snapshot, self._queue_row)
+            if not queue_collapsed:
+                self._add_items_by_category(queue_snapshot, self._queue_row, section="queue")
 
         # Cached section
         if self._cached:
+            cached_collapsed = "Cached" in self._collapsed_sections
             self._content.add_widget(self._section_header(
                 "Cached", "package-variant",
                 count=len(self._cached),
                 accent_color=(0.3, 0.5, 0.9, 1),
+                collapsed=cached_collapsed,
             ))
-            self._content.add_widget(self._cached_toolbar())
-            # Group cached items by category
-            self._add_items_by_category(self._cached, self._cache_row)
+            if not cached_collapsed:
+                self._content.add_widget(self._cached_toolbar())
+                self._add_items_by_category(self._cached, self._cache_row, section="cached")
         elif not queue_snapshot:
             self._content.add_widget(MDLabel(
                 text=(
@@ -322,8 +378,8 @@ class DownloadsTab(MDBoxLayout):
                 theme_text_color="Secondary",
             ))
 
-    def _add_items_by_category(self, items: list, row_builder) -> None:
-        """Render items grouped by category, with a sub-header per non-empty category."""
+    def _add_items_by_category(self, items: list, row_builder, section: str = "") -> None:
+        """Render items grouped by category, with a collapsible sub-header per category."""
         from collections import defaultdict
         by_cat: dict = defaultdict(list)
         for item in items:
@@ -336,13 +392,20 @@ class DownloadsTab(MDBoxLayout):
                 continue
             label, icon = self._CAT_LABEL.get(cat, (cat.capitalize(), "package"))
             accent = self._CAT_ACCENT.get(cat, (0.5, 0.5, 0.7, 1))
-            # Sub-header (lighter indent)
-            self._content.add_widget(self._cat_sub_header(label, icon, accent, len(cat_items)))
-            for item in cat_items:
-                self._content.add_widget(row_builder(item))
+            sub_key = f"{section}:{cat}" if section else cat
+            sub_collapsed = sub_key in self._collapsed_sections
+            self._content.add_widget(
+                self._cat_sub_header(label, icon, accent, len(cat_items),
+                                     key=sub_key, collapsed=sub_collapsed)
+            )
+            if not sub_collapsed:
+                for item in cat_items:
+                    self._content.add_widget(row_builder(item))
 
-    def _cat_sub_header(self, title: str, icon: str, accent: tuple, count: int) -> MDBoxLayout:
-        """Indented sub-section header for category grouping within Queue/Cached."""
+    def _cat_sub_header(self, title: str, icon: str, accent: tuple, count: int,
+                        key: str = "", collapsed: bool = False) -> MDBoxLayout:
+        """Indented sub-section header for category grouping within Queue/Cached. Click to toggle."""
+        chevron = "chevron-right" if collapsed else "chevron-down"
         outer = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(28),
             md_bg_color=(0.09, 0.11, 0.14, 1),
@@ -364,7 +427,23 @@ class DownloadsTab(MDBoxLayout):
             size_hint_x=1, halign="left",
             theme_text_color="Custom", text_color=(0.7, 0.72, 0.8, 1),
         ))
+        inner.add_widget(MDIcon(
+            icon=chevron, size_hint=(None, 1), width=dp(16),
+            theme_icon_color="Custom", icon_color=(0.45, 0.47, 0.55, 1),
+        ))
         outer.add_widget(inner)
+
+        if key:
+            def _on_touch(widget, touch):
+                if widget.collide_point(*touch.pos) and touch.button == "left":
+                    if key in self._collapsed_sections:
+                        self._collapsed_sections.discard(key)
+                    else:
+                        self._collapsed_sections.add(key)
+                    from kivy.clock import Clock
+                    Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
+                    return True
+            outer.bind(on_touch_down=_on_touch)
         return outer
 
     def _maybe_add_updates_section(self) -> None:
@@ -465,8 +544,10 @@ class DownloadsTab(MDBoxLayout):
 
     def _section_header(self, title: str, icon: str, count: int = 0,
                         subtitle: str = "",
-                        accent_color: tuple = (0.3, 0.5, 0.9, 1)) -> MDBoxLayout:
-        """Collapsible-style section header with left accent bar."""
+                        accent_color: tuple = (0.3, 0.5, 0.9, 1),
+                        collapsed: bool = False) -> MDBoxLayout:
+        """Collapsible section header with left accent bar. Click to toggle."""
+        chevron_icon = "chevron-right" if collapsed else "chevron-down"
         outer = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(36),
             md_bg_color=(0.07, 0.09, 0.12, 1),
@@ -492,12 +573,37 @@ class DownloadsTab(MDBoxLayout):
             size_hint_x=1, halign="left",
             theme_text_color="Custom", text_color=(0.85, 0.88, 0.95, 1),
         ))
+        inner.add_widget(MDIcon(
+            icon=chevron_icon, size_hint=(None, 1), width=dp(20),
+            theme_icon_color="Custom", icon_color=(0.5, 0.52, 0.6, 1),
+        ))
         outer.add_widget(inner)
+
+        def _on_touch(widget, touch):
+            if widget.collide_point(*touch.pos) and touch.button == "left":
+                key = title
+                if key in self._collapsed_sections:
+                    self._collapsed_sections.discard(key)
+                else:
+                    self._collapsed_sections.add(key)
+                from kivy.clock import Clock
+                Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
+                return True
+        outer.bind(on_touch_down=_on_touch)
         return outer
 
     def _cached_toolbar(self) -> MDBoxLayout:
         """Select All / Select None | Install Selected | Remove Selected toolbar."""
-        can_install = self._ue4ss_detected and self._framework_detected
+        # Other-category items (UE4SS, framework binaries) can always be installed.
+        # Mods and templates require UE4SS + framework. Show informational label
+        # when prereqs are absent, but keep the button enabled (items that can't
+        # install will be skipped with a logged error in _do_install).
+        has_mods_or_templates = any(
+            ci.category in ("mod", "template") for ci in self._cached
+        )
+        prereqs_missing = has_mods_or_templates and not (
+            self._ue4ss_detected and self._framework_detected
+        )
         toolbar = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(44),
             padding=[dp(8), dp(4)], spacing=dp(4),
@@ -521,11 +627,10 @@ class DownloadsTab(MDBoxLayout):
             pos_hint={"center_y": 0.5},
             on_release=lambda *_: self._on_install_selected(),
         )
-        install_btn.disabled = not can_install
-        if not can_install:
+        if prereqs_missing:
             toolbar.add_widget(MDLabel(
-                text="UE4SS + framework required" if not self._ue4ss_detected else "Framework mod required",
-                size_hint=(None, 1), width=dp(200),
+                text="UE4SS + framework required for mods/templates" if not self._ue4ss_detected else "Framework mod required for mods/templates",
+                size_hint=(None, 1), width=dp(240),
                 font_style="Label", role="small",
                 theme_text_color="Custom", text_color=(0.8, 0.55, 0.1, 1),
                 halign="right", valign="middle",
@@ -609,10 +714,16 @@ class DownloadsTab(MDBoxLayout):
         from kivymd.uix.selectioncontrol import MDCheckbox
         cache_key = str(ci.cache_path)
         is_checked = cache_key in self._selected_cache
+        expanded   = cache_key in self._expanded_cache
 
-        row = MDBoxLayout(
+        container = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=_BG_ITEM,
+        )
+
+        header = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(52),
-            md_bg_color=_BG_ITEM, padding=[dp(4), dp(4)], spacing=dp(4),
+            padding=[dp(4), dp(4)], spacing=dp(4),
         )
 
         # Checkbox
@@ -622,7 +733,7 @@ class DownloadsTab(MDBoxLayout):
             active=is_checked,
         )
         chk.bind(active=lambda inst, val, k=cache_key: self._on_cache_check(k, val))
-        row.add_widget(chk)
+        header.add_widget(chk)
 
         info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
         name_row = MDBoxLayout(
@@ -650,15 +761,94 @@ class DownloadsTab(MDBoxLayout):
         size = ci.size_mb
         if size > 0:
             sub_parts.append(f"{size:.1f} MB")
-        sub_parts.append(f"{ci.owner}/{ci.repo}")
+        if ci.owner or ci.repo:
+            sub_parts.append(f"{ci.owner}/{ci.repo}")
         info.add_widget(MDLabel(
             text="  ·  ".join(sub_parts),
             font_style="Label", role="small",
             size_hint_y=None, height=dp(18),
             theme_text_color="Custom", text_color=_COL_DIM,
         ))
-        row.add_widget(info)
-        return row
+        header.add_widget(info)
+
+        chevron_icon = "chevron-up" if expanded else "chevron-down"
+        header.add_widget(MDIconButton(
+            icon=chevron_icon,
+            size_hint=(None, None), size=(dp(32), dp(32)),
+            pos_hint={"center_y": 0.5},
+            on_release=lambda *_, k=cache_key: self._toggle_cache_expand(k),
+        ))
+        container.add_widget(header)
+
+        if expanded:
+            container.add_widget(self._cache_detail(ci))
+        return container
+
+    def _cache_detail(self, ci: _CacheItem) -> MDBoxLayout:
+        """Expanded detail panel for a cached item."""
+        panel = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=(0.08, 0.09, 0.11, 1),
+            padding=[dp(16), dp(6), dp(8), dp(8)], spacing=dp(4),
+        )
+        # Source
+        if ci.owner or ci.repo:
+            panel.add_widget(MDLabel(
+                text=f"Source: {ci.owner}/{ci.repo}",
+                font_style="Label", role="small", size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+        # Version
+        if ci.version:
+            panel.add_widget(MDLabel(
+                text=f"Version: v{ci.version}",
+                font_style="Label", role="small", size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+        # Components
+        comp_labels = {"lua": "Lua", "cpp": "C++", "blueprint": "Blueprint"}
+        comp_texts = [comp_labels.get(c, c) for c in ci.components]
+        if comp_texts:
+            comp_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(18), spacing=dp(8),
+            )
+            comp_row.add_widget(MDLabel(
+                text="Components:",
+                font_style="Label", role="small", size_hint=(None, 1), width=dp(80),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+            for ct in comp_texts:
+                comp_row.add_widget(MDLabel(
+                    text=ct, font_style="Label", role="small",
+                    size_hint=(None, 1), width=dp(64),
+                    theme_text_color="Custom", text_color=(0.6, 0.8, 1.0, 1),
+                ))
+            panel.add_widget(comp_row)
+        # Size
+        size = ci.size_mb
+        if size > 0:
+            panel.add_widget(MDLabel(
+                text=f"Cache size: {size:.1f} MB",
+                font_style="Label", role="small", size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+        # Category
+        cat_display = {"template": "Template", "mod": "Mod", "other": "Other"}.get(
+            ci.category, ci.category.capitalize() if ci.category else "Mod"
+        )
+        panel.add_widget(MDLabel(
+            text=f"Category: {cat_display}",
+            font_style="Label", role="small", size_hint_y=None, height=dp(16),
+            theme_text_color="Custom", text_color=_COL_DIM,
+        ))
+        return panel
+
+    def _toggle_cache_expand(self, key: str) -> None:
+        if key in self._expanded_cache:
+            self._expanded_cache.discard(key)
+        else:
+            self._expanded_cache.add(key)
+        Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
 
     # -----------------------------------------------------------------------
     # Download logic
@@ -678,18 +868,81 @@ class DownloadsTab(MDBoxLayout):
 
     def _download_item_bg(self, item: _QueueItem) -> None:
         try:
+            import json as _json
             owner  = getattr(item.mod, "owner", "")
             repo   = getattr(item.mod, "repo",  "")
             folder = getattr(item.mod, "folder", getattr(item.mod, "mod_id", ""))
-            dest   = _CACHE_DIR / f"{owner}+{repo}" / folder
+
+            if item.category == "template":
+                path = getattr(item.mod, "path", folder)
+                dest = _CACHE_DIR / f"{owner}+{repo}" / path
+            elif item.category == "other":
+                ue4ss_owner = getattr(item.mod, "owner", "")
+                ue4ss_repo  = getattr(item.mod, "repo", "")
+                tag         = getattr(item.mod, "tag", "unknown")
+                dest = _CACHE_DIR / "_other" / f"{ue4ss_owner}+{ue4ss_repo}" / tag
+            else:
+                dest = _CACHE_DIR / f"{owner}+{repo}" / folder
+
             dest.mkdir(parents=True, exist_ok=True)
 
-            from ....core.remote.github_api import _BUNDLED_TOKEN_PATH
+            from ....core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
             token = _BUNDLED_TOKEN_PATH.read_text().strip() \
                 if _BUNDLED_TOKEN_PATH.exists() else ""
 
-            _download_github_folder(owner, repo, folder, dest, token,
-                                    progress_cb=lambda p: self._set_progress(item, p))
+            if item.category == "other":
+                opt = item.mod
+                opt_type = getattr(opt, "type", "manual")
+                if opt_type == "github_release":
+                    api = GitHubAPI(
+                        repo_owner=getattr(opt, "owner", ""),
+                        repo_name=getattr(opt, "repo", ""),
+                        token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
+                        on_status=lambda lvl, msg: None,
+                    )
+                    releases = api.list_releases(tag_prefix=getattr(opt, "tag", ""))
+                    release = next(
+                        (r for r in releases if r.get("tag_name") == getattr(opt, "tag", "")),
+                        releases[0] if releases else None,
+                    )
+                    if not release:
+                        raise RuntimeError(
+                            f"Release '{getattr(opt, 'tag', '')}' not found in "
+                            f"{getattr(opt, 'owner', '')}/{getattr(opt, 'repo', '')}"
+                        )
+                    asset = next(
+                        (a for a in release.get("assets", []) if a["name"].endswith(".zip")),
+                        None,
+                    )
+                    if not asset:
+                        raise RuntimeError(f"No .zip asset in release '{getattr(opt, 'tag', '')}'")
+                    self._set_progress(item, 0.1)
+                    api.download_asset(
+                        asset["browser_download_url"],
+                        dest / asset["name"],
+                        progress_cb=lambda p: self._set_progress(item, 0.1 + p * 0.9),
+                    )
+                elif opt_type == "external_url":
+                    raise RuntimeError("External URL options require manual download — open in browser")
+                else:
+                    raise RuntimeError("Manual install required — no automatic download available")
+            elif item.category == "template":
+                # For templates, the source path in the repo is the template's `path` field.
+                # TemplateEntry has no `folder` attribute — use `path` directly.
+                template_path = getattr(item.mod, "path", folder)
+                _download_github_folder(owner, repo, template_path, dest, token,
+                                        progress_cb=lambda p: self._set_progress(item, p))
+            else:
+                _download_github_folder(owner, repo, folder, dest, token,
+                                        progress_cb=lambda p: self._set_progress(item, p))
+
+            # Write metadata for category recovery during cache scan
+            (dest / ".apf_meta.json").write_text(_json.dumps({
+                "category":     item.category,
+                "game_name":    getattr(item.mod, "game_name", getattr(item.mod, "game_id", "")),
+                "install_type": getattr(item.mod, "install_type", ""),
+            }))
+
             with self._queue_lock:
                 item.status = "done"
                 item.cache_path = dest
@@ -813,23 +1066,48 @@ class DownloadsTab(MDBoxLayout):
         game_id = self._game_id
         for ci in list(items):
             try:
-                components   = ci.components
-                bp_pak_files = ci.bp_pak_files
-                metadata     = {
-                    "mod_id":       getattr(ci.mod_ref, "mod_id",  "") if ci.mod_ref else "",
-                    "folder_name":  ci.folder_name,
-                    "source_repo":  f"{ci.owner}/{ci.repo}",
-                    "source_folder": ci.folder_name,
-                    "version":      ci.version,
-                }
-                deploy_svc.deploy_mod(
-                    ci.cache_path, ci.folder_name,
-                    components, bp_pak_files,
-                    self._detection, game_id, metadata,
-                )
-                self._host.log(f"[downloads] Installed {ci.display_name}")
+                if ci.category == "template":
+                    # Templates require UE4SS + framework mod
+                    if not (self._ue4ss_detected and self._framework_detected):
+                        self._host.log(
+                            f"[downloads] Skipped template '{ci.display_name}': "
+                            "framework mod required"
+                        )
+                        continue
+                    game_name = ci.game_name or game_id
+                    deploy_svc.deploy_template(ci.cache_path, game_name)
+                    self._host.log(f"[downloads] Installed template {ci.display_name}")
+
+                elif ci.category == "other":
+                    # Other items (UE4SS, framework binaries) — no prereqs required
+                    deploy_svc.deploy_other(ci.cache_path, ci.install_type, self._detection)
+                    self._host.log(f"[downloads] Installed other '{ci.display_name}'")
+
+                else:
+                    # Mod — requires UE4SS
+                    if not self._ue4ss_detected:
+                        self._host.log(
+                            f"[downloads] Skipped mod '{ci.display_name}': UE4SS required"
+                        )
+                        continue
+                    components   = ci.components
+                    bp_pak_files = ci.bp_pak_files
+                    metadata     = {
+                        "mod_id":        getattr(ci.mod_ref, "mod_id", "") if ci.mod_ref else "",
+                        "folder_name":   ci.folder_name,
+                        "source_repo":   f"{ci.owner}/{ci.repo}",
+                        "source_folder": ci.folder_name,
+                        "version":       ci.version,
+                    }
+                    deploy_svc.deploy_mod(
+                        ci.cache_path, ci.folder_name,
+                        components, bp_pak_files,
+                        self._detection, game_id, metadata,
+                    )
+                    self._host.log(f"[downloads] Installed mod {ci.display_name}")
+
             except Exception as exc:
-                self._host.log(f"[downloads] Install failed for {ci.folder_name}: {exc}")
+                self._host.log(f"[downloads] Install failed for {ci.display_name}: {exc}")
 
         mods_svc = self._host.get_service("mods")
         if mods_svc:
@@ -849,6 +1127,11 @@ class DownloadsTab(MDBoxLayout):
         if active:
             return active
         return len(self._cached)
+
+    def get_active_download_count(self) -> int:
+        """Count of items actively queued or downloading (not cached)."""
+        with self._queue_lock:
+            return sum(1 for q in self._queue if q.status in ("queued", "downloading"))
 
 
 # ---------------------------------------------------------------------------

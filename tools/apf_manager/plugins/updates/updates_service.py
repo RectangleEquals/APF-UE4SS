@@ -81,6 +81,35 @@ class UpdatesService:
         with self._lock:
             return self._apworld_update
 
+    def get_framework_other_entries(self) -> list:
+        """Return _OtherEntry objects for available framework binary releases.
+        Called by content_tab to populate the Other section alongside UE4SS entries.
+        Returns up to 3 latest releases tagged framework/vX.Y.Z."""
+        try:
+            from ..mods.registry_service import _OtherEntry
+            api = self._make_api()
+            releases = api.list_releases(tag_prefix="framework/")
+            entries = []
+            for release in releases[:3]:
+                full_tag = release.get("tag_name", "")
+                asset = self._find_asset(release, ".zip")
+                if not asset:
+                    continue
+                ver = full_tag[len("framework/"):] if full_tag.startswith("framework/") else full_tag
+                entries.append(_OtherEntry(
+                    name         = f"APF Framework Binaries {ver}",
+                    note         = (release.get("body") or "")[:200],
+                    type         = "github_release",
+                    owner        = "RectangleEquals",
+                    repo         = "APF-UE4SS",
+                    tag          = full_tag,
+                    url          = "",
+                    install_type = "framework_binary",
+                ))
+            return entries
+        except Exception:
+            return []
+
     def download_update(
         self,
         component: str,

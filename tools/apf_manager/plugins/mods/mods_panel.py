@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
 
-from kivy.metrics import dp
+from kivy.graphics import Color, RoundedRectangle, Rectangle
+from kivy.core.text import Label as CoreLabel
+from kivy.metrics import dp, sp
+from kivy.properties import NumericProperty, ColorProperty
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.divider import MDDivider
 from kivymd.uix.label import MDIcon, MDLabel
@@ -49,11 +52,49 @@ _TAB_INSTALLED  = 3
 _TAB_LOAD_ORDER = 4
 
 
-class _BadgeText(MDTabsItemText):
-    """Tab label that can show a badge count suffix."""
+_COL_BADGE_NEUTRAL = (0.45, 0.55, 0.75, 1.0)
+_COL_BADGE_RED     = (1.0,  0.3,  0.3,  1.0)
 
-    def update(self, base_text: str, count: int) -> None:
-        self.text = f"{base_text}  {count}" if count else base_text
+
+class _BadgeIcon(MDTabsItemIcon):
+    """Tab icon that renders a circular badge overlay using canvas.after."""
+
+    badge_count = NumericProperty(0)
+    badge_color = ColorProperty(list(_COL_BADGE_NEUTRAL))
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(
+            badge_count=self._redraw,
+            badge_color=self._redraw,
+            pos=self._redraw,
+            size=self._redraw,
+        )
+
+    def update(self, count: int, color: tuple = None) -> None:
+        if color is not None:
+            self.badge_color = list(color)
+        self.badge_count = count
+
+    def _redraw(self, *_args) -> None:
+        self.canvas.after.clear()
+        if self.badge_count <= 0:
+            return
+        text = str(min(self.badge_count, 99))
+        bs = dp(14)
+        bx = self.center_x + dp(9)
+        by = self.center_y + dp(9)
+        with self.canvas.after:
+            Color(*self.badge_color)
+            RoundedRectangle(pos=(bx - bs / 2, by - bs / 2), size=(bs, bs), radius=[bs / 2])
+        lbl = CoreLabel(text=text, font_size=sp(8), bold=True)
+        lbl.refresh()
+        tex = lbl.texture
+        if tex:
+            tw, th = tex.size
+            with self.canvas.after:
+                Color(1, 1, 1, 1)
+                Rectangle(texture=tex, pos=(bx - tw / 2, by - th / 2), size=(tw, th))
 
 
 class ModsPanel(PluginPanel):
@@ -76,10 +117,10 @@ class ModsPanel(PluginPanel):
         self._tab_load_order: Optional[LoadOrderTab] = None
 
         # Badge refs — updated in _update_badges()
-        self._badge_content: Optional[_BadgeText] = None
-        self._badge_downloads: Optional[_BadgeText] = None
-        self._badge_installed: Optional[_BadgeText] = None
-        self._badge_load_order: Optional[_BadgeText] = None
+        self._badge_content: Optional[_BadgeIcon] = None
+        self._badge_downloads: Optional[_BadgeIcon] = None
+        self._badge_installed: Optional[_BadgeIcon] = None
+        self._badge_load_order: Optional[_BadgeIcon] = None
 
         self._build_ui()
 
@@ -120,21 +161,21 @@ class ModsPanel(PluginPanel):
         tabs = MDTabsPrimary()
         for label, icon in _TABS:
             if label == "Content":
-                badge = _BadgeText(text=label)
-                self._badge_content = badge
-                tabs.add_widget(MDTabsItem(MDTabsItemIcon(icon=icon), badge))
+                badge_icon = _BadgeIcon(icon=icon)
+                self._badge_content = badge_icon
+                tabs.add_widget(MDTabsItem(badge_icon, MDTabsItemText(text=label)))
             elif label == "Downloads":
-                badge = _BadgeText(text=label)
-                self._badge_downloads = badge
-                tabs.add_widget(MDTabsItem(MDTabsItemIcon(icon=icon), badge))
+                badge_icon = _BadgeIcon(icon=icon)
+                self._badge_downloads = badge_icon
+                tabs.add_widget(MDTabsItem(badge_icon, MDTabsItemText(text=label)))
             elif label == "Installed":
-                badge = _BadgeText(text=label)
-                self._badge_installed = badge
-                tabs.add_widget(MDTabsItem(MDTabsItemIcon(icon=icon), badge))
+                badge_icon = _BadgeIcon(icon=icon)
+                self._badge_installed = badge_icon
+                tabs.add_widget(MDTabsItem(badge_icon, MDTabsItemText(text=label)))
             elif label == "Load Order":
-                badge = _BadgeText(text=label)
-                self._badge_load_order = badge
-                tabs.add_widget(MDTabsItem(MDTabsItemIcon(icon=icon), badge))
+                badge_icon = _BadgeIcon(icon=icon)
+                self._badge_load_order = badge_icon
+                tabs.add_widget(MDTabsItem(badge_icon, MDTabsItemText(text=label)))
             else:
                 tabs.add_widget(MDTabsItem(
                     MDTabsItemIcon(icon=icon),
@@ -264,6 +305,8 @@ class ModsPanel(PluginPanel):
             self._tab_downloads.refresh(game_id, detection=self._detection)
 
         if self._tab_installed:
+            if hasattr(self._tab_installed, "set_framework_state"):
+                self._tab_installed.set_framework_state(ue4ss_ok, self._fw_dir, self._fw_conflict)
             self._tab_installed.refresh(self._profile, self._detection)
 
         if self._tab_load_order:
@@ -272,24 +315,28 @@ class ModsPanel(PluginPanel):
         self._update_badges()
 
     def _update_badges(self) -> None:
-        """Update tab label badge counts."""
+        """Update tab icon badge counts and colors."""
         if self._badge_content and self._tab_content:
             count = self._tab_content.get_available_count()
-            self._badge_content.update("Content", count)
+            self._badge_content.update(count, _COL_BADGE_NEUTRAL if count else None)
 
         if self._badge_downloads and self._tab_downloads:
-            count = self._tab_downloads.get_download_count()
-            self._badge_downloads.update("Downloads", count)
+            count  = self._tab_downloads.get_download_count()
+            active = self._tab_downloads.get_active_download_count()
+            color  = _COL_BADGE_RED if active > 0 else _COL_BADGE_NEUTRAL
+            self._badge_downloads.update(count, color if count else None)
 
         if self._badge_installed and self._tab_installed:
-            result = self._tab_installed.get_installed_count()
-            # get_installed_count returns (total, orphaned_count)
-            total = result[0] if isinstance(result, tuple) else int(result)
-            self._badge_installed.update("Installed", total)
+            result   = self._tab_installed.get_installed_count()
+            total    = result[0] if isinstance(result, tuple) else int(result)
+            orphaned = result[1] if isinstance(result, tuple) else 0
+            color    = _COL_BADGE_RED if orphaned > 0 else _COL_BADGE_NEUTRAL
+            self._badge_installed.update(total, color if total else None)
 
         if self._badge_load_order and self._tab_load_order:
             count = self._tab_load_order.get_error_count()
-            self._badge_load_order.update("Load Order", count)
+            color = _COL_BADGE_RED if count > 0 else _COL_BADGE_NEUTRAL
+            self._badge_load_order.update(count, color if count else None)
 
     def _refresh_content_tab(self) -> None:
         """Called by RegistriesTab whenever the registry list changes."""

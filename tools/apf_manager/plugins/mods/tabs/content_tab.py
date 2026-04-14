@@ -19,7 +19,7 @@ from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonText
+from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
 
@@ -49,12 +49,15 @@ class ContentTab(MDBoxLayout):
         self._checked: set[str] = set()
         self._all_mods: list = []
         self._all_templates: list = []
+        self._all_other: list = []
         # Framework state (set by mods_panel via set_framework_state)
         self._ue4ss_ok: bool = False
         self._fw_dir = None
         self._fw_conflict: list = []
         # Collapsed sections (section title → True if collapsed)
         self._collapsed: set[str] = set()
+        # Expanded row detail panels
+        self._expanded: set[str] = set()
         self._build_ui()
 
     # -----------------------------------------------------------------------
@@ -144,6 +147,7 @@ class ContentTab(MDBoxLayout):
         self._list.clear_widgets()
         self._all_mods = []
         self._all_templates = []
+        self._all_other = []
 
         # --- Framework state notices ---
         if self._fw_conflict:
@@ -189,6 +193,21 @@ class ContentTab(MDBoxLayout):
             self._list.add_widget(self._empty_label(
                 "No content available.\nAdd a registry in the Registries tab."
             ))
+
+        # --- Other section (UE4SS + framework binaries) ---
+        ue4ss_items = registry_svc.get_other_content(self._game_id) if hasattr(registry_svc, "get_other_content") else []
+        updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
+        fw_items = updates_svc.get_framework_other_entries() if (updates_svc and hasattr(updates_svc, "get_framework_other_entries")) else []
+        other_items = (ue4ss_items or []) + (fw_items or [])
+        self._all_other = other_items
+        if other_items:
+            collapsed = "Other" in self._collapsed
+            self._list.add_widget(self._section_header(
+                "Other", "package-variant", len(other_items), collapsed=collapsed
+            ))
+            if not collapsed:
+                for i, item in enumerate(other_items):
+                    self._list.add_widget(self._other_row(item, i))
 
         self._sync_queue_btn()
 
@@ -302,20 +321,26 @@ class ContentTab(MDBoxLayout):
     def _template_row(self, tmpl, index: int) -> MDBoxLayout:
         key = f"tmpl:{getattr(tmpl, 'path', str(index))}"
         bg = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
+        expanded = key in self._expanded
 
-        row = MDBoxLayout(
+        container = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=bg,
+        )
+
+        header = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(44),
-            md_bg_color=bg, padding=[dp(8), dp(4)], spacing=dp(8),
+            padding=[dp(8), dp(4)], spacing=dp(8),
         )
         cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
                         pos_hint={"center_y": 0.5})
         cb.active = key in self._checked
         cb.bind(active=lambda inst, val, k=key: self._on_check(k, val))
-        row.add_widget(cb)
+        header.add_widget(cb)
 
         has_conflict = getattr(tmpl, "has_conflict", False)
         if has_conflict:
-            row.add_widget(MDIcon(
+            header.add_widget(MDIcon(
                 icon="alert-circle", size_hint=(None, 1), width=dp(20),
                 theme_icon_color="Custom", icon_color=_COL_WARN,
             ))
@@ -334,18 +359,113 @@ class ContentTab(MDBoxLayout):
                 size_hint_y=None, height=dp(16),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
-        row.add_widget(info)
-        return row
+        header.add_widget(info)
+
+        chevron_icon = "chevron-up" if expanded else "chevron-down"
+        header.add_widget(MDIconButton(
+            icon=chevron_icon,
+            size_hint=(None, None), size=(dp(32), dp(32)),
+            pos_hint={"center_y": 0.5},
+            on_release=lambda *_, k=key: self._toggle_expand(k),
+        ))
+        container.add_widget(header)
+
+        if expanded:
+            container.add_widget(self._template_detail(tmpl))
+        return container
+
+    def _template_detail(self, tmpl) -> MDBoxLayout:
+        """Expanded detail panel for a template entry."""
+        panel = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=(0.09, 0.10, 0.12, 1),
+            padding=[dp(16), dp(6), dp(8), dp(6)], spacing=dp(4),
+        )
+        owner = getattr(tmpl, "owner", "")
+        repo  = getattr(tmpl, "repo", "")
+        path  = getattr(tmpl, "path", "")
+
+        # Source
+        if owner and repo:
+            panel.add_widget(MDLabel(
+                text=f"Source: {owner}/{repo}",
+                font_style="Label", role="small", size_hint_y=None, height=dp(18),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+
+        # Files provided
+        file_paths = getattr(tmpl, "file_paths", []) or []
+        deploy_svc = self._host.get_service("deploy") if self._host.has_service("deploy") else None
+        game_name  = getattr(tmpl, "game_name", getattr(tmpl, "game_id", ""))
+        templates_dir = None
+        if deploy_svc and hasattr(deploy_svc, "get_templates_dir") and game_name:
+            templates_dir = deploy_svc.get_templates_dir(game_name)
+        for fp in file_paths[:8]:
+            present = bool(templates_dir and (templates_dir / fp).exists())
+            dot_color = (0.3, 0.8, 0.4, 1) if present else (0.5, 0.5, 0.5, 1)
+            row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(16), spacing=dp(6),
+            )
+            row.add_widget(MDIcon(
+                icon="circle-small", size_hint=(None, 1), width=dp(16),
+                theme_icon_color="Custom", icon_color=dot_color,
+            ))
+            row.add_widget(MDLabel(
+                text=fp, font_style="Label", role="small",
+                size_hint=(1, 1), halign="left",
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+            panel.add_widget(row)
+        if len(file_paths) > 8:
+            panel.add_widget(MDLabel(
+                text=f"… and {len(file_paths) - 8} more files",
+                font_style="Label", role="small",
+                size_hint_y=None, height=dp(14),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+
+        # Install target
+        if templates_dir:
+            panel.add_widget(MDLabel(
+                text=f"Target: {templates_dir}",
+                font_style="Label", role="small", size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+        elif game_name:
+            panel.add_widget(MDLabel(
+                text="Target: Framework mod not installed",
+                font_style="Label", role="small", size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=_COL_WARN,
+            ))
+
+        # Dependent mods (mods whose capabilities.include overlaps this template's path)
+        deps = [
+            m for m in self._all_mods
+            if path and path in getattr(m, "capabilities_includes", [])
+        ]
+        if deps:
+            panel.add_widget(MDLabel(
+                text="Used by: " + ", ".join(getattr(m, "name", m.mod_id) for m in deps[:4]),
+                font_style="Label", role="small", size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+        return panel
 
     def _mod_row(self, mod, index: int) -> MDBoxLayout:
         folder = getattr(mod, "folder", getattr(mod, "mod_id", str(index)))
         key = f"mod:{folder}"
         components = getattr(mod, "components", ["lua"])
         bg = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
+        expanded = key in self._expanded
 
-        row = MDBoxLayout(
+        container = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=bg,
+        )
+
+        header = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(52),
-            md_bg_color=bg, padding=[dp(8), dp(4)], spacing=dp(8),
+            padding=[dp(8), dp(4)], spacing=dp(8),
         )
 
         # Checkbox
@@ -353,12 +473,11 @@ class ContentTab(MDBoxLayout):
                         pos_hint={"center_y": 0.5})
         cb.active = key in self._checked
         cb.bind(active=lambda inst, val, k=key, m=mod: self._on_mod_check(k, val, m))
-        row.add_widget(cb)
+        header.add_widget(cb)
 
         # Info column
         info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
 
-        # Name row + component badges
         name_row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(24), spacing=dp(4),
         )
@@ -379,17 +498,201 @@ class ContentTab(MDBoxLayout):
             ))
         info.add_widget(name_row)
 
-        # Sub-label: mod_id or description
         mod_id = getattr(mod, "mod_id", "")
-        desc = getattr(mod, "description", "")
-        sub = mod_id or desc
+        desc   = getattr(mod, "description", "")
+        sub    = mod_id or desc
         if sub:
             info.add_widget(MDLabel(
                 text=sub, font_style="Label", role="small",
                 size_hint_y=None, height=dp(18),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
+        header.add_widget(info)
+
+        chevron_icon = "chevron-up" if expanded else "chevron-down"
+        header.add_widget(MDIconButton(
+            icon=chevron_icon,
+            size_hint=(None, None), size=(dp(32), dp(32)),
+            pos_hint={"center_y": 0.5},
+            on_release=lambda *_, k=key: self._toggle_expand(k),
+        ))
+        container.add_widget(header)
+
+        if expanded:
+            container.add_widget(self._mod_detail(mod))
+        return container
+
+    def _mod_detail(self, mod) -> MDBoxLayout:
+        """Expanded detail panel for a registry mod entry."""
+        panel = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=(0.09, 0.10, 0.12, 1),
+            padding=[dp(16), dp(6), dp(8), dp(8)], spacing=dp(4),
+        )
+        mod_id = getattr(mod, "mod_id", "")
+        desc   = getattr(mod, "description", "")
+        owner  = getattr(mod, "owner", "")
+        repo   = getattr(mod, "repo", "")
+
+        # Description
+        if desc:
+            panel.add_widget(MDLabel(
+                text=desc, font_style="Label", role="small",
+                size_hint_y=None, height=dp(16),
+                theme_text_color="Secondary",
+            ))
+        else:
+            panel.add_widget(MDLabel(
+                text="No description",
+                font_style="Label", role="small",
+                size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+
+        # mod_id
+        if mod_id:
+            panel.add_widget(MDLabel(
+                text=mod_id, font_style="Label", role="small",
+                size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=(0.5, 0.7, 0.9, 1),
+            ))
+
+        # Dependencies
+        known_ids = {getattr(m, "mod_id", "") for m in self._all_mods}
+        depends = getattr(mod, "depends", []) or []
+        if depends:
+            dep_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(16),
+                spacing=dp(4),
+            )
+            dep_row.add_widget(MDLabel(
+                text="Deps:", font_style="Label", role="small",
+                size_hint=(None, 1), width=dp(32),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+            for dep in depends[:5]:
+                dep_id = dep.split(" ")[0] if isinstance(dep, str) else str(dep)
+                missing = dep_id not in known_ids
+                dep_row.add_widget(MDLabel(
+                    text=dep_id, font_style="Label", role="small",
+                    size_hint=(None, 1), width=dp(max(80, len(dep_id) * 7)),
+                    theme_text_color="Custom",
+                    text_color=(0.9, 0.3, 0.3, 1) if missing else _COL_DIM,
+                ))
+            panel.add_widget(dep_row)
+
+        # Incompatibilities
+        incompatible = getattr(mod, "incompatible", []) or []
+        if incompatible:
+            panel.add_widget(MDLabel(
+                text="Incompatible: " + ", ".join(str(i) for i in incompatible[:4]),
+                font_style="Label", role="small", size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=(0.8, 0.5, 0.2, 1),
+            ))
+
+        # capabilities.include paths
+        includes = getattr(mod, "capabilities_includes", []) or []
+        if includes:
+            deploy_svc = self._host.get_service("deploy") if self._host.has_service("deploy") else None
+            fw_dir = self._fw_dir
+            for inc in includes[:4]:
+                present = False
+                if fw_dir:
+                    from pathlib import Path
+                    present = (Path(fw_dir) / inc).exists()
+                inc_row = MDBoxLayout(
+                    orientation="horizontal", size_hint_y=None, height=dp(16), spacing=dp(4),
+                )
+                inc_row.add_widget(MDIcon(
+                    icon="circle-small", size_hint=(None, 1), width=dp(14),
+                    theme_icon_color="Custom",
+                    icon_color=(0.3, 0.8, 0.4, 1) if present else _COL_WARN,
+                ))
+                inc_row.add_widget(MDLabel(
+                    text=inc, font_style="Label", role="small",
+                    size_hint=(1, 1), halign="left",
+                    theme_text_color="Custom",
+                    text_color=_COL_DIM if present else _COL_WARN,
+                ))
+                panel.add_widget(inc_row)
+
+        # Registry
+        if owner and repo:
+            reg_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8),
+            )
+            reg_row.add_widget(MDLabel(
+                text=f"{owner}/{repo}", font_style="Label", role="small",
+                size_hint=(1, 1), halign="left",
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+            panel.add_widget(reg_row)
+        return panel
+
+    def _toggle_expand(self, key: str) -> None:
+        if key in self._expanded:
+            self._expanded.discard(key)
+        else:
+            self._expanded.add(key)
+        from kivy.clock import Clock
+        Clock.schedule_once(lambda dt: self._do_refresh(), 0)
+
+    def _other_row(self, item, index: int) -> MDBoxLayout:
+        """Row for an Other-category item (UE4SS option or framework binary release)."""
+        opt_type = getattr(item, "type", "manual")
+        tag      = getattr(item, "tag", "")
+        owner    = getattr(item, "owner", "")
+        repo_    = getattr(item, "repo", "")
+        key      = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(index))}"
+        bg       = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
+
+        row = MDBoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(52),
+            md_bg_color=bg, padding=[dp(8), dp(4)], spacing=dp(8),
+        )
+
+        if opt_type == "github_release":
+            cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
+                            pos_hint={"center_y": 0.5})
+            cb.active = key in self._checked
+            cb.bind(active=lambda inst, val, k=key: self._on_check(k, val))
+            row.add_widget(cb)
+        else:
+            # Spacer so text aligns with checkbox rows
+            row.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
+
+        row.add_widget(MDIcon(
+            icon="package-variant", size_hint=(None, 1), width=dp(22),
+            theme_icon_color="Custom", icon_color=(0.8, 0.55, 0.1, 1),
+        ))
+
+        info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
+        name_lbl = getattr(item, "name", "Unknown")
+        ver_lbl  = f"  {tag}" if tag else ""
+        info.add_widget(MDLabel(
+            text=f"{name_lbl}{ver_lbl}", font_style="Body",
+            size_hint_y=None, height=dp(24),
+        ))
+        note = getattr(item, "note", "")
+        if note:
+            info.add_widget(MDLabel(
+                text=note, font_style="Label", role="small",
+                size_hint_y=None, height=dp(18),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
         row.add_widget(info)
+
+        if opt_type == "external_url":
+            import webbrowser
+            url = getattr(item, "url", "")
+            row.add_widget(MDButton(
+                MDButtonText(text="Open"),
+                style="outlined", size_hint=(None, None), size=(dp(72), dp(32)),
+                pos_hint={"center_y": 0.5},
+                on_release=lambda *_, u=url: webbrowser.open(u) if u else None,
+            ))
+        elif opt_type == "manual":
+            row.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(8)))
 
         return row
 
@@ -423,6 +726,13 @@ class ContentTab(MDBoxLayout):
         for i, tmpl in enumerate(self._all_templates):
             key = f"tmpl:{getattr(tmpl, 'path', str(i))}"
             self._checked.add(key) if checked else self._checked.discard(key)
+        for i, item in enumerate(self._all_other):
+            if getattr(item, "type", "manual") == "github_release":
+                tag   = getattr(item, "tag", "")
+                owner = getattr(item, "owner", "")
+                repo_ = getattr(item, "repo", "")
+                key   = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(i))}"
+                self._checked.add(key) if checked else self._checked.discard(key)
         self._sync_queue_btn()
         self._do_refresh()
 
@@ -438,11 +748,16 @@ class ContentTab(MDBoxLayout):
             t for i, t in enumerate(self._all_templates)
             if f"tmpl:{getattr(t, 'path', str(i))}" in self._checked
         ]
+        checked_other = [
+            item for i, item in enumerate(self._all_other)
+            if getattr(item, "type", "manual") == "github_release"
+            and f"other:{getattr(item, 'owner', '')}+{getattr(item, 'repo', '')}/{getattr(item, 'tag', '') or getattr(item, 'name', str(i))}" in self._checked
+        ]
 
-        if not checked_mods and not checked_templates:
+        if not checked_mods and not checked_templates and not checked_other:
             return
 
-        # Validate mods only (templates are just files — no dependency checks)
+        # Validate mods only (templates and other items skip dependency checks)
         validation_svc = self._host.get_service("validation")
         if validation_svc and checked_mods:
             mods_svc = self._host.get_service("mods")
@@ -456,17 +771,17 @@ class ContentTab(MDBoxLayout):
             warnings = [r for r in results if r.status == "warn"]
             if errors:
                 self._show_validation_dlg(errors, warnings, checked_mods, checked_templates,
-                                          allow_proceed=False)
+                                          checked_other, allow_proceed=False)
                 return
             if warnings:
                 self._show_validation_dlg(errors, warnings, checked_mods, checked_templates,
-                                          allow_proceed=True)
+                                          checked_other, allow_proceed=True)
                 return
 
-        self._do_queue(checked_mods, checked_templates)
+        self._do_queue(checked_mods, checked_templates, checked_other)
 
     def _show_validation_dlg(self, errors, warnings, mods, templates,
-                              allow_proceed: bool) -> None:
+                              other=None, allow_proceed: bool = False) -> None:
         from kivymd.uix.dialog import (
             MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
             MDDialogButtonContainer,
@@ -475,6 +790,7 @@ class ContentTab(MDBoxLayout):
         lines += [f"[WARN]  {r.label}: {r.detail}" for r in warnings]
         title = "Cannot Queue" if not allow_proceed else "Queue with Warnings?"
         text  = "\n".join(lines) or "Validation issue."
+        _other = other or []
 
         btns: list = [
             Widget(),
@@ -484,8 +800,8 @@ class ContentTab(MDBoxLayout):
         if allow_proceed:
             btns.append(MDButton(
                 MDButtonText(text="Queue Anyway"), style="filled",
-                on_release=lambda *_, m=mods, t=templates: (
-                    dlg.dismiss(), self._do_queue(m, t)
+                on_release=lambda *_, m=mods, t=templates, o=_other: (
+                    dlg.dismiss(), self._do_queue(m, t, o)
                 ),
             ))
 
@@ -496,11 +812,18 @@ class ContentTab(MDBoxLayout):
         )
         dlg.open()
 
-    def _do_queue(self, mods: list, templates: list = None) -> None:
+    def _do_queue(self, mods: list, templates: Optional[list] = None,
+                  other: Optional[list] = None) -> None:
         """Pass (item, category) tuples to the on_queue callback."""
         if templates is None:
             templates = []
-        items = [(m, "mod") for m in mods] + [(t, "template") for t in templates]
+        if other is None:
+            other = []
+        items = (
+            [(m, "mod") for m in mods]
+            + [(t, "template") for t in templates]
+            + [(o, "other") for o in other]
+        )
         if self._on_queue:
             self._on_queue(items)
         for mod in mods:
@@ -509,6 +832,12 @@ class ContentTab(MDBoxLayout):
         for i, tmpl in enumerate(templates):
             path = getattr(tmpl, "path", str(i))
             self._checked.discard(f"tmpl:{path}")
+        for i, item in enumerate(other):
+            tag   = getattr(item, "tag", "")
+            owner = getattr(item, "owner", "")
+            repo_ = getattr(item, "repo", "")
+            key   = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(i))}"
+            self._checked.discard(key)
         self._sync_queue_btn()
         self._do_refresh()
 
@@ -517,4 +846,4 @@ class ContentTab(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def get_available_count(self) -> int:
-        return len(self._all_mods) + len(self._all_templates)
+        return len(self._all_mods) + len(self._all_templates) + len(self._all_other)

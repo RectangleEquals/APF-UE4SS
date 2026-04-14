@@ -95,6 +95,19 @@ class UE4SSInfo:
 
 
 @dataclass
+class _OtherEntry:
+    """Represents a bootstrap content item from ue4ss.json options."""
+    name: str
+    note: str
+    type: str        # "github_release" | "external_url" | "manual"
+    owner: str       # For github_release: UE4SS repo owner (may be a fork)
+    repo: str        # For github_release: UE4SS repo name
+    tag: str         # For github_release: exact release tag
+    url: str         # For external_url: direct URL
+    install_type: str = "ue4ss"   # "ue4ss" | "framework_binary"
+
+
+@dataclass
 class RegistryError:
     error_type: str
     severity: str  # "error" | "warning"
@@ -488,6 +501,28 @@ class RegistryService:
                 conflict_repos=repos,
             ))
         return results
+
+    def get_other_content(self, game_id: str) -> list:
+        """Return _OtherEntry list for UE4SS options from ue4ss.json in game registries."""
+        info = self.get_ue4ss_info(game_id)
+        if not info:
+            return []
+        entries = []
+        for opt in getattr(info, "options", []):
+            opt_type = opt.get("type", "manual")
+            raw_repo = opt.get("repo", "")
+            owner, repo = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
+            entries.append(_OtherEntry(
+                name         = opt.get("note", "UE4SS"),
+                note         = opt.get("note", ""),
+                type         = opt_type,
+                owner        = owner,
+                repo         = repo,
+                tag          = opt.get("tag", ""),
+                url          = opt.get("url", ""),
+                install_type = "ue4ss",
+            ))
+        return entries
 
     def get_framework_candidates(self, game_id: str) -> list[FrameworkModCandidate]:
         """Return scored framework mod candidates from all registered registries."""

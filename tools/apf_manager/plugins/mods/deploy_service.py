@@ -154,6 +154,75 @@ class DeployService:
             from .install_state import InstallStateManager
             InstallStateManager(self._profile.game_id).remove(mod_info.folder_name)
 
+    def deploy_mod(
+        self,
+        cache_path: "Path",
+        folder_name: str,
+        components: list,
+        bp_pak_files: list,
+        detection: "Optional[UE4SSResult]",
+        game_id: str = "",
+        metadata: "Optional[dict]" = None,
+    ) -> None:
+        """Copy cached mod to mods_dir, register in mods.txt, save install state."""
+        if not detection or not detection.mods_dir:
+            raise RuntimeError("UE4SS mods directory not detected")
+        if any(c in components for c in ("lua", "cpp")):
+            dest = detection.mods_dir / folder_name
+            if dest.exists():
+                shutil.rmtree(str(dest))
+            shutil.copytree(str(cache_path), str(dest))
+            with self._lock:
+                if self._mods_txt:
+                    self._mods_txt.ensure_entry(folder_name, enabled=True)
+                    self._mods_txt.save()
+        if "blueprint" in components and bp_pak_files:
+            lm_dir = detection.logicmods_dir
+            if lm_dir:
+                lm_dir.mkdir(parents=True, exist_ok=True)
+                lm_src = cache_path / "LogicMods"
+                for pak in bp_pak_files:
+                    src_pak = lm_src / pak
+                    if src_pak.exists():
+                        shutil.copy2(str(src_pak), str(lm_dir / pak))
+        gid = game_id or (self._profile.game_id if self._profile else "")
+        if gid and metadata:
+            from .install_state import InstallStateManager
+            InstallStateManager(gid).add(folder_name, {
+                "mod_id":                metadata.get("mod_id", ""),
+                "folder_name":           folder_name,
+                "source_repo":           metadata.get("source_repo", ""),
+                "source_folder":         metadata.get("source_folder", folder_name),
+                "version":               metadata.get("version", ""),
+                "components":            components,
+                "bp_pak_files_deployed": bp_pak_files,
+            })
+
+    def deploy_other(
+        self,
+        cache_path: "Path",
+        install_type: str,
+        detection: "Optional[UE4SSResult]",
+    ) -> None:
+        """Deploy an Other-category item (UE4SS or framework binaries) to platform_dir.
+        install_type: "ue4ss" | "framework_binary"
+        UE4SS zip contains dwmapi.dll at root + ue4ss/ subfolder — extractall preserves this.
+        Framework binary zip contains APFrameworkCore.dll + dep DLLs — flat extract.
+        """
+        if not detection or not getattr(detection, "platform_dir", None):
+            raise RuntimeError("Game platform directory not detected")
+        import zipfile
+        dest_dir = detection.platform_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        zips = list(cache_path.glob("*.zip"))
+        if zips:
+            with zipfile.ZipFile(zips[0], "r") as zf:
+                zf.extractall(str(dest_dir))
+        else:
+            for f in cache_path.iterdir():
+                if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
+                    shutil.copy2(str(f), str(dest_dir / f.name))
+
     # -----------------------------------------------------------------------
     # Template deployment
     # -----------------------------------------------------------------------
