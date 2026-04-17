@@ -24,10 +24,10 @@ from typing import Optional, TYPE_CHECKING
 from kivy.animation import Animation
 from kivy.clock import Clock
 from kivy.core.window import Window
-from kivy.graphics import Color, PushMatrix, PopMatrix, Rectangle, Scale, Translate
+from kivy.graphics import Color, Ellipse, PushMatrix, PopMatrix, Rectangle, Scale, Translate
 from kivy.graphics.texture import Texture
 from kivy.metrics import dp
-from kivy.properties import NumericProperty
+from kivy.properties import BooleanProperty, NumericProperty
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
@@ -42,6 +42,38 @@ from kivymd.uix.dialog import (
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 from kivymd.uix.textfield import MDTextField
+
+
+class _DotBadgeButton(MDBoxLayout):
+    """MDIconButton wrapped in a layout that supports a red dot overlay badge."""
+
+    has_badge = BooleanProperty(False)
+
+    def __init__(self, icon: str, on_release=None, **kwargs):
+        super().__init__(
+            size_hint=(None, None), size=(dp(48), dp(48)), **kwargs
+        )
+        self._btn = MDIconButton(
+            icon=icon, size_hint=(1, 1),
+        )
+        if on_release:
+            self._btn.bind(on_release=on_release)
+        self.add_widget(self._btn)
+        self.bind(has_badge=self._redraw, pos=self._redraw, size=self._redraw)
+
+    def _redraw(self, *_) -> None:
+        self.canvas.after.clear()
+        if not self.has_badge:
+            return
+        dot_r = dp(5)
+        bx = self.right - dp(10)
+        by = self.top - dp(10)
+        with self.canvas.after:
+            Color(1.0, 0.25, 0.25, 1)
+            Ellipse(pos=(bx - dot_r, by - dot_r), size=(dot_r * 2, dot_r * 2))
+
+    def set_badge(self, visible: bool) -> None:
+        self.has_badge = visible
 
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost
@@ -593,6 +625,7 @@ class LibraryScreen(MDBoxLayout):
         self._tile_map: dict[str, "GameTile"] = {}
         self._steam_section: Optional[_CarouselSection] = None
         self._custom_section: Optional[_CarouselSection] = None
+        self._settings_badge_btn: Optional["_DotBadgeButton"] = None
         self._build()
 
     # -----------------------------------------------------------------------
@@ -623,8 +656,10 @@ class LibraryScreen(MDBoxLayout):
             discord_btn = ImageIconButton(source=str(_DISCORD_ICON), tooltip_text="Join our Discord")
             discord_btn.bind(on_release=lambda *_: webbrowser.open("https://discord.gg/xhcVRhnjK"))
             toolbar.add_widget(discord_btn)
-        toolbar.add_widget(MDIconButton(
-            icon="cog", on_release=lambda *_: self._go_settings()))
+        self._settings_badge_btn = _DotBadgeButton(
+            icon="cog", on_release=lambda *_: self._go_settings()
+        )
+        toolbar.add_widget(self._settings_badge_btn)
         self.add_widget(toolbar)
 
         # Collapsible search bar
@@ -664,6 +699,27 @@ class LibraryScreen(MDBoxLayout):
     def _initial_load(self) -> None:
         self.refresh()
         threading.Thread(target=self._refresh_steam, daemon=True).start()
+        # Wire update dot — check now (service's TTL handles re-check deduplication)
+        if self._host.has_service("updates"):
+            self._host.get_service("updates").check_all(
+                on_done=self._apply_update_dot
+            )
+
+    def _apply_update_dot(self) -> None:
+        """Show/hide the red dot on the settings gear based on update availability."""
+        if self._settings_badge_btn is None:
+            return
+        updates_svc = (self._host.get_service("updates")
+                       if self._host.has_service("updates") else None)
+        if not updates_svc:
+            return
+        mgr = updates_svc.get_update_info("manager")
+        apw = updates_svc.get_update_info("apworld")
+        has_update = (
+            (mgr and mgr.is_update_available)
+            or (apw and apw.is_update_available)
+        )
+        self._settings_badge_btn.set_badge(bool(has_update))
 
     # -----------------------------------------------------------------------
     # Public

@@ -54,13 +54,20 @@ _TAB_LOAD_ORDER = 4
 
 _COL_BADGE_NEUTRAL = (0.45, 0.55, 0.75, 1.0)
 _COL_BADGE_RED     = (1.0,  0.3,  0.3,  1.0)
+_COL_BADGE_BLUE    = (0.25, 0.55, 1.0,  1.0)
 
 
 class _BadgeIcon(MDTabsItemIcon):
-    """Tab icon that renders a circular badge overlay using canvas.after."""
+    """Tab icon that renders a circular badge overlay using canvas.after.
+
+    Supports an optional secondary badge (top-left of icon) drawn alongside
+    the primary badge (top-right).  Use update_secondary() to manage it.
+    """
 
     badge_count = NumericProperty(0)
     badge_color = ColorProperty(list(_COL_BADGE_NEUTRAL))
+    _secondary_count: int = 0
+    _secondary_color: tuple = _COL_BADGE_BLUE
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -76,16 +83,15 @@ class _BadgeIcon(MDTabsItemIcon):
             self.badge_color = list(color)
         self.badge_count = count
 
-    def _redraw(self, *_args) -> None:
-        self.canvas.after.clear()
-        if self.badge_count <= 0:
-            return
-        text = str(min(self.badge_count, 99))
-        bs = dp(14)
-        bx = self.center_x + dp(9)
-        by = self.center_y + dp(9)
+    def update_secondary(self, count: int, color: tuple = None) -> None:
+        self._secondary_count = count
+        if color is not None:
+            self._secondary_color = color
+        self._redraw()
+
+    def _draw_badge(self, bx: float, by: float, bs: float, color: tuple, text: str) -> None:
         with self.canvas.after:
-            Color(*self.badge_color)
+            Color(*color)
             RoundedRectangle(pos=(bx - bs / 2, by - bs / 2), size=(bs, bs), radius=[bs / 2])
         lbl = CoreLabel(text=text, font_size=sp(8), bold=True)
         lbl.refresh()
@@ -95,6 +101,20 @@ class _BadgeIcon(MDTabsItemIcon):
             with self.canvas.after:
                 Color(1, 1, 1, 1)
                 Rectangle(texture=tex, pos=(bx - tw / 2, by - th / 2), size=(tw, th))
+
+    def _redraw(self, *_args) -> None:
+        self.canvas.after.clear()
+        bs = dp(14)
+        # Primary badge — top-right of icon
+        if self.badge_count > 0:
+            bx = self.center_x + dp(9)
+            by = self.center_y + dp(9)
+            self._draw_badge(bx, by, bs, tuple(self.badge_color), str(min(self.badge_count, 99)))
+        # Secondary badge — top-left of icon (updates indicator)
+        if self._secondary_count > 0:
+            bx2 = self.center_x - dp(9)
+            by2 = self.center_y + dp(9)
+            self._draw_badge(bx2, by2, bs, self._secondary_color, str(min(self._secondary_count, 99)))
 
 
 class ModsPanel(PluginPanel):
@@ -317,8 +337,12 @@ class ModsPanel(PluginPanel):
     def _update_badges(self) -> None:
         """Update tab icon badge counts and colors."""
         if self._badge_content and self._tab_content:
+            # Primary RED badge = available content count
             count = self._tab_content.get_available_count()
-            self._badge_content.update(count, _COL_BADGE_NEUTRAL if count else None)
+            self._badge_content.update(count, _COL_BADGE_RED if count else _COL_BADGE_NEUTRAL)
+            # Secondary BLUE badge = pending UE4SS / framework binary updates
+            update_count = self._count_content_updates()
+            self._badge_content.update_secondary(update_count, _COL_BADGE_BLUE)
 
         if self._badge_downloads and self._tab_downloads:
             count  = self._tab_downloads.get_download_count()
@@ -337,6 +361,20 @@ class ModsPanel(PluginPanel):
             count = self._tab_load_order.get_error_count()
             color = _COL_BADGE_RED if count > 0 else _COL_BADGE_NEUTRAL
             self._badge_load_order.update(count, color if count else None)
+
+    def _count_content_updates(self) -> int:
+        """Return count of pending UE4SS / framework binary updates (content-specific)."""
+        if not self.host.has_service("updates"):
+            return 0
+        updates_svc = self.host.get_service("updates")
+        count = 0
+        ue4ss = updates_svc.get_update_info("ue4ss")
+        if ue4ss and ue4ss.is_update_available:
+            count += 1
+        framework = updates_svc.get_update_info("framework")
+        if framework and framework.is_update_available:
+            count += 1
+        return count
 
     def _refresh_content_tab(self) -> None:
         """Called by RegistriesTab whenever the registry list changes."""

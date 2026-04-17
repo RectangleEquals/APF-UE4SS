@@ -232,8 +232,8 @@ class RegistryResolver:
                 manifest = json.loads(manifest_text)
             except Exception:
                 continue
-            if not manifest.get("mod_id"):
-                continue  # Not an AP Framework mod
+            # Include non-AP mods (no mod_id) as selectable items in the repo viewer.
+            # They still need a manifest.json to be discovered.
 
             readme_url = ""
             readme_entry = next(
@@ -570,13 +570,15 @@ class RegistryResolver:
         doc_children: list[FolderTreeNode] = []
         dir_children: list[FolderTreeNode] = []
         is_template_node = (node_type == "template_dir")
+        # Component directories show all files (not just .md) so users can see main.lua/main.dll
+        is_component_dir = node_type in ("lua_dir", "cpp_dir", "bp_dir")
 
         for sub in sub_contents:
             sname = sub.get("name", "")
             stype = sub.get("type", "")
             spath = sub.get("path", f"{epath}/{sname}")
 
-            if stype == "file" and (is_template_node or sname.lower().endswith(".md")):
+            if stype == "file" and (is_template_node or is_component_dir or sname.lower().endswith(".md")):
                 doc_children.append(FolderTreeNode(
                     node_type="file",
                     name=sname,

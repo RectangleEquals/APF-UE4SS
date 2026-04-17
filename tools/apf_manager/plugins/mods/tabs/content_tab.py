@@ -195,10 +195,29 @@ class ContentTab(MDBoxLayout):
             ))
 
         # --- Other section (UE4SS + framework binaries) ---
-        ue4ss_items = registry_svc.get_other_content(self._game_id) if hasattr(registry_svc, "get_other_content") else []
+        # UE4SS items from registry (game-specific recommendations)
+        registry_ue4ss = registry_svc.get_other_content(self._game_id) if hasattr(registry_svc, "get_other_content") else []
         updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
-        fw_items = updates_svc.get_framework_other_entries() if (updates_svc and hasattr(updates_svc, "get_framework_other_entries")) else []
-        other_items = (ue4ss_items or []) + (fw_items or [])
+        # UE4SS official releases — always present even without a registry (bootstrap path)
+        ue4ss_owner, ue4ss_repo = "UE4SS-RE", "RE-UE4SS"
+        if registry_ue4ss:
+            # If registry specifies a custom owner/repo for UE4SS, use it
+            for ri in registry_ue4ss:
+                if getattr(ri, "install_type", "") == "ue4ss":
+                    ue4ss_owner = getattr(ri, "owner", ue4ss_owner)
+                    ue4ss_repo  = getattr(ri, "repo", ue4ss_repo)
+                    break
+        ue4ss_official = (
+            updates_svc.get_ue4ss_releases_for_content(ue4ss_owner, ue4ss_repo)
+            if (updates_svc and hasattr(updates_svc, "get_ue4ss_releases_for_content"))
+            else []
+        )
+        fw_items = (
+            updates_svc.get_framework_releases_for_content()
+            if (updates_svc and hasattr(updates_svc, "get_framework_releases_for_content"))
+            else []
+        )
+        other_items = (registry_ue4ss or []) + (ue4ss_official or []) + (fw_items or [])
         self._all_other = other_items
         if other_items:
             collapsed = "Other" in self._collapsed
@@ -359,6 +378,9 @@ class ContentTab(MDBoxLayout):
                 size_hint_y=None, height=dp(16),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
+        # Clicking anywhere on the info area also toggles expand
+        info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
+                  if w.collide_point(*t.pos) else None)
         header.add_widget(info)
 
         chevron_icon = "chevron-up" if expanded else "chevron-down"
@@ -507,6 +529,9 @@ class ContentTab(MDBoxLayout):
                 size_hint_y=None, height=dp(18),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
+        # Clicking anywhere on the info area also toggles expand
+        info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
+                  if w.collide_point(*t.pos) else None)
         header.add_widget(info)
 
         chevron_icon = "chevron-up" if expanded else "chevron-down"
@@ -633,6 +658,8 @@ class ContentTab(MDBoxLayout):
         if key in self._expanded:
             self._expanded.discard(key)
         else:
+            # Auto-collapse sibling rows — only one detail panel open at a time
+            self._expanded.clear()
             self._expanded.add(key)
         from kivy.clock import Clock
         Clock.schedule_once(lambda dt: self._do_refresh(), 0)

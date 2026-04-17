@@ -66,9 +66,55 @@ class GitHubAPI:
         self._bundled_token_path = token_file_path
         self._token, self._auth_source = self._resolve_token(token_file_path, direct_token)
         self._client: GitHub = self._make_client()
+        # Lazy — avoids circular import at module load time
+        self._release_manager: Optional["GitHubReleaseManager"] = None
         self._rate_limit_remaining: Optional[int] = None
         self._rate_limit_limit: Optional[int] = None
         self._rate_limit_reset: Optional[int] = None
+
+    # -----------------------------------------------------------------------
+    # Release manager property
+    # -----------------------------------------------------------------------
+
+    @property
+    def releases(self) -> "GitHubReleaseManager":
+        """
+        The GitHubReleaseManager for this repo.
+        Constructed lazily on first access to avoid import-time circularity.
+        """
+        if self._release_manager is None:
+            from .github_release_manager import GitHubReleaseManager
+            self._release_manager = GitHubReleaseManager(self)
+        return self._release_manager
+
+    # ── Typed convenience methods ────────────────────────────────────────────
+
+    def get_latest_release_typed(
+        self, force_refresh: bool = False
+    ) -> "Optional[RepoRelease]":
+        """Return latest stable release as a typed RepoRelease, or None."""
+        return self.releases.fetch_latest(force_refresh=force_refresh)
+
+    def get_latest_prerelease_typed(
+        self, force_refresh: bool = False
+    ) -> "Optional[RepoRelease]":
+        """Return latest pre-release as a typed RepoRelease, or None."""
+        return self.releases.fetch_latest_prerelease(force_refresh=force_refresh)
+
+    def fetch_updates(
+        self, *,
+        since_date=None,
+        since_tag: Optional[str] = None,
+        include_prereleases: bool = True,
+        force_refresh: bool = False,
+    ) -> "list[RepoRelease]":
+        """Return all releases newer than the given reference point."""
+        return self.releases.fetch_updates(
+            since_date=since_date,
+            since_tag=since_tag,
+            include_prereleases=include_prereleases,
+            force_refresh=force_refresh,
+        )
 
     # -----------------------------------------------------------------------
     # Contents API
@@ -172,62 +218,12 @@ class GitHubAPI:
 
     def get_latest_release(self, force_refresh: bool = False) -> Optional[dict]:
         """
-        Return the latest release metadata dict, or None on failure.
-        Short TTL cache (15 min).
+        Return the latest stable release as a legacy dict, or None on failure.
+        Delegates to GitHubReleaseManager which handles caching and error handling.
+
+        Legacy dict schema: {tag_name, published_at, body, assets[{name, browser_download_url, size}]}
         """
-        if self._check_rate_limit():
-            return None
-
-        cache_key = "releases/latest"
-
-        if not force_refresh:
-            cached = self._cache.get(cache_key)
-            if cached is not None:
-                try:
-                    return json.loads(cached)
-                except Exception:
-                    pass
-
-        try:
-            resp = self._client.rest.repos.get_latest_release(self._owner, self._repo)
-            self._update_rate_limit(resp.headers)
-            release = resp.parsed_data
-            data = {
-                "tag_name": release.tag_name,
-                "published_at": str(release.published_at),
-                "body": release.body or "",
-                "assets": [
-                    {
-                        "name": a.name,
-                        "browser_download_url": a.browser_download_url,
-                        "size": a.size,
-                    }
-                    for a in (release.assets or [])
-                ],
-            }
-            self._cache.set(cache_key, json.dumps(data), TTL_RELEASES)
-            return data
-
-        except RateLimitExceeded as exc:
-            return self._handle_rate_limit(exc, cache_key, fallback=None)
-
-        except RequestFailed as exc:
-            return self._handle_request_failed(exc, cache_key, fallback=None)
-
-        except (RequestTimeout, _httpx.ConnectError, _httpx.TimeoutException) as exc:
-            stale = self._cache.get_stale(cache_key)
-            if stale is not None:
-                self._on_status("warn", f"GitHub unreachable — using cached release info ({exc})")
-                try:
-                    return json.loads(stale)
-                except Exception:
-                    pass
-            self._on_status("error", f"GitHub unreachable and no cached release info ({exc})")
-            return None
-
-        except Exception as exc:
-            self._on_status("warn", f"Unexpected error fetching release info: {exc}")
-            return self._load_stale_json(cache_key)
+        return self.releases.get_latest_release_dict(force_refresh=force_refresh)
 
     def list_releases(
         self,
@@ -236,58 +232,14 @@ class GitHubAPI:
         force_refresh: bool = False,
     ) -> list[dict]:
         """
-        Return a list of release metadata dicts, optionally filtered by tag prefix.
-        Cached with the same TTL as get_latest_release().
+        Return release metadata dicts, optionally filtered by tag prefix.
+        Delegates to GitHubReleaseManager.
         """
-        if self._check_rate_limit():
-            return []
-
-        cache_key = f"releases/list/{tag_prefix or 'all'}"
-
-        if not force_refresh:
-            cached = self._cache.get(cache_key)
-            if cached is not None:
-                try:
-                    return json.loads(cached)
-                except Exception:
-                    pass
-
-        try:
-            resp = self._client.rest.repos.list_releases(
-                self._owner, self._repo, per_page=per_page
-            )
-            self._update_rate_limit(resp.headers)
-            releases = resp.parsed_data or []
-            results = []
-            for release in releases:
-                tag = release.tag_name or ""
-                if tag_prefix and not tag.startswith(tag_prefix):
-                    continue
-                results.append({
-                    "tag_name": tag,
-                    "published_at": str(release.published_at),
-                    "body": release.body or "",
-                    "assets": [
-                        {
-                            "name": a.name,
-                            "browser_download_url": a.browser_download_url,
-                            "size": a.size,
-                        }
-                        for a in (release.assets or [])
-                    ],
-                })
-            self._cache.set(cache_key, json.dumps(results), TTL_RELEASES)
-            return results
-
-        except RateLimitExceeded as exc:
-            return self._handle_rate_limit(exc, cache_key, fallback=[])
-
-        except RequestFailed as exc:
-            return self._handle_request_failed(exc, cache_key, fallback=[]) or []
-
-        except Exception as exc:
-            self._on_status("warn", f"Unexpected error listing releases: {exc}")
-            return json.loads(self._load_stale_json(cache_key) or "[]")
+        return self.releases.list_releases_dict(
+            tag_prefix=tag_prefix,
+            per_page=per_page,
+            force_refresh=force_refresh,
+        )
 
     # -----------------------------------------------------------------------
     # User / collaborator API (used by github_auth)
@@ -460,27 +412,8 @@ class GitHubAPI:
         dest: Path,
         progress_cb: Optional[Callable[[int, int], None]] = None,
     ) -> bool:
-        """Download a release asset to dest. Returns True on success."""
-        try:
-            headers = self._cdn_headers()
-            headers["Accept"] = "application/octet-stream"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            total = 0
-            downloaded = 0
-            with _httpx.stream(
-                "GET", asset_url, headers=headers, timeout=60, follow_redirects=True
-            ) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("Content-Length", 0))
-                with open(dest, "wb") as f:
-                    for chunk in resp.iter_bytes(65536):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if progress_cb:
-                            progress_cb(downloaded, total)
-            return True
-        except Exception:
-            return False
+        """Download a release asset to dest. Delegates to GitHubReleaseManager."""
+        return self.releases.download_asset(asset_url, dest, progress_cb)
 
     # -----------------------------------------------------------------------
     # Auth management
@@ -507,6 +440,7 @@ class GitHubAPI:
         path = token_file_path or self._bundled_token_path
         self._token, self._auth_source = self._resolve_token(path)
         self._client = self._make_client()
+        self._release_manager = None   # invalidate so next access gets a fresh manager
 
     def invalidate_cache(self) -> None:
         """Clear all cached data for this repo."""

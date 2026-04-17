@@ -262,6 +262,10 @@ class DownloadsTab(MDBoxLayout):
 
         def _add_item(folder_dir: Path, owner: str, repo: str) -> None:
             category, game_name, install_type = _read_meta(folder_dir)
+            # Skip game-specific items that belong to a different game.
+            # "other" items (UE4SS, framework binaries) are game-agnostic and always shown.
+            if category != "other" and game_name and game_name != self._game_id:
+                return
             mod_ref = mod_by_folder.get(folder_dir.name)
             components = _detect_components(folder_dir)
             bp_files = _detect_bp_paks(folder_dir)
@@ -450,9 +454,12 @@ class DownloadsTab(MDBoxLayout):
         updates_svc = self._host.get_service("updates")
         if not updates_svc:
             return
-        fw_update = updates_svc.get_framework_update()
-        if not fw_update:
+        fw_info = updates_svc.get_update_info("framework")
+        if not (fw_info and fw_info.is_update_available and fw_info.latest_stable):
             return
+
+        latest_tag = fw_info.latest_stable.tag_name
+        current    = fw_info.current if fw_info.current != "unknown" else "?"
 
         section = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
@@ -475,9 +482,7 @@ class DownloadsTab(MDBoxLayout):
         detail_row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(8),
         )
-        ver_text = (
-            f"AP Framework: {fw_update.get('current','?')} → {fw_update.get('latest','?')}"
-        )
+        ver_text = f"AP Framework: {current} → {latest_tag}"
         detail_row.add_widget(MDLabel(
             text=ver_text, size_hint=(1, 1), halign="left",
             theme_text_color="Custom", text_color=_COL_FW,
@@ -487,7 +492,7 @@ class DownloadsTab(MDBoxLayout):
             MDButtonText(text="Download"),
             style="filled", size_hint=(None, None), size=(dp(110), dp(32)),
             pos_hint={"center_y": 0.5},
-            on_release=lambda *_, u=fw_update: self._download_framework(u),
+            on_release=lambda *_: self._download_framework(fw_info),
         )
         dl_btn.disabled = not has_detection
         detail_row.add_widget(dl_btn)
@@ -501,11 +506,13 @@ class DownloadsTab(MDBoxLayout):
         section.add_widget(detail_row)
         self._content.add_widget(section)
 
-    def _download_framework(self, update_info: dict) -> None:
+    def _download_framework(self, update_info) -> None:
         updates_svc = self._host.get_service("updates")
         if not updates_svc:
             return
-        dest = _CACHE_DIR / "_framework" / f"framework-{update_info.get('latest','')}.zip"
+        latest_tag = (update_info.latest_stable.tag_name
+                      if (update_info and update_info.latest_stable) else "unknown")
+        dest = _CACHE_DIR / "_framework" / f"framework-{latest_tag}.zip"
         updates_svc.download_update(
             "framework", dest,
             on_done=lambda ok, msg: Clock.schedule_once(

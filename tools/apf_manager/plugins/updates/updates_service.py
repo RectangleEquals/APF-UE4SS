@@ -1,40 +1,87 @@
 """
-UpdatesService — checks for and surfaces updates to the app, framework binaries, and APWorld.
+UpdatesService — checks for and surfaces updates to the app, framework
+binaries, APWorld, and UE4SS.
 
-Registered as the "updates" service. Works for all users (player/dev/devtools).
+Registered as the "updates" service by plugins/updates/__init__.py.
+check_all() is triggered once on app startup (via __init__.py setup()).
 
-Three independently versioned components:
-  - Manager (APF Manager app):  manager/vX.Y.Z tag → .exe installer asset
-  - Framework (C++ DLLs):       framework/vX.Y.Z tag → zip of binaries
-  - APWorld (.apworld file):    apworld/vX.Y.Z tag → .apworld asset
+Components tracked:
+  - manager   (APF Manager app):   manager/vX.Y.Z tag  → .exe installer asset
+  - framework (C++ DLLs):          framework/vX.Y.Z tag → zip of binaries
+  - apworld   (.apworld file):      apworld/vX.Y.Z tag   → .apworld asset
+  - ue4ss     (UE4SS runtime):      UE4SS-RE/RE-UE4SS latest stable + pre-release
+
+Two GitHubAPI instances are used:
+  - _make_apf_api()   → RectangleEquals/APF-UE4SS   (manager, framework, apworld)
+  - _make_ue4ss_api() → UE4SS-RE/RE-UE4SS            (default UE4SS check)
+
+Per-game / per-registry UE4SS overrides (arbitrary owner/repo) are handled
+by _make_ue4ss_api(owner, repo) — created on demand, cached separately.
 """
 
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable
 
+from ...core.remote.github_release_manager import RepoRelease
 
-_WORLDS_DIR = Path.home() / ".apf_manager" / "worlds"
-_CHECK_INTERVAL = 3600  # 1 hour in-memory cache for update checks
 
+_WORLDS_DIR      = Path.home() / ".apf_manager" / "worlds"
+_CHECK_INTERVAL  = 3600   # 1-hour in-memory TTL for update checks
+
+# How many stable UE4SS releases to surface in the Content tab Other section
+_UE4SS_STABLE_COUNT = 3
+
+
+# ---------------------------------------------------------------------------
+# UpdateInfo dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass
+class UpdateInfo:
+    """Typed update state for a single component."""
+    component: str                          # "manager" | "framework" | "apworld" | "ue4ss"
+    current: str                            # installed version string, or "unknown"
+    latest_stable: Optional[RepoRelease]    # None if not yet checked / unavailable
+    latest_pre: Optional[RepoRelease]       # None if no pre-release available
+    asset_url: str = ""                     # primary download URL (stable)
+    is_update_available: bool = False       # True when latest_stable > current
+    is_pre_available: bool = False          # True when latest_pre exists
+
+
+# ---------------------------------------------------------------------------
+# UpdatesService
+# ---------------------------------------------------------------------------
 
 class UpdatesService:
     def __init__(self, host) -> None:
         self._host = host
         self._lock = threading.Lock()
         self._last_check_time: float = 0.0
-        self._app_update: Optional[dict] = None
-        self._framework_update: Optional[dict] = None
-        self._apworld_update: Optional[dict] = None
+
+        # Per-component UpdateInfo (None = not yet checked)
+        self._manager_info:   Optional[UpdateInfo] = None
+        self._framework_info: Optional[UpdateInfo] = None
+        self._apworld_info:   Optional[UpdateInfo] = None
+        self._ue4ss_info:     Optional[UpdateInfo] = None
+
+        # Cache for arbitrary UE4SS owner/repo overrides
+        # key = "owner/repo" → UpdateInfo
+        self._ue4ss_override_cache: dict[str, UpdateInfo] = {}
 
     # -----------------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------------
 
     def check_all(self, on_done: Optional[Callable] = None) -> None:
-        """Run all update checks in the background. Calls on_done() on completion."""
+        """
+        Run all update checks in the background.
+        Respects the 1-hour TTL — no-ops if checked recently.
+        Calls on_done() on the Kivy main thread when complete.
+        """
         def _bg():
             import time
             with self._lock:
@@ -44,9 +91,10 @@ class UpdatesService:
                         _ui(on_done)
                     return
 
-            self._check_app_update()
-            self._check_apworld_update()
-            # Framework update is game-specific — checked separately via check_framework_update()
+            self._check_manager()
+            self._check_apworld()
+            self._check_ue4ss()
+            # Framework is game-specific — checked separately via check_framework()
 
             with self._lock:
                 import time as _t
@@ -57,47 +105,71 @@ class UpdatesService:
 
         threading.Thread(target=_bg, daemon=True).start()
 
-    def check_framework_update(self, game_id: str, on_done: Optional[Callable] = None) -> None:
-        """Check for framework update for the current game. Separate from check_all()."""
+    def check_framework(self, game_id: str,
+                        on_done: Optional[Callable] = None) -> None:
+        """Check for framework binary update for the current game."""
         def _bg():
-            self._check_framework_update_bg(game_id)
+            self._check_framework_bg(game_id)
             if on_done:
                 _ui(on_done)
-
         threading.Thread(target=_bg, daemon=True).start()
 
-    def get_app_update(self) -> Optional[dict]:
-        """Return app update info or None if current / not yet checked."""
-        with self._lock:
-            return self._app_update
+    def get_update_info(self, component: str) -> Optional[UpdateInfo]:
+        """
+        Return typed UpdateInfo for the given component, or None if not yet checked.
 
-    def get_framework_update(self) -> Optional[dict]:
-        """Return framework update info or None if current / not yet checked / no UE4SS."""
+        component: "manager" | "framework" | "apworld" | "ue4ss"
+        """
         with self._lock:
-            return self._framework_update
+            return {
+                "manager":   self._manager_info,
+                "framework": self._framework_info,
+                "apworld":   self._apworld_info,
+                "ue4ss":     self._ue4ss_info,
+            }.get(component)
 
-    def get_apworld_update(self) -> Optional[dict]:
-        """Return APWorld update info or None if current / not yet checked."""
+    def get_ue4ss_update_info_for(self, owner: str,
+                                  repo: str) -> Optional[UpdateInfo]:
+        """
+        Return UpdateInfo for an arbitrary UE4SS owner/repo override.
+        Returns None if not yet checked for this repo.
+        """
+        key = f"{owner}/{repo}"
         with self._lock:
-            return self._apworld_update
+            return self._ue4ss_override_cache.get(key)
 
-    def get_framework_other_entries(self) -> list:
-        """Return _OtherEntry objects for available framework binary releases.
-        Called by content_tab to populate the Other section alongside UE4SS entries.
-        Returns up to 3 latest releases tagged framework/vX.Y.Z."""
+    def check_ue4ss_for(self, owner: str, repo: str,
+                        on_done: Optional[Callable] = None) -> None:
+        """Check for a UE4SS update from an arbitrary owner/repo."""
+        def _bg():
+            info = self._run_ue4ss_check(owner, repo)
+            key = f"{owner}/{repo}"
+            with self._lock:
+                self._ue4ss_override_cache[key] = info
+            if on_done:
+                _ui(on_done)
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def get_framework_releases_for_content(self) -> list:
+        """
+        Return _OtherEntry objects for available framework binary releases.
+        Called by ContentTab to populate the Other section.
+        Returns up to 3 latest stable releases tagged framework/vX.Y.Z.
+        """
         try:
             from ..mods.registry_service import _OtherEntry
-            api = self._make_api()
+            api = self._make_apf_api()
             releases = api.list_releases(tag_prefix="framework/")
             entries = []
             for release in releases[:3]:
                 full_tag = release.get("tag_name", "")
-                asset = self._find_asset(release, ".zip")
+                asset = self._find_asset_dict(release, ".zip")
                 if not asset:
                     continue
-                ver = full_tag[len("framework/"):] if full_tag.startswith("framework/") else full_tag
+                ver = (full_tag[len("framework/"):]
+                       if full_tag.startswith("framework/") else full_tag)
                 entries.append(_OtherEntry(
-                    name         = f"APF Framework Binaries {ver}",
+                    name         = f"APF Framework  {ver}",
                     note         = (release.get("body") or "")[:200],
                     type         = "github_release",
                     owner        = "RectangleEquals",
@@ -105,6 +177,59 @@ class UpdatesService:
                     tag          = full_tag,
                     url          = "",
                     install_type = "framework_binary",
+                ))
+            return entries
+        except Exception:
+            return []
+
+    def get_ue4ss_releases_for_content(self, owner: str = "UE4SS-RE",
+                                        repo: str = "RE-UE4SS") -> list:
+        """
+        Return _OtherEntry objects for UE4SS releases from owner/repo.
+        Returns up to _UE4SS_STABLE_COUNT latest stable releases + latest
+        experimental (pre-release) if one exists.
+
+        Called by ContentTab to populate the Other section. Always returns
+        entries even if no registry is configured (bootstrap path).
+        """
+        try:
+            from ..mods.registry_service import _OtherEntry
+            api = self._make_ue4ss_api(owner, repo)
+            typed_releases = api.releases.fetch_all()
+
+            stable      = [r for r in typed_releases if not r.prerelease and not r.draft]
+            experimental = [r for r in typed_releases if r.prerelease and not r.draft]
+
+            entries = []
+            for r in stable[:_UE4SS_STABLE_COUNT]:
+                asset = next(
+                    (a for a in r.assets if a.name.endswith(".zip")), None
+                )
+                entries.append(_OtherEntry(
+                    name         = r.name or r.tag_name,
+                    note         = "stable",
+                    type         = "github_release",
+                    owner        = owner,
+                    repo         = repo,
+                    tag          = r.tag_name,
+                    url          = asset.browser_download_url if asset else "",
+                    install_type = "ue4ss",
+                ))
+
+            if experimental:
+                r = experimental[0]
+                asset = next(
+                    (a for a in r.assets if a.name.endswith(".zip")), None
+                )
+                entries.append(_OtherEntry(
+                    name         = r.name or r.tag_name,
+                    note         = "experimental",
+                    type         = "github_release",
+                    owner        = owner,
+                    repo         = repo,
+                    tag          = r.tag_name,
+                    url          = asset.browser_download_url if asset else "",
+                    install_type = "ue4ss",
                 ))
             return entries
         except Exception:
@@ -118,32 +243,28 @@ class UpdatesService:
         on_done: Optional[Callable[[bool, str], None]] = None,
     ) -> None:
         """
-        Download an update asset for the given component ("app", "framework", "apworld").
-        Runs in background; calls on_done(success, message) on completion.
+        Download an update asset for the given component.
+        component: "manager" | "framework" | "apworld"
+        Runs in background; calls on_done(success, message) on main thread.
         """
         with self._lock:
-            info = {
-                "app": self._app_update,
-                "framework": self._framework_update,
-                "apworld": self._apworld_update,
-            }.get(component)
+            info_map = {
+                "manager":   self._manager_info,
+                "framework": self._framework_info,
+                "apworld":   self._apworld_info,
+            }
+            info = info_map.get(component)
 
-        if not info:
+        if not info or not info.asset_url:
             if on_done:
                 _ui(lambda: on_done(False, f"No update available for '{component}'."))
             return
 
-        asset_url = info.get("asset_url", "")
-        if not asset_url:
-            if on_done:
-                _ui(lambda: on_done(False, "No asset URL available."))
-            return
-
         def _bg():
             try:
-                api = self._make_api()
+                api = self._make_apf_api()
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                api.download_asset(asset_url, dest, progress_cb=progress_cb)
+                api.download_asset(info.asset_url, dest, progress_cb=progress_cb)
                 _ui(lambda: on_done(True, f"Downloaded to {dest.name}.") if on_done else None)
             except Exception as exc:
                 _ui(lambda: on_done(False, str(exc)) if on_done else None)
@@ -154,96 +275,224 @@ class UpdatesService:
     # Internal checks
     # -----------------------------------------------------------------------
 
-    def _check_app_update(self) -> None:
+    def _check_manager(self) -> None:
         try:
             from ...__version__ import __version__ as current_version
             from ...core.semver import SemVer
-            latest_info = self._get_latest_release("manager")
-            if not latest_info:
-                return
-            latest_ver = latest_info.get("tag_name", "").lstrip("v")
+            api = self._make_apf_api()
+            latest = api.get_latest_release_typed()
+            latest_pre = api.releases.fetch_latest_prerelease()
+
+            # Strip "manager/" prefix from tag if present
+            def _ver(r: Optional[RepoRelease]) -> str:
+                if not r:
+                    return ""
+                return r.tag_name.split("/")[-1].lstrip("v")
+
+            latest_ver = _ver(latest)
             current = SemVer.parse(current_version)
-            latest = SemVer.parse(latest_ver)
-            if current and latest and latest > current:
-                asset = self._find_asset(latest_info, ".exe")
-                with self._lock:
-                    self._app_update = {
-                        "current": current_version,
-                        "latest": latest_ver,
-                        "asset_url": asset.get("browser_download_url", "") if asset else "",
-                        "changelog": latest_info.get("body", ""),
-                    }
+            new_stable = SemVer.parse(latest_ver)
+            is_update = bool(current and new_stable and new_stable > current)
+
+            asset_url = ""
+            if is_update and latest:
+                asset = next((a for a in latest.assets if a.name.endswith(".exe")), None)
+                if asset:
+                    asset_url = asset.browser_download_url
+
+            info = UpdateInfo(
+                component="manager",
+                current=current_version,
+                latest_stable=latest,
+                latest_pre=latest_pre,
+                asset_url=asset_url,
+                is_update_available=is_update,
+                is_pre_available=bool(latest_pre),
+            )
+            with self._lock:
+                self._manager_info = info
         except Exception:
             pass
 
-    def _check_framework_update_bg(self, game_id: str) -> None:
+    def _check_framework_bg(self, game_id: str) -> None:
         try:
             from ...core.semver import SemVer
             detection = self._host.get_detection()
             if not detection or not detection.valid:
                 with self._lock:
-                    self._framework_update = None
+                    self._framework_info = None
                 return
 
-            # Find installed framework version from mod service
-            mods_svc = self._host.get_service("mods")
-            current_version = "0.0.0"
-            if mods_svc:
-                for mod in mods_svc.get_ap_mods():
-                    if mod.mod_id and mod.mod_id.endswith(".framework"):
-                        current_version = mod.version or "0.0.0"
-                        break
-
-            latest_info = self._get_latest_release("framework")
-            if not latest_info:
+            current_version = self._get_installed_framework_version()
+            api = self._make_apf_api()
+            releases = api.list_releases(tag_prefix="framework/")
+            if not releases:
                 return
-            latest_ver = latest_info.get("tag_name", "").lstrip("v")
+            latest_dict = releases[0]
+            latest_ver  = latest_dict.get("tag_name", "").split("/")[-1].lstrip("v")
             current = SemVer.parse(current_version)
-            latest = SemVer.parse(latest_ver)
-            if current and latest and latest > current:
-                asset = self._find_asset(latest_info, ".zip")
-                with self._lock:
-                    self._framework_update = {
-                        "current": current_version,
-                        "latest": latest_ver,
-                        "asset_url": asset.get("browser_download_url", "") if asset else "",
-                        "changelog": latest_info.get("body", ""),
-                    }
+            new_stable = SemVer.parse(latest_ver)
+            is_update = bool(
+                current_version != "unknown"
+                and current and new_stable and new_stable > current
+            )
+
+            asset = self._find_asset_dict(latest_dict, ".zip")
+            asset_url = (asset.get("browser_download_url", "") if asset else "")
+
+            info = UpdateInfo(
+                component="framework",
+                current=current_version,
+                latest_stable=None,   # dict-path for framework; typed not needed here
+                latest_pre=None,
+                asset_url=asset_url,
+                is_update_available=is_update,
+                is_pre_available=False,
+            )
+            with self._lock:
+                self._framework_info = info
         except Exception:
             pass
 
-    def _check_apworld_update(self) -> None:
+    def _check_apworld(self) -> None:
         try:
             from ...core.semver import SemVer
-            # Find installed apworld version from worlds dir
             current_version = self._get_installed_apworld_version()
+            api = self._make_apf_api()
+            latest = api.get_latest_release_typed()
+            latest_pre = api.releases.fetch_latest_prerelease()
 
-            latest_info = self._get_latest_release("apworld")
-            if not latest_info:
-                return
-            latest_ver = latest_info.get("tag_name", "").lstrip("v")
+            def _ver(r: Optional[RepoRelease]) -> str:
+                if not r:
+                    return ""
+                return r.tag_name.split("/")[-1].lstrip("v")
+
+            latest_ver = _ver(latest)
             current = SemVer.parse(current_version)
-            latest = SemVer.parse(latest_ver)
-            if current and latest and latest > current:
-                asset = self._find_asset(latest_info, ".apworld")
-                with self._lock:
-                    self._apworld_update = {
-                        "current": current_version,
-                        "latest": latest_ver,
-                        "asset_url": asset.get("browser_download_url", "") if asset else "",
-                        "changelog": latest_info.get("body", ""),
-                    }
+            new_stable = SemVer.parse(latest_ver)
+            is_update = bool(
+                current_version != "0.0.0"
+                and current and new_stable and new_stable > current
+            )
+
+            asset_url = ""
+            if is_update and latest:
+                asset = next((a for a in latest.assets
+                              if a.name.endswith(".apworld")), None)
+                if asset:
+                    asset_url = asset.browser_download_url
+
+            info = UpdateInfo(
+                component="apworld",
+                current=current_version,
+                latest_stable=latest,
+                latest_pre=latest_pre,
+                asset_url=asset_url,
+                is_update_available=is_update,
+                is_pre_available=bool(latest_pre),
+            )
+            with self._lock:
+                self._apworld_info = info
         except Exception:
             pass
 
-    def _get_latest_release(self, component: str) -> Optional[dict]:
-        """Fetch the latest GitHub release for the given component tag prefix."""
+    def _check_ue4ss(self, owner: str = "UE4SS-RE",
+                     repo: str = "RE-UE4SS") -> None:
+        info = self._run_ue4ss_check(owner, repo)
+        with self._lock:
+            self._ue4ss_info = info
+
+    def _run_ue4ss_check(self, owner: str, repo: str) -> UpdateInfo:
         try:
-            api = self._make_api()
-            releases = api.list_releases(tag_prefix=f"{component}/")
-            return releases[0] if releases else None
+            from ...core.semver import SemVer
+            api = self._make_ue4ss_api(owner, repo)
+            latest = api.get_latest_release_typed()
+            latest_pre = api.releases.fetch_latest_prerelease()
+
+            current_version = self._get_installed_ue4ss_version()
+
+            latest_ver = latest.tag_name.lstrip("v") if latest else ""
+            is_update: bool
+            if current_version == "unknown":
+                is_update = False   # can't compare; show both options
+            else:
+                current = SemVer.parse(current_version)
+                new_stable = SemVer.parse(latest_ver)
+                is_update = bool(current and new_stable and new_stable > current)
+
+            asset_url = ""
+            if latest:
+                asset = next((a for a in latest.assets
+                              if a.name.endswith(".zip")), None)
+                if asset:
+                    asset_url = asset.browser_download_url
+
+            return UpdateInfo(
+                component="ue4ss",
+                current=current_version,
+                latest_stable=latest,
+                latest_pre=latest_pre,
+                asset_url=asset_url,
+                is_update_available=is_update,
+                is_pre_available=bool(latest_pre),
+            )
         except Exception:
-            return None
+            return UpdateInfo(
+                component="ue4ss",
+                current="unknown",
+                latest_stable=None,
+                latest_pre=None,
+            )
+
+    # -----------------------------------------------------------------------
+    # Version detection
+    # -----------------------------------------------------------------------
+
+    def _get_installed_ue4ss_version(self) -> str:
+        """
+        Detect the installed UE4SS version from InstallStateManager cache.
+
+        Only reads from the install state cache — never reads ue4ss_config.ini
+        or Changelog.md (both are unreliable for version detection).
+
+        Returns the version string (e.g. "3.0.1") if a pipeline-managed install
+        is tracked, or "unknown" for orphaned / manually installed UE4SS.
+        """
+        if not self._host.has_service("mods"):
+            return "unknown"
+        mods_svc = self._host.get_service("mods")
+        # Try getting game_id from the current profile
+        game_id = ""
+        if hasattr(mods_svc, "_host"):
+            host = mods_svc._host
+            if hasattr(host, "get_current_profile"):
+                profile = host.get_current_profile()
+                if profile:
+                    game_id = getattr(profile, "game_id", "")
+        if not game_id:
+            return "unknown"
+        try:
+            from ..mods.install_state import InstallStateManager
+            state = InstallStateManager(game_id)
+            for entry in state.get_all():
+                if entry.get("install_type") == "ue4ss":
+                    return entry.get("version", "unknown") or "unknown"
+        except Exception:
+            pass
+        return "unknown"
+
+    def _get_installed_framework_version(self) -> str:
+        """Detect installed framework binary version from mod service."""
+        if not self._host.has_service("mods"):
+            return "unknown"
+        mods_svc = self._host.get_service("mods")
+        try:
+            for mod in mods_svc.get_ap_mods():
+                if mod.mod_id and mod.mod_id.endswith(".framework"):
+                    return mod.version or "unknown"
+        except Exception:
+            pass
+        return "unknown"
 
     def _get_installed_apworld_version(self) -> str:
         """Scan worlds dir for installed apworld and return its version string."""
@@ -251,28 +500,44 @@ class UpdatesService:
             return "0.0.0"
         for f in _WORLDS_DIR.iterdir():
             if f.suffix == ".apworld":
-                # Try to parse version from filename e.g. apf-1.2.3.apworld
                 parts = f.stem.rsplit("-", 1)
                 if len(parts) == 2:
                     return parts[1]
         return "0.0.0"
 
-    @staticmethod
-    def _find_asset(release_info: dict, suffix: str) -> Optional[dict]:
-        for asset in release_info.get("assets", []):
-            if asset.get("name", "").endswith(suffix):
-                return asset
-        return None
+    # -----------------------------------------------------------------------
+    # API factory helpers
+    # -----------------------------------------------------------------------
 
-    def _make_api(self):
+    def _make_apf_api(self):
         from ...core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
-        # Use the APF repo as the default owner/repo for release checks
         return GitHubAPI(
             repo_owner="RectangleEquals",
             repo_name="APF-UE4SS",
             token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
             on_status=lambda level, msg: None,
         )
+
+    def _make_ue4ss_api(self, owner: str = "UE4SS-RE",
+                        repo: str = "RE-UE4SS"):
+        from ...core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+        return GitHubAPI(
+            repo_owner=owner,
+            repo_name=repo,
+            token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
+            on_status=lambda level, msg: None,
+        )
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _find_asset_dict(release_dict: dict, suffix: str) -> Optional[dict]:
+        for asset in release_dict.get("assets", []):
+            if asset.get("name", "").endswith(suffix):
+                return asset
+        return None
 
 
 def _ui(fn: Callable) -> None:

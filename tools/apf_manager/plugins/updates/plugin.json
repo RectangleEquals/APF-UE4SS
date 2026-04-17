@@ -2,11 +2,9 @@
   "id": "apf.builtin.updates",
   "name": "Updates",
   "version": "1.0.0",
-  "description": "Checks for and notifies about available updates to the app, framework binaries, and APWorld.",
+  "description": "Checks for and notifies about available updates to the app, framework binaries, UE4SS, and APWorld.",
   "mode": "both",
   "requires": [],
   "suggests": [],
-  "contributions": [
-    {"type": "hub_action", "icon": "update", "priority": 5}
-  ]
+  "contributions": []
 }

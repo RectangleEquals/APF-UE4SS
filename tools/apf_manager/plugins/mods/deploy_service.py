@@ -188,7 +188,7 @@ class DeployService:
         gid = game_id or (self._profile.game_id if self._profile else "")
         if gid and metadata:
             from .install_state import InstallStateManager
-            InstallStateManager(gid).add(folder_name, {
+            InstallStateManager(gid).add({
                 "mod_id":                metadata.get("mod_id", ""),
                 "folder_name":           folder_name,
                 "source_repo":           metadata.get("source_repo", ""),

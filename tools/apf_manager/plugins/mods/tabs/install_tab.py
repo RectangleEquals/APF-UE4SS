@@ -188,6 +188,13 @@ class InstalledTab(MDBoxLayout):
         ue4ss_ok = bool(self._detection and getattr(self._detection, "valid", False))
         platform_dir = getattr(self._detection, "platform_dir", None) if self._detection else None
 
+        updates_svc = (
+            self._host.get_service("updates")
+            if self._host.has_service("updates") else None
+        )
+        ue4ss_update_info = updates_svc.get_update_info("ue4ss") if updates_svc else None
+        fw_update_info    = updates_svc.get_update_info("framework") if updates_svc else None
+
         section = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
             md_bg_color=(0.10, 0.13, 0.17, 1),
@@ -204,12 +211,21 @@ class InstalledTab(MDBoxLayout):
         ue4ss_version = ""
         if ue4ss_ok and self._detection:
             ue4ss_version = getattr(self._detection, "ue4ss_version", "") or ""
+        if not ue4ss_version and ue4ss_update_info:
+            ue4ss_version = ue4ss_update_info.current if ue4ss_update_info.current != "unknown" else ""
+        ue4ss_detail = (
+            f"v{ue4ss_version} installed" if (ue4ss_ok and ue4ss_version) else
+            ("Detected (version unknown — manually installed)" if ue4ss_ok else
+             "Not installed — get it from the Content tab")
+        )
         section.add_widget(self._status_row(
             icon="check-circle-outline" if ue4ss_ok else "close-circle-outline",
             icon_color=_COL_STATUS_OK if ue4ss_ok else _COL_STATUS_MISS,
             label="UE4SS",
-            detail=f"v{ue4ss_version} installed" if (ue4ss_ok and ue4ss_version) else
-                   ("Detected" if ue4ss_ok else "Not installed — get it from the Content tab"),
+            detail=ue4ss_detail,
+            update_tag=(ue4ss_update_info.latest_stable.tag_name
+                        if (ue4ss_update_info and ue4ss_update_info.is_update_available
+                            and ue4ss_update_info.latest_stable) else ""),
         ))
 
         # Framework binaries row
@@ -221,13 +237,20 @@ class InstalledTab(MDBoxLayout):
         section.add_widget(self._status_row(
             icon="check-circle-outline" if fw_bins_ok else "close-circle-outline",
             icon_color=_COL_STATUS_OK if fw_bins_ok else _COL_STATUS_MISS,
-            label="APF Framework Binaries",
+            label="Framework",
             detail="Installed" if fw_bins_ok else "Not installed — get it from the Content tab",
+            update_tag=(fw_update_info.latest_stable.tag_name
+                        if (fw_update_info and fw_update_info.is_update_available
+                            and fw_update_info.latest_stable) else ""),
         ))
 
         return section
 
-    def _status_row(self, icon: str, icon_color, label: str, detail: str) -> MDBoxLayout:
+    def _status_row(self, icon: str, icon_color, label: str, detail: str,
+                    update_tag: str = "") -> MDBoxLayout:
+        outer = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+        )
         row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(28), spacing=dp(8),
         )
@@ -245,7 +268,23 @@ class InstalledTab(MDBoxLayout):
             size_hint=(1, 1), halign="left", valign="middle",
             theme_text_color="Custom", text_color=_COL_DIM,
         ))
-        return row
+        outer.add_widget(row)
+        if update_tag:
+            update_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(20),
+                spacing=dp(4), padding=[dp(28), 0, 0, 0],
+            )
+            update_row.add_widget(MDIcon(
+                icon="arrow-up-circle", size_hint=(None, 1), width=dp(16),
+                theme_icon_color="Custom", icon_color=(0.25, 0.55, 1.0, 1),
+            ))
+            update_row.add_widget(MDLabel(
+                text=f"Update available: {update_tag}",
+                font_style="Label", role="small", size_hint=(1, 1),
+                theme_text_color="Custom", text_color=(0.25, 0.55, 1.0, 1),
+            ))
+            outer.add_widget(update_row)
+        return outer
 
     def _section_header(self, title: str, count: int = 0) -> MDBoxLayout:
         header = MDBoxLayout(

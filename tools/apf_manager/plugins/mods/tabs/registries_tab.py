@@ -217,16 +217,60 @@ class RegistriesTab(MDBoxLayout):
         self._refresh_registries()
 
     def _refresh_ue4ss_card(self, ue4ss_detected: bool) -> None:
-        if ue4ss_detected:
-            self._ue4ss_status_icon.icon = "check-circle"
-            self._ue4ss_status_icon.text_color = (0.3, 0.8, 0.4, 1)
-            self._ue4ss_status_lbl.text = "UE4SS detected"
-            self._ue4ss_status_lbl.text_color = (0.3, 0.8, 0.4, 1)
-        else:
+        if not ue4ss_detected:
             self._ue4ss_status_icon.icon = "alert"
             self._ue4ss_status_icon.text_color = (0.9, 0.6, 0.1, 1)
             self._ue4ss_status_lbl.text = "UE4SS not detected"
             self._ue4ss_status_lbl.text_color = (0.9, 0.6, 0.1, 1)
+            # Remove any previously added update row
+            self._remove_ue4ss_update_row()
+            return
+
+        updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
+        ue4ss_info = updates_svc.get_update_info("ue4ss") if updates_svc else None
+
+        current_ver = getattr(ue4ss_info, "current", "unknown") if ue4ss_info else "unknown"
+        if current_ver == "unknown":
+            status_text = "UE4SS detected (version unknown)"
+        else:
+            status_text = f"UE4SS detected  v{current_ver}"
+
+        self._ue4ss_status_icon.icon = "check-circle"
+        self._ue4ss_status_icon.text_color = (0.3, 0.8, 0.4, 1)
+        self._ue4ss_status_lbl.text = status_text
+        self._ue4ss_status_lbl.text_color = (0.3, 0.8, 0.4, 1)
+
+        # Add/refresh update notice if an update is available
+        self._remove_ue4ss_update_row()
+        if ue4ss_info and ue4ss_info.is_update_available and ue4ss_info.latest_stable:
+            update_row = MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None,
+                height=dp(24),
+                spacing=dp(6),
+            )
+            latest_tag = ue4ss_info.latest_stable.tag_name
+            update_row.add_widget(MDIcon(
+                icon="arrow-up-circle",
+                size_hint=(None, 1), width=dp(20),
+                theme_text_color="Custom", text_color=(0.25, 0.55, 1.0, 1),
+            ))
+            update_row.add_widget(MDLabel(
+                text=f"Update available: v{latest_tag}",
+                font_style="Label", role="small", size_hint=(1, 1),
+                theme_text_color="Custom", text_color=(0.25, 0.55, 1.0, 1),
+            ))
+            update_row._is_ue4ss_update_row = True
+            if self._ue4ss_card:
+                self._ue4ss_card.add_widget(update_row)
+
+    def _remove_ue4ss_update_row(self) -> None:
+        if not self._ue4ss_card:
+            return
+        to_remove = [w for w in self._ue4ss_card.children
+                     if getattr(w, "_is_ue4ss_update_row", False)]
+        for w in to_remove:
+            self._ue4ss_card.remove_widget(w)
 
     def _refresh_registries(self) -> None:
         self._registries_list.clear_widgets()

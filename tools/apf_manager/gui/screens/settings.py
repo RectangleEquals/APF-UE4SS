@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from kivy.clock import Clock
 from kivy.metrics import dp
@@ -28,6 +28,7 @@ from kivymd.uix.selectioncontrol import MDSwitch
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost, PluginInfo
     from ...core.config import APFConfig
+    from ...plugins.updates.updates_service import UpdatesService
 
 
 class SettingsScreen(MDScreen):
@@ -38,6 +39,7 @@ class SettingsScreen(MDScreen):
         self._restart_needed = False
         self._original_mode = config.mode
         self._original_disabled = set(config.disabled_plugins)
+        self._updates_section = None   # built lazily in on_pre_enter
         self._build()
 
     # -----------------------------------------------------------------------
@@ -375,6 +377,206 @@ class SettingsScreen(MDScreen):
         if app and hasattr(app, "navigate_back"):
             app.navigate_back()
 
+    def on_pre_enter(self, *args) -> None:
+        super().on_pre_enter(*args)
+        self._refresh_updates_section()
+
     def refresh(self) -> None:
         """Called when screen is shown — refresh plugin list."""
         self._refresh_plugin_list()
+
+    # -----------------------------------------------------------------------
+    # Updates section
+    # -----------------------------------------------------------------------
+
+    def _refresh_updates_section(self) -> None:
+        """Build/rebuild the Updates section at the top of the scroll content."""
+        if self._updates_section is not None:
+            self._scroll_content.remove_widget(self._updates_section)
+            self._updates_section = None
+        if not self._host.has_service("updates"):
+            return
+        updates_svc: "UpdatesService" = self._host.get_service("updates")
+        section = self._build_updates_section(updates_svc)
+        if section is not None:
+            self._updates_section = section
+            # index=len(children) inserts at the visual top of the BoxLayout
+            self._scroll_content.add_widget(section, index=len(self._scroll_content.children))
+
+    def _build_updates_section(self, updates_svc: "UpdatesService") -> Optional[MDBoxLayout]:
+        """Return an Updates section widget if any updates are available, else None."""
+        mgr = updates_svc.get_update_info("manager")
+        apw = updates_svc.get_update_info("apworld")
+
+        rows: list[tuple[str, str, str, str, str]] = []
+        if mgr and mgr.is_update_available and mgr.latest_stable:
+            rows.append(("APF Manager", mgr.current,
+                         mgr.latest_stable.tag_name, "manager", mgr.asset_url))
+        if apw and apw.is_update_available and apw.latest_stable:
+            rows.append(("APWorld", apw.current,
+                         apw.latest_stable.tag_name, "apworld", apw.asset_url))
+
+        pre_rows: list[tuple[str, str, str, str, str]] = []
+        if mgr and mgr.is_pre_available and mgr.latest_pre:
+            if not (mgr.is_update_available and mgr.latest_stable
+                    and mgr.latest_pre.tag_name == mgr.latest_stable.tag_name):
+                pre_rows.append(("APF Manager (pre-release)", mgr.current,
+                                 mgr.latest_pre.tag_name, "manager_pre", mgr.asset_url))
+        if apw and apw.is_pre_available and apw.latest_pre:
+            if not (apw.is_update_available and apw.latest_stable
+                    and apw.latest_pre.tag_name == apw.latest_stable.tag_name):
+                pre_rows.append(("APWorld (pre-release)", apw.current,
+                                 apw.latest_pre.tag_name, "apworld_pre", apw.asset_url))
+
+        if not rows and not pre_rows:
+            return None
+
+        section = MDBoxLayout(
+            orientation="vertical",
+            size_hint_y=None,
+            adaptive_height=True,
+            spacing="4dp",
+            padding=("0dp", "4dp"),
+        )
+        section.add_widget(MDLabel(
+            text="Updates",
+            font_style="Title",
+            role="large",
+            size_hint_y=None,
+            height="28dp",
+        ))
+
+        for name, current, latest_tag, component, asset_url in rows:
+            section.add_widget(self._make_update_row(
+                name, current, latest_tag, component, asset_url, prerelease=False
+            ))
+
+        if pre_rows:
+            section.add_widget(MDDivider())
+            for name, current, latest_tag, component, asset_url in pre_rows:
+                section.add_widget(self._make_update_row(
+                    name, current, latest_tag, component, asset_url, prerelease=True
+                ))
+
+        section.add_widget(MDDivider())
+        return section
+
+    def _make_update_row(
+        self,
+        name: str,
+        current: str,
+        latest_tag: str,
+        component: str,
+        asset_url: str,
+        prerelease: bool,
+    ) -> MDBoxLayout:
+        row = MDBoxLayout(
+            orientation="horizontal",
+            size_hint_y=None,
+            height="44dp",
+            spacing="8dp",
+        )
+
+        ver_text = f"{name}   {current} → {latest_tag}"
+        row.add_widget(MDLabel(
+            text=ver_text,
+            font_style="Body",
+            size_hint_x=1,
+            valign="middle",
+        ))
+
+        action_btn = MDButton(
+            MDButtonText(text="Download"),
+            style="filled",
+            size_hint_x=None,
+            width=dp(108),
+        )
+        action_btn.bind(on_release=lambda _, c=component, u=asset_url, b=action_btn:
+                        self._on_download(c, u, b))
+        row.add_widget(action_btn)
+        return row
+
+    def _on_download(self, component: str, asset_url: str, btn: MDButton) -> None:
+        """Start downloading the update; swap button to Install/View on completion."""
+        if not self._host.has_service("updates"):
+            return
+        updates_svc: "UpdatesService" = self._host.get_service("updates")
+
+        # Find the MDButtonText child — first MDButtonText in children list
+        from kivymd.uix.button import MDButtonText as _MBT
+        btn_text = next((c for c in btn.children if isinstance(c, _MBT)), None)
+        if btn_text:
+            btn_text.text = "…"
+        btn.disabled = True
+
+        # Derive destination file path from the asset URL filename
+        import tempfile
+        url_filename = asset_url.split("/")[-1].split("?")[0] if asset_url else "update"
+        if not url_filename:
+            url_filename = f"{component}_update"
+        dest_dir = Path(tempfile.mkdtemp(prefix="apf_update_"))
+        dest_file = dest_dir / url_filename
+
+        # State container shared between this closure and _done
+        state: dict = {"dest": str(dest_file)}
+
+        def _progress(downloaded: int, total: int) -> None:
+            pass
+
+        def _done(ok: bool, _msg: str) -> None:
+            from kivy.clock import Clock as _Clock
+            _Clock.schedule_once(lambda dt: self._after_download(
+                component, state["dest"], btn, btn_text, ok
+            ), 0)
+
+        updates_svc.download_update(
+            component.replace("_pre", ""),
+            dest_file,
+            progress_cb=_progress,
+            on_done=_done,
+        )
+
+    def _after_download(
+        self,
+        component: str,
+        dest_path: str,
+        btn: MDButton,
+        btn_text,
+        ok: bool,
+    ) -> None:
+        """Swap the button to Install or View depending on component."""
+        btn.disabled = False
+        if not ok:
+            if btn_text:
+                btn_text.text = "Error"
+            return
+
+        base_component = component.replace("_pre", "")
+        # Use a mutable state dict so the closure can be replaced safely
+        action: dict = {}
+
+        if base_component == "manager":
+            if btn_text:
+                btn_text.text = "Install"
+            action["path"] = dest_path
+
+            def _on_release_install(*_):
+                import subprocess
+                p = action.get("path", "")
+                try:
+                    subprocess.Popen([p], shell=False)
+                except Exception:
+                    subprocess.Popen(p, shell=True)
+                sys.exit(0)
+
+            btn.bind(on_release=_on_release_install)
+
+        else:  # apworld
+            if btn_text:
+                btn_text.text = "View"
+            action["folder"] = str(Path(dest_path).parent)
+
+            def _on_release_view(*_):
+                os.startfile(action.get("folder", "."))
+
+            btn.bind(on_release=_on_release_view)

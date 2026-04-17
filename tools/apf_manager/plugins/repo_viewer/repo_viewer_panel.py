@@ -125,6 +125,7 @@ def _build_tree_nodes(
             })
 
         seen_tpaths: set[str] = set()
+        seen_ue4ss_options: set[str] = set()
         for mod in repo_mods:
             if mod.external_source_url:
                 ext_type = _detect_external_type(mod.external_source_url)
@@ -162,6 +163,45 @@ def _build_tree_nodes(
                     "selectable": True,
                     "checked": not is_conflict,
                 })
+            elif mod.folder and mod.manifest:
+                # BUG-7: Non-AP mod (has manifest.json but no mod_id) — still selectable
+                folder_name = mod.folder.split("/")[-1] if "/" in mod.folder else mod.folder
+                children.append({
+                    "type": "non_ap_mod",
+                    "id": f"non_ap:{mod.owner}/{mod.repo}:{mod.folder}",
+                    "label": mod.manifest.get("name") or folder_name,
+                    "mod_id": "",
+                    "owner": mod.owner,
+                    "repo": mod.repo,
+                    "folder": mod.folder,
+                    "description": mod.manifest.get("description", ""),
+                    "readme_url": mod.readme_url,
+                    "is_framework": False,
+                    "selectable": True,
+                    "checked": True,
+                })
+            # BUG-8: Surface UE4SS options from ue4ss.json in the repo viewer
+            if mod.ue4ss_info:
+                for opt in (mod.ue4ss_info.get("options") or []):
+                    opt_key = f"{opt.get('repo', '')}:{opt.get('tag', '')}"
+                    if opt_key in seen_ue4ss_options:
+                        continue
+                    seen_ue4ss_options.add(opt_key)
+                    opt_type = opt.get("type", "manual")
+                    opt_label = opt.get("note") or f"UE4SS {opt.get('tag', 'latest')}"
+                    children.append({
+                        "type": "ue4ss_option",
+                        "id": f"ue4ss:{opt_key}",
+                        "label": opt_label,
+                        "option_type": opt_type,
+                        "owner": opt.get("owner", ""),
+                        "repo": opt.get("repo", ""),
+                        "tag": opt.get("tag", ""),
+                        "url": opt.get("url", ""),
+                        "selectable": opt_type in ("github_release", "external_url"),
+                        "checked": opt_type == "github_release",
+                        "install_type": "ue4ss",
+                    })
             # Deduplicated template nodes per repo
             if mod.templates_paths:
                 for tpath in mod.templates_paths:
