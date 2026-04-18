@@ -87,6 +87,8 @@ class SettingsScreen(MDScreen):
         content.add_widget(self._build_plugin_section())
         content.add_widget(MDDivider())
         content.add_widget(self._build_steam_section())
+        content.add_widget(MDDivider())
+        content.add_widget(self._build_cache_section())
 
         self._scroll_content = content
         scroll.add_widget(content)
@@ -208,6 +210,41 @@ class SettingsScreen(MDScreen):
         row.add_widget(self._steam_path_field)
         row.add_widget(save_btn)
         section.add_widget(row)
+        return section
+
+    def _build_cache_section(self) -> MDBoxLayout:
+        section = MDBoxLayout(
+            orientation="vertical",
+            size_hint_y=None,
+            adaptive_height=True,
+            spacing="8dp",
+            padding=("0dp", "4dp"),
+        )
+        section.add_widget(MDLabel(
+            text="Cache",
+            font_style="Title",
+            role="large",
+            size_hint_y=None,
+            height="28dp",
+        ))
+
+        clear_btn = MDButton(
+            MDButtonText(text="Clear Download Cache"),
+            style="outlined",
+            size_hint_y=None,
+            height="40dp",
+            on_release=self._confirm_clear_cache,
+        )
+        section.add_widget(clear_btn)
+
+        reset_btn = MDButton(
+            MDButtonText(text="Reset App Data"),
+            style="outlined",
+            size_hint_y=None,
+            height="40dp",
+            on_release=self._confirm_reset_app_data,
+        )
+        section.add_widget(reset_btn)
         return section
 
     # -----------------------------------------------------------------------
@@ -370,6 +407,133 @@ class SettingsScreen(MDScreen):
         )
         dlg_ref[0] = dlg
         dlg.open()
+
+    def _confirm_clear_cache(self, *_) -> None:
+        from kivymd.uix.dialog import (
+            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+            MDDialogButtonContainer,
+        )
+        dlg_ref = [None]
+
+        def _close(*_):
+            if dlg_ref[0]:
+                dlg_ref[0].dismiss()
+
+        def _do_clear(*_):
+            _close()
+            self._run_clear_cache()
+
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Clear Download Cache?"),
+            MDDialogSupportingText(
+                text=(
+                    "This will delete all cached downloads (staged mods, UE4SS releases, "
+                    "framework binaries). Items currently installed on disk are NOT affected. "
+                    "You will need to re-download content before installing."
+                ),
+            ),
+            MDDialogButtonContainer(
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_close),
+                MDButton(MDButtonText(text="Clear Cache"), style="filled", on_release=_do_clear),
+            ),
+        )
+        dlg_ref[0] = dlg
+        dlg.open()
+
+    def _run_clear_cache(self) -> None:
+        import shutil
+        cache_dir = Path.home() / ".apf_manager" / "cache"
+        try:
+            if cache_dir.is_dir():
+                for child in cache_dir.iterdir():
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+            self._show_snackbar("Download cache cleared.")
+        except Exception as exc:
+            self._show_snackbar(f"Error clearing cache: {exc}")
+
+    def _confirm_reset_app_data(self, *_) -> None:
+        from kivymd.uix.dialog import (
+            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+            MDDialogButtonContainer,
+        )
+        dlg_ref = [None]
+
+        def _close(*_):
+            if dlg_ref[0]:
+                dlg_ref[0].dismiss()
+
+        def _show_second_confirm(*_):
+            _close()
+            self._confirm_reset_app_data_final()
+
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Reset All App Data?"),
+            MDDialogSupportingText(
+                text=(
+                    "WARNING: This will delete ALL app data including:\n"
+                    "  • All download caches\n"
+                    "  • All install state records (orphan detection will break)\n"
+                    "  • All cached registry/API responses\n"
+                    "  • App configuration and game paths\n\n"
+                    "Installed mods on disk are NOT affected. This cannot be undone."
+                ),
+            ),
+            MDDialogButtonContainer(
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_close),
+                MDButton(MDButtonText(text="Continue…"), style="outlined", on_release=_show_second_confirm),
+            ),
+        )
+        dlg_ref[0] = dlg
+        dlg.open()
+
+    def _confirm_reset_app_data_final(self) -> None:
+        from kivymd.uix.dialog import (
+            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+            MDDialogButtonContainer,
+        )
+        dlg_ref = [None]
+
+        def _close(*_):
+            if dlg_ref[0]:
+                dlg_ref[0].dismiss()
+
+        def _do_reset(*_):
+            _close()
+            self._run_reset_app_data()
+
+        dlg = MDDialog(
+            MDDialogHeadlineText(text="Delete Everything?"),
+            MDDialogSupportingText(
+                text="This will permanently delete all APF Manager app data. This cannot be undone.",
+            ),
+            MDDialogButtonContainer(
+                MDButton(MDButtonText(text="Cancel"), style="text", on_release=_close),
+                MDButton(
+                    MDButtonText(text="Delete Everything", theme_text_color="Custom",
+                                 text_color=(1, 0.3, 0.3, 1)),
+                    style="outlined",
+                    on_release=_do_reset,
+                ),
+            ),
+        )
+        dlg_ref[0] = dlg
+        dlg.open()
+
+    def _run_reset_app_data(self) -> None:
+        import shutil
+        app_data_dir = Path.home() / ".apf_manager"
+        try:
+            if app_data_dir.is_dir():
+                shutil.rmtree(app_data_dir, ignore_errors=True)
+            app_data_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            self._show_snackbar(f"Error resetting app data: {exc}")
+            return
+        # Restart the app so all services re-initialize cleanly
+        self._restart_app()
 
     def _go_back(self, *_) -> None:
         from kivymd.app import MDApp

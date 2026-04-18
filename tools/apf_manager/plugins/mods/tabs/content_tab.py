@@ -187,8 +187,27 @@ class ContentTab(MDBoxLayout):
                 )
                 if not has_framework:
                     self._list.add_widget(self._framework_banner())
-                for i, mod in enumerate(mods):
-                    self._list.add_widget(self._mod_row(mod, i))
+
+                # Group mods by source_package_id where multiple mods share the same package
+                from collections import defaultdict as _dd
+                pkg_groups: dict = _dd(list)
+                for mod in mods:
+                    pkg_id = getattr(mod, "source_package_id", "") or f"{mod.owner}/{mod.repo}"
+                    pkg_groups[pkg_id].append(mod)
+
+                row_idx = 0
+                for pkg_id, pkg_mods in pkg_groups.items():
+                    if len(pkg_mods) > 1:
+                        # Multi-mod package — show collapsible group header
+                        pkg_collapsed = f"pkg:{pkg_id}" in self._collapsed
+                        self._list.add_widget(self._package_header(pkg_id, pkg_mods, pkg_collapsed))
+                        if not pkg_collapsed:
+                            for mod in pkg_mods:
+                                self._list.add_widget(self._mod_row(mod, row_idx, indent=True))
+                                row_idx += 1
+                    else:
+                        self._list.add_widget(self._mod_row(pkg_mods[0], row_idx))
+                        row_idx += 1
         elif not templates:
             self._list.add_widget(self._empty_label(
                 "No content available.\nAdd a registry in the Registries tab."
@@ -473,7 +492,70 @@ class ContentTab(MDBoxLayout):
             ))
         return panel
 
-    def _mod_row(self, mod, index: int) -> MDBoxLayout:
+    def _package_header(self, pkg_id: str, pkg_mods: list, collapsed: bool) -> MDBoxLayout:
+        """Collapsible header row for a multi-mod package group."""
+        key = f"pkg:{pkg_id}"
+        bg = (0.10, 0.13, 0.17, 1)
+        container = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=bg,
+        )
+        header = MDBoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(44),
+            padding=[dp(8), dp(4)], spacing=dp(8),
+        )
+        # Aggregate checkbox: check all/none in group
+        all_checked = all(f"mod:{getattr(m,'folder',m.mod_id)}" in self._checked for m in pkg_mods)
+        cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
+                        pos_hint={"center_y": 0.5})
+        cb.active = all_checked
+        def _on_pkg_check(inst, val, mods=pkg_mods):
+            for m in mods:
+                k = f"mod:{getattr(m,'folder',m.mod_id)}"
+                if val:
+                    self._checked.add(k)
+                else:
+                    self._checked.discard(k)
+        cb.bind(active=_on_pkg_check)
+        header.add_widget(cb)
+        header.add_widget(MDIcon(
+            icon="package-variant-closed", size_hint=(None, 1), width=dp(22),
+            theme_icon_color="Custom", icon_color=(0.5, 0.6, 0.9, 1),
+        ))
+        pkg_label = pkg_id.split("/")[-1] if "/" in pkg_id else pkg_id
+        info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
+        info.add_widget(MDLabel(
+            text=pkg_label, font_style="Body",
+            size_hint_y=None, height=dp(24),
+        ))
+        info.add_widget(MDLabel(
+            text=f"{len(pkg_mods)} components  ·  {pkg_id}",
+            font_style="Label", role="small",
+            size_hint_y=None, height=dp(18),
+            theme_text_color="Custom", text_color=_COL_DIM,
+        ))
+        info.bind(on_touch_down=lambda w, t: self._toggle_pkg_collapse(key)
+                  if w.collide_point(*t.pos) else None)
+        header.add_widget(info)
+        chevron_icon = "chevron-up" if not collapsed else "chevron-down"
+        header.add_widget(MDIconButton(
+            icon=chevron_icon,
+            size_hint=(None, None), size=(dp(32), dp(32)),
+            pos_hint={"center_y": 0.5},
+            on_release=lambda *_, k=key: self._toggle_pkg_collapse(k),
+        ))
+        container.add_widget(header)
+        return container
+
+    def _toggle_pkg_collapse(self, key: str) -> None:
+        if key in self._collapsed:
+            self._collapsed.discard(key)
+        else:
+            self._collapsed.add(key)
+        from kivy.clock import Clock
+        Clock.schedule_once(lambda dt: self._do_refresh(), 0)
+
+    def _mod_row(self, mod, index: int, indent: bool = False) -> MDBoxLayout:
         folder = getattr(mod, "folder", getattr(mod, "mod_id", str(index)))
         key = f"mod:{folder}"
         components = getattr(mod, "components", ["lua"])
@@ -485,9 +567,10 @@ class ContentTab(MDBoxLayout):
             md_bg_color=bg,
         )
 
+        left_pad = dp(24) if indent else dp(8)
         header = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(52),
-            padding=[dp(8), dp(4)], spacing=dp(8),
+            padding=[left_pad, dp(4), dp(8), dp(4)], spacing=dp(8),
         )
 
         # Checkbox
@@ -641,6 +724,15 @@ class ContentTab(MDBoxLayout):
                 ))
                 panel.add_widget(inc_row)
 
+        # Submodule content tag
+        if getattr(mod, "is_submodule_content", False):
+            panel.add_widget(MDLabel(
+                text=f"from submodule: {owner}/{repo}",
+                font_style="Label", role="small",
+                size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=(0.6, 0.7, 0.9, 1),
+            ))
+
         # Registry
         if owner and repo:
             reg_row = MDBoxLayout(
@@ -672,10 +764,16 @@ class ContentTab(MDBoxLayout):
         repo_    = getattr(item, "repo", "")
         key      = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(index))}"
         bg       = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
+        expanded = key in self._expanded
 
-        row = MDBoxLayout(
+        container = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=bg,
+        )
+
+        header = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(52),
-            md_bg_color=bg, padding=[dp(8), dp(4)], spacing=dp(8),
+            padding=[dp(8), dp(4)], spacing=dp(8),
         )
 
         if opt_type == "github_release":
@@ -683,21 +781,19 @@ class ContentTab(MDBoxLayout):
                             pos_hint={"center_y": 0.5})
             cb.active = key in self._checked
             cb.bind(active=lambda inst, val, k=key: self._on_check(k, val))
-            row.add_widget(cb)
+            header.add_widget(cb)
         else:
-            # Spacer so text aligns with checkbox rows
-            row.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
+            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
 
-        row.add_widget(MDIcon(
+        header.add_widget(MDIcon(
             icon="package-variant", size_hint=(None, 1), width=dp(22),
             theme_icon_color="Custom", icon_color=(0.8, 0.55, 0.1, 1),
         ))
 
         info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
         name_lbl = getattr(item, "name", "Unknown")
-        ver_lbl  = f"  {tag}" if tag else ""
         info.add_widget(MDLabel(
-            text=f"{name_lbl}{ver_lbl}", font_style="Body",
+            text=name_lbl, font_style="Body",
             size_hint_y=None, height=dp(24),
         ))
         note = getattr(item, "note", "")
@@ -707,21 +803,117 @@ class ContentTab(MDBoxLayout):
                 size_hint_y=None, height=dp(18),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
-        row.add_widget(info)
+        info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
+                  if w.collide_point(*t.pos) else None)
+        header.add_widget(info)
 
         if opt_type == "external_url":
             import webbrowser
             url = getattr(item, "url", "")
-            row.add_widget(MDButton(
+            header.add_widget(MDButton(
                 MDButtonText(text="Open"),
                 style="outlined", size_hint=(None, None), size=(dp(72), dp(32)),
                 pos_hint={"center_y": 0.5},
                 on_release=lambda *_, u=url: webbrowser.open(u) if u else None,
             ))
-        elif opt_type == "manual":
-            row.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(8)))
+        elif opt_type in ("github_release", "manual"):
+            chevron_icon = "chevron-up" if expanded else "chevron-down"
+            header.add_widget(MDIconButton(
+                icon=chevron_icon,
+                size_hint=(None, None), size=(dp(32), dp(32)),
+                pos_hint={"center_y": 0.5},
+                on_release=lambda *_, k=key: self._toggle_expand(k),
+            ))
 
-        return row
+        container.add_widget(header)
+
+        if expanded:
+            container.add_widget(self._other_detail(item))
+        return container
+
+    def _other_detail(self, item) -> MDBoxLayout:
+        """Expanded detail panel for an Other-category item."""
+        panel = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=(0.09, 0.10, 0.12, 1),
+            padding=[dp(16), dp(6), dp(8), dp(8)], spacing=dp(4),
+        )
+
+        install_type = getattr(item, "install_type", "ue4ss")
+        opt_type     = getattr(item, "type", "manual")
+        owner        = getattr(item, "owner", "")
+        repo_        = getattr(item, "repo", "")
+        tag          = getattr(item, "tag", "")
+        published_at = getattr(item, "published_at", "")
+        asset_name   = getattr(item, "asset_name", "")
+        changelog    = getattr(item, "changelog", "")
+
+        if install_type == "framework_binary":
+            type_label = "Framework Binaries"
+        elif opt_type == "manual":
+            type_label = "Manual Installation"
+        else:
+            type_label = "UE4SS stable" if "stable" in getattr(item, "note", "") else "UE4SS experimental"
+
+        def _detail_row(key_text: str, val_text: str) -> MDBoxLayout:
+            r = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8))
+            r.add_widget(MDLabel(
+                text=key_text, font_style="Label", role="small",
+                size_hint=(None, 1), width=dp(96),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+            r.add_widget(MDLabel(
+                text=val_text, font_style="Label", role="small",
+                size_hint=(1, 1),
+            ))
+            return r
+
+        panel.add_widget(_detail_row("Type", type_label))
+        if owner and repo_:
+            panel.add_widget(_detail_row("Source", f"{owner}/{repo_}"))
+        if tag:
+            panel.add_widget(_detail_row("Tag", tag))
+        if published_at:
+            panel.add_widget(_detail_row("Published", published_at[:10]))
+        if asset_name:
+            panel.add_widget(_detail_row("Asset", asset_name))
+
+        if opt_type == "manual":
+            panel.add_widget(MDLabel(
+                text="This option requires manual installation. Refer to the UE4SS documentation for this game.",
+                font_style="Label", role="small",
+                size_hint_y=None, height=dp(36),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+
+        if changelog:
+            def _show_changelog(*_):
+                from kivymd.uix.dialog import (
+                    MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+                    MDDialogButtonContainer,
+                )
+                dlg_ref = [None]
+                def _close(*_):
+                    if dlg_ref[0]:
+                        dlg_ref[0].dismiss()
+                dlg = MDDialog(
+                    MDDialogHeadlineText(text="Release Notes"),
+                    MDDialogSupportingText(text=changelog),
+                    MDDialogButtonContainer(
+                        MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
+                    ),
+                )
+                dlg_ref[0] = dlg
+                dlg.open()
+
+            panel.add_widget(MDButton(
+                MDButtonText(text="Release Notes"),
+                style="text",
+                size_hint_y=None, height=dp(36),
+                on_release=_show_changelog,
+            ))
+
+        return panel
 
     @staticmethod
     def _empty_label(text: str) -> MDLabel:

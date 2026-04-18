@@ -49,12 +49,16 @@ html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3
 .tree-row .node-icon { font-size: 13px; width: 18px; text-align: center; flex-shrink: 0; }
 .tree-row .node-label { font-size: 12px; white-space: nowrap; flex-shrink: 0; padding-right: 4px; }
 .tree-row .node-badge { font-size: 10px; padding: 1px 5px; border-radius: 10px; font-weight: 600; flex-shrink: 0; }
-.badge-fw  { background: #1f6feb33; color: #58a6ff; }
-.badge-tpl { background: #2ea04333; color: #3fb950; }
-.badge-ext { background: #d2930333; color: #f0883e; }
-.badge-sub { background: #30363d; color: #8b949e; }
-.badge-dup { background: #da363333; color: #f85149; }
-.badge-ng  { background: #6e767d33; color: #6e767d; }
+.badge-fw   { background: #1f6feb33; color: #58a6ff; }
+.badge-tpl  { background: #2ea04333; color: #3fb950; }
+.badge-ext  { background: #d2930333; color: #f0883e; }
+.badge-sub  { background: #30363d;   color: #8b949e; }
+.badge-dup  { background: #da363333; color: #f85149; }
+.badge-ng   { background: #6e40c933; color: #d2a8ff; }
+.badge-lua  { background: #2ea04333; color: #3fb950; }
+.badge-cpp  { background: #1f6feb33; color: #58a6ff; }
+.badge-bp   { background: #d2930333; color: #f0883e; }
+.badge-ue4ss{ background: #8b5cf633; color: #a78bfa; }
 .tree-children { display: block; }
 .tree-node.collapsed > .tree-children { display: none; }
 .expand-btn { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 10px; width: 16px; flex-shrink: 0; text-align: center; padding: 0; }
@@ -277,32 +281,74 @@ function buildNodeEl(node, depth) {
 
 function nodeIcon(node) {
   const t = node.type;
-  if (t === "repo") return node.is_submodule ? "📦" : "📦";
-  if (t === "mod")  return node.is_framework ? "⚙️" : "🧩";
-  if (t === "template") return "📋";
-  if (t === "docs") return "📄";
-  if (t === "dir")  return "📁";
-  if (t === "external") return "🔗";
+  if (t === "repo") return "📦";
+  if (t === "mod") {
+    const isFramework = /^archipelago\.[^.]+\.framework$/.test(node.mod_id || "");
+    if (isFramework) return "⚡";
+    const comps = node.components || [];
+    if (comps.includes("cpp"))       return "⚙️";
+    if (comps.includes("lua"))       return "🔧";
+    if (comps.includes("blueprint")) return "🧩";
+    return "🔧";
+  }
+  if (t === "non_ap_mod") {
+    const comps = node.components || [];
+    if (comps.includes("cpp"))       return "⚙️";
+    if (comps.includes("lua"))       return "🔧";
+    if (comps.includes("blueprint")) return "🧩";
+    return "🔧";
+  }
+  if (t === "lua_dir")      return "🔧";
+  if (t === "cpp_dir")      return "⚙️";
+  if (t === "bp_dir")       return "🧩";
+  if (t === "ue4ss_option") return "🧰";
+  if (t === "submodule")    return "🔗";
+  if (t === "template")     return "📋";
+  if (t === "docs")         return "📄";
+  if (t === "dir")          return "📁";
+  if (t === "external")     return "🔗";
   return "•";
 }
 
 function appendBadges(row, node) {
-  if (node.type === "mod" && node.is_framework) {
-    addBadge(row, "FW", "badge-fw");
+  const t = node.type;
+  if (t === "mod") {
+    const isFramework = /^archipelago\.[^.]+\.framework$/.test(node.mod_id || "");
+    if (isFramework) addBadge(row, "FW", "badge-fw");
+    const comps = node.components || [];
+    if (comps.includes("cpp"))       addBadge(row, "C++", "badge-cpp");
+    if (comps.includes("lua"))       addBadge(row, "LUA", "badge-lua");
+    if (comps.includes("blueprint")) addBadge(row, "BP",  "badge-bp");
   }
-  if (node.type === "template") {
+  if (t === "non_ap_mod") {
+    addBadge(row, "UE4SS", "badge-ue4ss");
+    const comps = node.components || [];
+    if (comps.includes("cpp"))       addBadge(row, "C++", "badge-cpp");
+    if (comps.includes("lua"))       addBadge(row, "LUA", "badge-lua");
+    if (comps.includes("blueprint")) addBadge(row, "BP",  "badge-bp");
+  }
+  if (t === "lua_dir")   addBadge(row, "LUA",   "badge-lua");
+  if (t === "cpp_dir")   addBadge(row, "C++",   "badge-cpp");
+  if (t === "bp_dir")    addBadge(row, "BP",    "badge-bp");
+  if (t === "submodule") addBadge(row, "SUB",   "badge-sub");
+  if (t === "ue4ss_option") {
+    addBadge(row, "UE4SS", "badge-ue4ss");
+    if (node.option_type === "github_release") addBadge(row, "GH",     "badge-sub");
+    if (node.option_type === "manual")         addBadge(row, "MANUAL", "badge-ng");
+  }
+  if (t === "template") {
     addBadge(row, "TPL", "badge-tpl");
   }
-  if (node.type === "external") {
+  if (t === "external") {
     addBadge(row, (node.external_type || "EXT").toUpperCase().slice(0,3), "badge-ext");
   }
-  if (node.is_submodule) {
+  if (node.is_submodule && t !== "submodule") {
     addBadge(row, "SUB", "badge-sub");
   }
   if (node.conflict) {
     addBadge(row, "DUP", "badge-dup");
   }
-  if (!node.game_id_match && node.type === "mod") {
+  if (!node.game_id_match && (t === "mod" || t === "non_ap_mod")) {
     addBadge(row, "N/G", "badge-ng");
   }
 }
@@ -401,6 +447,8 @@ function renderDetail(node) {
       </div>`;
 
   } else if (node.type === "mod") {
+    const isFramework = /^archipelago\.[^.]+\.framework$/.test(node.mod_id || "");
+    const icon = nodeIcon(node);
     const scoreChips = Object.entries(node.score_breakdown || {}).map(([k, v]) => {
       const cls = v >= 0 ? "chip-pos" : "chip-neg";
       const sign = v >= 0 ? "+" : "";
@@ -412,13 +460,15 @@ function renderDetail(node) {
     const ngBanner = !node.game_id_match
       ? `<div class="banner banner-ng">⚠ This mod targets a different game and cannot be selected.</div>`
       : "";
+    const comps = (node.components || []).map(c => c.toUpperCase()).join(" + ") || "Lua";
     html = `
       ${conflictBanner}${ngBanner}
-      <h2>${node.is_framework ? "⚙️" : "🧩"} ${escHtml(node.label)}</h2>
+      <h2>${icon} ${escHtml(node.label)}</h2>
       <div class="subtitle">${escHtml(node.owner)}/${escHtml(node.repo)} › ${escHtml(node.folder || node.path)}</div>
       <div class="section">
         <div class="section-title">Identity</div>
         <div class="prop-row"><span class="prop-key">Mod ID</span><span class="prop-val">${escHtml(node.mod_id)}</span></div>
+        <div class="prop-row"><span class="prop-key">Components</span><span class="prop-val">${escHtml(comps)}</span></div>
         ${node.version ? `<div class="prop-row"><span class="prop-key">Version</span><span class="prop-val">${escHtml(node.version)}</span></div>` : ""}
         ${node.description ? `<div class="prop-row"><span class="prop-key">Description</span><span class="prop-val">${escHtml(node.description)}</span></div>` : ""}
         <div class="prop-row"><span class="prop-key">UE4SS info</span><span class="prop-val">${node.ue4ss_present ? "✔ Found" : "✗ Not found"}</span></div>
@@ -438,6 +488,64 @@ function renderDetail(node) {
       }).join('');
       html += `<div class="section"><div class="section-title">UE4SS Setup Options</div>${rows}</div>`;
     }
+
+  } else if (node.type === "non_ap_mod") {
+    const icon = nodeIcon(node);
+    const comps = (node.components || []).map(c => c.toUpperCase()).join(" + ") || "Unknown";
+    html = `
+      <h2>${icon} ${escHtml(node.label)}</h2>
+      <div class="subtitle">UE4SS Mod (Non-AP) — ${escHtml(node.owner)}/${escHtml(node.repo)}</div>
+      <div class="section">
+        <div class="section-title">Identity</div>
+        ${node.description ? `<div class="prop-row"><span class="prop-key">Description</span><span class="prop-val">${escHtml(node.description)}</span></div>` : ""}
+        <div class="prop-row"><span class="prop-key">Type</span><span class="prop-val">${escHtml(comps)} UE4SS Mod</span></div>
+        <div class="prop-row"><span class="prop-key">Path</span><span class="prop-val">${escHtml(node.folder || node.path || "")}</span></div>
+      </div>
+      <div class="section">
+        <div style="color:#8b949e;font-size:12px">This mod has no Archipelago integration. It will be installed as a plain UE4SS mod and will appear in the Load Order tab.</div>
+      </div>`;
+
+  } else if (["lua_dir","cpp_dir","bp_dir"].includes(node.type)) {
+    const labels = { lua_dir: "Lua Scripts", cpp_dir: "C++ Module", bp_dir: "Blueprint Logic Mod" };
+    const label  = labels[node.type];
+    const icon   = nodeIcon(node);
+    html = `
+      <h2>${icon} ${escHtml(node.label)}</h2>
+      <div class="subtitle">${label} — ${escHtml(node.owner)}/${escHtml(node.repo)}</div>
+      <div class="section">
+        <div class="prop-row"><span class="prop-key">Type</span><span class="prop-val">${label}</span></div>
+        <div class="prop-row"><span class="prop-key">Path</span><span class="prop-val">${escHtml(node.path || "")}</span></div>
+        <div class="prop-row"><span class="prop-key">Files</span><span class="prop-val">${(node.children || []).length}</span></div>
+      </div>`;
+
+  } else if (node.type === "submodule") {
+    const subRepo = [(node.submodule_owner || ""), (node.submodule_repo || node.label)].filter(Boolean).join("/");
+    html = `
+      <h2>🔗 ${escHtml(node.label)}</h2>
+      <div class="subtitle">Git Submodule — ${escHtml(node.owner)}/${escHtml(node.repo)}</div>
+      <div class="section">
+        <div class="section-title">Submodule Info</div>
+        <div class="prop-row"><span class="prop-key">Source</span><span class="prop-val">${escHtml(subRepo)}</span></div>
+        ${node.path ? `<div class="prop-row"><span class="prop-key">Path</span><span class="prop-val">${escHtml(node.path)}</span></div>` : ""}
+        <div class="prop-row"><span class="prop-key">Children</span><span class="prop-val">${(node.children || []).length} item(s)</span></div>
+      </div>
+      <div class="section">
+        <div style="color:#8b949e;font-size:12px">This is a Git submodule. Content within belongs to a separate repository and will be installed as an associated dependency.</div>
+      </div>`;
+
+  } else if (node.type === "ue4ss_option") {
+    const repoDisplay = [node.owner, node.repo].filter(Boolean).join("/") || "";
+    html = `
+      <h2>🧰 ${escHtml(node.label)}</h2>
+      <div class="subtitle">UE4SS Installation Option</div>
+      <div class="section">
+        <div class="section-title">Option Details</div>
+        <div class="prop-row"><span class="prop-key">Type</span><span class="prop-val">${escHtml(node.option_type || "manual")}</span></div>
+        ${repoDisplay ? `<div class="prop-row"><span class="prop-key">Source</span><span class="prop-val">${escHtml(repoDisplay)}</span></div>` : ""}
+        ${node.tag ? `<div class="prop-row"><span class="prop-key">Tag</span><span class="prop-val">${escHtml(node.tag)}</span></div>` : ""}
+        ${node.url ? `<div class="prop-row"><span class="prop-key">URL</span><span class="prop-val"><a class="ext-url" href="#" onclick="pywebview.api.open_url('${escAttr(node.url || "")}');return false">${escHtml(node.url)}</a></span></div>` : ""}
+      </div>
+      ${node.option_type === "manual" ? `<div class="section"><div style="color:#8b949e;font-size:12px">This option requires manual installation. Refer to the UE4SS documentation for this game.</div></div>` : ""}`;
 
   } else if (node.type === "template") {
     const ngBanner = !node.game_id_match
@@ -479,23 +587,37 @@ function renderDetail(node) {
       </div>`;
 
   } else if (node.type === "docs") {
+    const ext = node.label.includes(".") ? node.label.split(".").pop().toLowerCase() : "";
+    const renderableText = ["md", "txt", "json", "yaml", "yml"].includes(ext);
+    const isBinary = ["dll", "pdb", "exe", "pak", "ucas", "utoc"].includes(ext);
+    const isCode   = ["lua", "py", "js", "ts", "cs", "cpp", "h", "hpp"].includes(ext);
     html = `
       <h2>📄 ${escHtml(node.label)}</h2>
-      <div class="subtitle" style="margin-bottom:14px">${escHtml(node.path || "")}</div>
-      <div id="docs-content" class="md-content"></div>`;
+      <div class="subtitle">${escHtml(node.path || "")}</div>
+      <div class="section">
+        <div class="section-title">File Info</div>
+        <div class="prop-row"><span class="prop-key">Type</span><span class="prop-val">${escHtml(ext.toUpperCase() || "Unknown")}</span></div>
+        ${isBinary ? `<div class="prop-row"><span class="prop-key">Note</span><span class="prop-val" style="color:#8b949e">Binary file — contents not shown</span></div>` : ""}
+        ${isCode   ? `<div class="prop-row"><span class="prop-key">Note</span><span class="prop-val" style="color:#8b949e">Source file — not shown to end users</span></div>` : ""}
+      </div>
+      ${renderableText ? `<div id="docs-content" class="md-content"></div>` : ""}`;
   }
 
   panel.innerHTML = html;
 
-  // Auto-load docs
+  // Auto-load docs (only for renderable text files)
   if (node.type === "docs") {
-    const url = node.download_url || node.readme_url || "";
-    _current_docs_base = node.path && node.path.includes("/")
-      ? node.path.split("/").slice(0, -1).join("/")
-      : "";
-    if (url) {
-      if (node.label.toLowerCase().endsWith(".json")) loadJson(url);
-      else loadDocs(url);
+    const ext = node.label.includes(".") ? node.label.split(".").pop().toLowerCase() : "";
+    const renderableText = ["md", "txt", "json", "yaml", "yml"].includes(ext);
+    if (renderableText) {
+      const url = node.download_url || node.readme_url || "";
+      _current_docs_base = node.path && node.path.includes("/")
+        ? node.path.split("/").slice(0, -1).join("/")
+        : "";
+      if (url) {
+        if (ext === "json") loadJson(url);
+        else loadDocs(url);
+      }
     }
   }
 }

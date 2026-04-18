@@ -19,9 +19,18 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
+
+# Core framework mod ID pattern — must match exactly: archipelago.<game_id>.framework
+_FRAMEWORK_MOD_RE = re.compile(r'^archipelago\.[^.]+\.framework$')
+
+
+def _is_framework_mod_id(mod_id: str) -> bool:
+    """Return True only for exact archipelago.<game>.framework mod IDs."""
+    return bool(_FRAMEWORK_MOD_RE.match(mod_id or ""))
 
 if TYPE_CHECKING:
     from ...core.plugin_host import PluginHost
@@ -139,7 +148,7 @@ def _build_tree_nodes(
                     "checked": False,
                 })
             elif mod.mod_id:
-                is_fw = mod.mod_id.endswith(".framework")
+                is_fw = _is_framework_mod_id(mod.mod_id)
                 if is_fw:
                     score, bd = _score_framework(mod, game_id)
                 else:
@@ -160,11 +169,14 @@ def _build_tree_nodes(
                     "score_breakdown": bd,
                     "ue4ss_present": bool(mod.ue4ss_info),
                     "conflict": is_conflict,
+                    "components": getattr(mod, "components", ["lua"]),
+                    "bp_pak_files": getattr(mod, "bp_pak_files", []),
+                    "bp_is_combined": getattr(mod, "bp_is_combined", False),
                     "selectable": True,
                     "checked": not is_conflict,
                 })
             elif mod.folder and mod.manifest:
-                # BUG-7: Non-AP mod (has manifest.json but no mod_id) — still selectable
+                # Non-AP mod: no mod_id but has structural component dirs (e.g. PalSchema)
                 folder_name = mod.folder.split("/")[-1] if "/" in mod.folder else mod.folder
                 children.append({
                     "type": "non_ap_mod",
@@ -177,6 +189,9 @@ def _build_tree_nodes(
                     "description": mod.manifest.get("description", ""),
                     "readme_url": mod.readme_url,
                     "is_framework": False,
+                    "components": getattr(mod, "components", []),
+                    "bp_pak_files": getattr(mod, "bp_pak_files", []),
+                    "bp_is_combined": getattr(mod, "bp_is_combined", False),
                     "selectable": True,
                     "checked": True,
                 })
@@ -258,9 +273,11 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
         if ntype == "root":
             spa_type = "repo"
         elif ntype == "submodule":
-            spa_type = "repo"
+            spa_type = "submodule"
         elif ntype == "mod_dir":
             spa_type = "mod"
+        elif ntype == "non_ap_mod":
+            spa_type = "non_ap_mod"
         elif ntype == "template_dir":
             spa_type = "template"
         elif ntype == "file":
@@ -295,11 +312,19 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
             base["download_url"] = node.download_url
             base["readme_url"] = node.download_url  # keep compat
 
+        elif spa_type == "submodule":
+            # Submodule nodes behave like a repo root but with a distinct type
+            base.update({
+                "selectable": False,
+                "checked": False,
+            })
+
         elif spa_type == "mod" and node.mod:
             m = node.mod
-            is_fw = m.mod_id.endswith(".framework")
+            is_fw = _is_framework_mod_id(m.mod_id)
             if is_fw:
-                score, bd = _score_framework(m, m.mod_id.split(".")[1] if len(m.mod_id.split(".")) >= 2 else "")
+                game_part = m.mod_id.split(".")[1] if len(m.mod_id.split(".")) >= 2 else ""
+                score, bd = _score_framework(m, game_part)
             else:
                 game_part = m.mod_id.split(".")[1] if len(m.mod_id.split(".")) >= 2 else ""
                 score, bd = _score_mod(m, game_part)
@@ -316,9 +341,27 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
                 "ue4ss_info": m.ue4ss_info or {},
                 "components": getattr(m, "components", ["lua"]),
                 "bp_pak_files": getattr(m, "bp_pak_files", []),
+                "bp_is_combined": getattr(m, "bp_is_combined", False),
                 "selectable": node.game_id_match and not node.conflict,
                 "checked": node.game_id_match and not node.conflict,
                 "disabled": not node.game_id_match,
+            })
+
+        elif spa_type == "non_ap_mod" and node.mod:
+            m = node.mod
+            folder_name = m.folder.split("/")[-1] if "/" in m.folder else (m.folder or node.name)
+            base.update({
+                "mod_id": "",
+                "folder": m.folder,
+                "description": m.manifest.get("description", ""),
+                "readme_url": m.readme_url,
+                "is_framework": False,
+                "components": getattr(m, "components", []),
+                "bp_pak_files": getattr(m, "bp_pak_files", []),
+                "bp_is_combined": getattr(m, "bp_is_combined", False),
+                "selectable": True,
+                "checked": True,
+                "disabled": False,
             })
 
         elif spa_type == "template":
@@ -344,6 +387,66 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
         return base
 
     return [_convert(tree, 0)]
+
+
+def _inject_ue4ss_nodes(nodes: list[dict], mods: list, game_id: str) -> None:
+    """
+    Inject UE4SS option nodes (from ue4ss.json) into an SPA node tree built from
+    _folder_tree_to_spa_nodes(). These nodes are present in the _build_tree_nodes()
+    path but absent from the folder-tree path.
+
+    Walks mods to find those with ue4ss_info, builds ue4ss_option dicts,
+    and prepends them to the matching repo node's children (deduplicated by opt_key).
+    """
+    # Collect all ue4ss options from discovered mods, keyed by repo owner/repo
+    repo_options: dict[str, list[dict]] = {}
+    for mod in mods:
+        if not mod.ue4ss_info:
+            continue
+        rkey = f"{mod.owner}/{mod.repo}"
+        repo_options.setdefault(rkey, [])
+        seen_in_repo: set[str] = set()
+        for opt in (mod.ue4ss_info.get("options") or []):
+            opt_key = f"{opt.get('repo', '')}:{opt.get('tag', '')}"
+            if opt_key in seen_in_repo:
+                continue
+            seen_in_repo.add(opt_key)
+            opt_type = opt.get("type", "manual")
+            opt_label = opt.get("note") or f"UE4SS {opt.get('tag', 'latest')}"
+            repo_options[rkey].append({
+                "type": "ue4ss_option",
+                "id": f"ue4ss:{opt_key}",
+                "label": opt_label,
+                "option_type": opt_type,
+                "owner": opt.get("owner", ""),
+                "repo": opt.get("repo", ""),
+                "tag": opt.get("tag", ""),
+                "url": opt.get("url", ""),
+                "selectable": opt_type in ("github_release", "external_url"),
+                "checked": opt_type == "github_release",
+                "install_type": "ue4ss",
+                "game_id_match": True,
+                "conflict": False,
+                "disabled": False,
+            })
+
+    if not repo_options:
+        return
+
+    def _walk(node_list: list[dict]) -> None:
+        for n in node_list:
+            if n.get("type") == "repo":
+                rkey = f"{n.get('owner', '')}/{n.get('repo', '')}"
+                opts = repo_options.get(rkey, [])
+                if opts:
+                    existing_ids = {c["id"] for c in n.get("children", [])}
+                    new_opts = [o for o in opts if o["id"] not in existing_ids]
+                    if new_opts:
+                        n["children"] = new_opts + n.get("children", [])
+            if n.get("children"):
+                _walk(n["children"])
+
+    _walk(nodes)
 
 
 class RepoViewerPanel:
@@ -385,6 +488,7 @@ class RepoViewerPanel:
         mods = traversal_result or []
         if folder_tree is not None:
             nodes = _folder_tree_to_spa_nodes(folder_tree)
+            _inject_ue4ss_nodes(nodes, mods, game_id)
         else:
             nodes = _build_tree_nodes(mods, game_id, existing_mod_ids)
 
@@ -396,10 +500,16 @@ class RepoViewerPanel:
             # Walk the SPA nodes to build the lookup
             def _walk_nodes(node_list):
                 for n in node_list:
-                    if n.get("type") == "mod" and n.get("mod_id"):
-                        # We need to recover the DiscoveredMod — find it from flat mods list
+                    ntype = n.get("type")
+                    if ntype == "mod" and n.get("mod_id"):
                         mid = n["mod_id"]
                         matched = next((m for m in mods if m.mod_id == mid), None)
+                        if matched:
+                            id_to_mod[n["id"]] = matched
+                    elif ntype == "non_ap_mod" and n.get("folder"):
+                        # Match by folder path since mod_id is empty
+                        folder = n["folder"]
+                        matched = next((m for m in mods if m.folder == folder and not m.mod_id), None)
                         if matched:
                             id_to_mod[n["id"]] = matched
                     if n.get("children"):

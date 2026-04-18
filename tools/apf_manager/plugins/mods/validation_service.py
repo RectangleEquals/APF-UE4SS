@@ -54,7 +54,8 @@ class ValidationService:
         mod_by_folder = {m.folder_name: m for m in mods}
 
         # 2. Framework mod present
-        fw_mods = [m for m in ap_mods if m.mod_id.endswith(".framework")]
+        from .registry_resolver import _is_framework_mod_id
+        fw_mods = [m for m in ap_mods if _is_framework_mod_id(m.mod_id)]
         if not fw_mods:
             results.append(ValidationResult(
                 label="Framework mod missing",
@@ -194,10 +195,11 @@ class ValidationService:
         all_ids = staged_ids | installed_mod_ids
 
         # 1. Framework candidate in registry (if non-framework mods staged)
-        non_fw_staged = [m for m in staged if not getattr(m, "mod_id", "").endswith(".framework")]
+        from .registry_resolver import _is_framework_mod_id
+        non_fw_staged = [m for m in staged if not _is_framework_mod_id(getattr(m, "mod_id", ""))]
         if non_fw_staged:
-            has_fw = any(getattr(m, "mod_id", "").endswith(".framework") for m in staged) or \
-                     any(mid.endswith(".framework") for mid in installed_mod_ids)
+            has_fw = any(_is_framework_mod_id(getattr(m, "mod_id", "")) for m in staged) or \
+                     any(_is_framework_mod_id(mid) for mid in installed_mod_ids)
             if not has_fw:
                 registry_svc = self._host.get_service("registry")
                 if registry_svc:
@@ -270,8 +272,9 @@ class ValidationService:
         if detection:
             mods_svc = self._host.get_service("mods")
             if mods_svc:
+                from .registry_resolver import _is_framework_mod_id
                 for m in mods_svc.get_ap_mods():
-                    if m.mod_id and m.mod_id.endswith(".framework"):
+                    if m.mod_id and _is_framework_mod_id(m.mod_id):
                         parts = m.mod_id.split(".")
                         if len(parts) >= 2:
                             game_id = parts[1]

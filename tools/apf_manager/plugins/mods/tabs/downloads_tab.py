@@ -848,6 +848,53 @@ class DownloadsTab(MDBoxLayout):
             font_style="Label", role="small", size_hint_y=None, height=dp(16),
             theme_text_color="Custom", text_color=_COL_DIM,
         ))
+        # Changelog button for other-category items (UE4SS / framework releases)
+        # Resolve the _OtherEntry for this cached item by matching owner/repo/tag
+        _other_ref = ci.mod_ref
+        if ci.category == "other" and _other_ref is None:
+            registry_svc = self._host.get_service("registry") if self._host.has_service("registry") else None
+            updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
+            all_other: list = []
+            if registry_svc and hasattr(registry_svc, "get_other_content"):
+                all_other += registry_svc.get_other_content(self._game_id) or []
+            if updates_svc and hasattr(updates_svc, "get_ue4ss_releases_for_content"):
+                all_other += updates_svc.get_ue4ss_releases_for_content() or []
+            if updates_svc and hasattr(updates_svc, "get_framework_releases_for_content"):
+                all_other += updates_svc.get_framework_releases_for_content() or []
+            for entry in all_other:
+                if (getattr(entry, "owner", "") == ci.owner and
+                        getattr(entry, "repo", "") == ci.repo):
+                    _other_ref = entry
+                    break
+        if ci.category == "other" and _other_ref is not None:
+            changelog = getattr(_other_ref, "changelog", "")
+            if changelog:
+                def _show_changelog(*_, _cl=changelog):
+                    from kivymd.uix.dialog import (
+                        MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+                        MDDialogButtonContainer,
+                    )
+                    from kivymd.uix.button import MDButton, MDButtonText
+                    dlg_ref = [None]
+                    def _close(*_):
+                        if dlg_ref[0]:
+                            dlg_ref[0].dismiss()
+                    dlg = MDDialog(
+                        MDDialogHeadlineText(text="Release Notes"),
+                        MDDialogSupportingText(text=_cl),
+                        MDDialogButtonContainer(
+                            MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
+                        ),
+                    )
+                    dlg_ref[0] = dlg
+                    dlg.open()
+                from kivymd.uix.button import MDButton, MDButtonText
+                panel.add_widget(MDButton(
+                    MDButtonText(text="Release Notes"),
+                    style="text",
+                    size_hint_y=None, height=dp(36),
+                    on_release=_show_changelog,
+                ))
         return panel
 
     def _toggle_cache_expand(self, key: str) -> None:
@@ -898,6 +945,7 @@ class DownloadsTab(MDBoxLayout):
                 if _BUNDLED_TOKEN_PATH.exists() else ""
 
             if item.category == "other":
+                import zipfile as _zipfile
                 opt = item.mod
                 opt_type = getattr(opt, "type", "manual")
                 if opt_type == "github_release":
@@ -907,28 +955,51 @@ class DownloadsTab(MDBoxLayout):
                         token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
                         on_status=lambda lvl, msg: None,
                     )
-                    releases = api.list_releases(tag_prefix=getattr(opt, "tag", ""))
-                    release = next(
-                        (r for r in releases if r.get("tag_name") == getattr(opt, "tag", "")),
-                        releases[0] if releases else None,
-                    )
-                    if not release:
-                        raise RuntimeError(
-                            f"Release '{getattr(opt, 'tag', '')}' not found in "
-                            f"{getattr(opt, 'owner', '')}/{getattr(opt, 'repo', '')}"
+                    direct_url = getattr(opt, "url", "")
+                    if direct_url:
+                        # Use the direct asset URL populated by UpdatesService
+                        fname = direct_url.split("/")[-1].split("?")[0] or f"{getattr(opt, 'tag', 'release')}.zip"
+                        dest_file = dest / fname
+                        self._set_progress(item, 0.1)
+                        api.download_asset(
+                            direct_url, dest_file,
+                            progress_cb=lambda p: self._set_progress(item, 0.1 + p * 0.9),
                         )
-                    asset = next(
-                        (a for a in release.get("assets", []) if a["name"].endswith(".zip")),
-                        None,
-                    )
-                    if not asset:
-                        raise RuntimeError(f"No .zip asset in release '{getattr(opt, 'tag', '')}'")
-                    self._set_progress(item, 0.1)
-                    api.download_asset(
-                        asset["browser_download_url"],
-                        dest / asset["name"],
-                        progress_cb=lambda p: self._set_progress(item, 0.1 + p * 0.9),
-                    )
+                    else:
+                        # Fallback: exact tag lookup (never tag_prefix)
+                        all_releases = api.list_releases()
+                        exact_tag = getattr(opt, "tag", "")
+                        release = next(
+                            (r for r in all_releases if r.get("tag_name") == exact_tag),
+                            None,
+                        )
+                        if not release:
+                            raise RuntimeError(
+                                f"Release tag '{exact_tag}' not found in "
+                                f"{getattr(opt, 'owner', '')}/{getattr(opt, 'repo', '')}"
+                            )
+                        asset = next(
+                            (a for a in release.get("assets", []) if a["name"].endswith(".zip")),
+                            None,
+                        )
+                        if not asset:
+                            raise RuntimeError(f"No .zip asset in release '{exact_tag}'")
+                        dest_file = dest / asset["name"]
+                        self._set_progress(item, 0.1)
+                        api.download_asset(
+                            asset["browser_download_url"],
+                            dest_file,
+                            progress_cb=lambda p: self._set_progress(item, 0.1 + p * 0.9),
+                        )
+                    # Post-download integrity check
+                    if not dest_file.exists() or dest_file.stat().st_size == 0:
+                        raise ValueError(f"Downloaded file is empty or missing: {dest_file}")
+                    try:
+                        with _zipfile.ZipFile(dest_file) as zf:
+                            zf.testzip()
+                    except _zipfile.BadZipFile:
+                        dest_file.unlink(missing_ok=True)
+                        raise ValueError(f"Downloaded file is not a valid zip: {dest_file.name}")
                 elif opt_type == "external_url":
                     raise RuntimeError("External URL options require manual download — open in browser")
                 else:
@@ -944,9 +1015,12 @@ class DownloadsTab(MDBoxLayout):
                                         progress_cb=lambda p: self._set_progress(item, p))
 
             # Write metadata for category recovery during cache scan
+            _mod_id = getattr(item.mod, "mod_id", "")
+            _id_parts = _mod_id.split(".")
+            _game_name = _id_parts[1] if len(_id_parts) >= 2 else getattr(item.mod, "game_id", "")
             (dest / ".apf_meta.json").write_text(_json.dumps({
                 "category":     item.category,
-                "game_name":    getattr(item.mod, "game_name", getattr(item.mod, "game_id", "")),
+                "game_name":    _game_name,
                 "install_type": getattr(item.mod, "install_type", ""),
             }))
 

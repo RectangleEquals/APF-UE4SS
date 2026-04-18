@@ -55,6 +55,9 @@ class RegistryModEntry:
     templates_paths: list = field(default_factory=list)
     components: list = field(default_factory=lambda: ["lua"])
     bp_pak_files: list = field(default_factory=list)
+    bp_is_combined: bool = False
+    source_package_id: str = ""   # "{owner}/{repo}" slug for grouping related content
+    is_submodule_content: bool = False
 
 
 @dataclass
@@ -105,6 +108,9 @@ class _OtherEntry:
     tag: str         # For github_release: exact release tag
     url: str         # For external_url: direct URL
     install_type: str = "ue4ss"   # "ue4ss" | "framework_binary"
+    published_at: str = ""        # ISO date string from release
+    asset_name: str = ""          # filename of the primary download asset
+    changelog: str = ""           # first 2000 chars of release body
 
 
 @dataclass
@@ -137,6 +143,7 @@ class RegistryService:
 
         # In-memory state (invalidated on game change)
         self._mods_cache: list[RegistryModEntry] = []
+        self._mods_cache_game_id: str = ""
         self._staged: list[str] = []   # staged mod_ids
 
         # Rate limit dialog deduplication — None when no dialog is open
@@ -150,6 +157,7 @@ class RegistryService:
         with self._lock:
             self._profile = profile
             self._mods_cache = []
+            self._mods_cache_game_id = ""
             self._staged = []
 
     # -----------------------------------------------------------------------
@@ -257,10 +265,15 @@ class RegistryService:
 
             def _finalize(selected_mods):
                 """Called by Repo Viewer on_confirm (main thread) or directly."""
-                real_count = sum(1 for m in selected_mods if m.mod_id)
+                ap_count     = sum(1 for m in selected_mods if m.mod_id)
+                non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
+                parts = [f"{ap_count} AP mod(s)"] if ap_count else []
+                if non_ap_count:
+                    parts.append(f"{non_ap_count} non-AP mod(s)")
+                summary = ", ".join(parts) if parts else "no mods"
                 self._host.config.add_user_registry(url, game_id=derived_game_id)
                 self._invalidate_mods_cache()
-                _ui(lambda: on_done(True, f"Registry added — {real_count} mod(s) found."))
+                _ui(lambda: on_done(True, f"Registry added — {summary} found."))
 
             if content_count > 1 and self._host.has_service("repo_viewer"):
                 game_id_for_viewer = current_game_id or derived_game_id
@@ -348,10 +361,15 @@ class RegistryService:
                 folder_tree = None
 
             def _finalize(selected_mods):
-                real_count = sum(1 for m in selected_mods if m.mod_id)
+                ap_count     = sum(1 for m in selected_mods if m.mod_id)
+                non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
+                parts = [f"{ap_count} AP mod(s)"] if ap_count else []
+                if non_ap_count:
+                    parts.append(f"{non_ap_count} non-AP mod(s)")
+                summary = ", ".join(parts) if parts else "no mods"
                 self._host.config.add_user_registry(url, game_id=derived_game_id)
                 self._invalidate_mods_cache()
-                _ui(lambda: on_done(True, f"Registry added — {real_count} mod(s) found."))
+                _ui(lambda: on_done(True, f"Registry added — {summary} found."))
 
             if not self._host.has_service("repo_viewer"):
                 # Fallback: add directly without viewer
@@ -419,13 +437,14 @@ class RegistryService:
     def get_mods(self, game_id: str) -> list[RegistryModEntry]:
         """Return all mods from all registered registries, filtered by game_id."""
         with self._lock:
-            if self._mods_cache:
+            if self._mods_cache and self._mods_cache_game_id == game_id:
                 return list(self._mods_cache)
 
         mods = self._load_mods(game_id)
 
         with self._lock:
             self._mods_cache = mods
+            self._mods_cache_game_id = game_id
         return mods
 
     def _load_mods(self, game_id: str) -> list[RegistryModEntry]:
@@ -441,13 +460,14 @@ class RegistryService:
                 continue
 
             for mod in discovered:
-                # Skip synthetic container entries (template-only repos)
-                if not mod.mod_id:
+                # Skip synthetic container entries with no mod content
+                if not mod.mod_id and not mod.components:
                     continue
-                # Filter by game_id (2nd component of mod_id, e.g. "palworld")
-                parts = mod.mod_id.split(".")
-                if game_id and len(parts) >= 2 and parts[1].lower() != game_id.lower():
-                    continue
+                # AP mods: filter by game_id (2nd component of mod_id, e.g. "palworld")
+                if mod.mod_id:
+                    parts = mod.mod_id.split(".")
+                    if game_id and len(parts) >= 2 and parts[1].lower() != game_id.lower():
+                        continue
                 results.append(RegistryModEntry(
                     mod_id=mod.mod_id,
                     name=mod.manifest.get("name") or mod.folder.split("/")[-1],
@@ -461,6 +481,9 @@ class RegistryService:
                     templates_paths=mod.templates_paths,
                     components=mod.components,
                     bp_pak_files=mod.bp_pak_files,
+                    bp_is_combined=getattr(mod, "bp_is_combined", False),
+                    source_package_id=getattr(mod, "source_package_id", f"{mod.owner}/{mod.repo}"),
+                    is_submodule_content=getattr(mod, "is_submodule_content", False),
                 ))
 
         return results
@@ -527,7 +550,8 @@ class RegistryService:
     def get_framework_candidates(self, game_id: str) -> list[FrameworkModCandidate]:
         """Return scored framework mod candidates from all registered registries."""
         mods = self.get_mods(game_id)
-        fw_mods = [m for m in mods if m.mod_id.endswith(".framework")]
+        from .registry_resolver import _is_framework_mod_id
+        fw_mods = [m for m in mods if _is_framework_mod_id(m.mod_id)]
         if not fw_mods:
             return []
 
@@ -549,14 +573,16 @@ class RegistryService:
             if disc.mod_id in id_to_entry
         ]
 
-    def get_ue4ss_info(self, game_id: str) -> UE4SSInfo:
+    def get_ue4ss_info(self, game_id: str) -> Optional[UE4SSInfo]:
         """
         Discover UE4SS installation options.
 
         Priority:
           1. GitHub topic apf-ue4ss-registry-{game_id}-core repos → ue4ss.json
           2. Already-added registry data → ue4ss.json in framework mod repos
-          3. Default fallback (UE4SS-RE/RE-UE4SS latest release, with warning)
+
+        Returns None when no game-specific UE4SS info is found.
+        Callers that need a bootstrap path should use UpdatesService.get_ue4ss_releases_for_content().
         """
         resolver = self._get_resolver()
         cache = self._get_cache()
@@ -589,20 +615,8 @@ class RegistryService:
                     note=info.get("note", ""),
                 )
 
-        # 3. Generic fallback
-        return UE4SSInfo(
-            options=[{
-                "type": "github_release",
-                "repo": "UE4SS-RE/RE-UE4SS",
-                "tag": "latest",
-                "note": "Generic UE4SS release",
-            }],
-            docs=None,
-            note=(
-                "No game-specific UE4SS version found — some games require a specific fork. "
-                "Check your game's documentation before installing."
-            ),
-        )
+        # No game-specific UE4SS info found
+        return None
 
     # -----------------------------------------------------------------------
     # Staged queue
@@ -863,6 +877,7 @@ class RegistryService:
     def _invalidate_mods_cache(self) -> None:
         with self._lock:
             self._mods_cache = []
+            self._mods_cache_game_id = ""
 
     def _get_game_id(self) -> Optional[str]:
         """
@@ -872,10 +887,11 @@ class RegistryService:
           1. Installed framework mod's mod_id (e.g. 'archipelago.palworld.framework' → 'palworld')
           2. Game profile display name, normalised
         """
+        from .registry_resolver import _is_framework_mod_id
         mods_svc = self._host.get_service("mods")
         if mods_svc:
             for mod in mods_svc.get_ap_mods():
-                if mod.mod_id and mod.mod_id.endswith(".framework"):
+                if mod.mod_id and _is_framework_mod_id(mod.mod_id):
                     parts = mod.mod_id.split(".")
                     if len(parts) >= 2:
                         return parts[1]

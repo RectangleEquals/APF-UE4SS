@@ -213,6 +213,8 @@ class RegistriesTab(MDBoxLayout):
 
     def refresh(self, game_id: str, ue4ss_detected: bool) -> None:
         self._game_id = game_id
+        if self._search_results is not None:
+            self._search_results.clear_widgets()
         self._refresh_ue4ss_card(ue4ss_detected)
         self._refresh_registries()
 

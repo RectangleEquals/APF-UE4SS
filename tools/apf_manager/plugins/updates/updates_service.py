@@ -168,15 +168,19 @@ class UpdatesService:
                     continue
                 ver = (full_tag[len("framework/"):]
                        if full_tag.startswith("framework/") else full_tag)
+                body = (release.get("body") or "")
                 entries.append(_OtherEntry(
-                    name         = f"APF Framework  {ver}",
-                    note         = (release.get("body") or "")[:200],
+                    name         = f"APF Framework {ver}",
+                    note         = f"framework binaries  ·  RectangleEquals/APF-UE4SS",
                     type         = "github_release",
                     owner        = "RectangleEquals",
                     repo         = "APF-UE4SS",
                     tag          = full_tag,
-                    url          = "",
+                    url          = asset.get("browser_download_url", "") if asset else "",
                     install_type = "framework_binary",
+                    published_at = release.get("published_at", ""),
+                    asset_name   = asset.get("name", "") if asset else "",
+                    changelog    = body[:2000],
                 ))
             return entries
         except Exception:
@@ -206,14 +210,17 @@ class UpdatesService:
                     (a for a in r.assets if a.name.endswith(".zip")), None
                 )
                 entries.append(_OtherEntry(
-                    name         = r.name or r.tag_name,
-                    note         = "stable",
+                    name         = f"{repo} {r.tag_name}",
+                    note         = f"stable  ·  {owner}/{repo}",
                     type         = "github_release",
                     owner        = owner,
                     repo         = repo,
                     tag          = r.tag_name,
                     url          = asset.browser_download_url if asset else "",
                     install_type = "ue4ss",
+                    published_at = r.published_at or "",
+                    asset_name   = asset.name if asset else "",
+                    changelog    = (r.body or "")[:2000],
                 ))
 
             if experimental:
@@ -222,14 +229,17 @@ class UpdatesService:
                     (a for a in r.assets if a.name.endswith(".zip")), None
                 )
                 entries.append(_OtherEntry(
-                    name         = r.name or r.tag_name,
-                    note         = "experimental",
+                    name         = f"{repo} {r.tag_name}",
+                    note         = f"experimental  ·  {owner}/{repo}",
                     type         = "github_release",
                     owner        = owner,
                     repo         = repo,
                     tag          = r.tag_name,
                     url          = asset.browser_download_url if asset else "",
                     install_type = "ue4ss",
+                    published_at = r.published_at or "",
+                    asset_name   = asset.name if asset else "",
+                    changelog    = (r.body or "")[:2000],
                 ))
             return entries
         except Exception:
@@ -487,8 +497,9 @@ class UpdatesService:
             return "unknown"
         mods_svc = self._host.get_service("mods")
         try:
+            from ..mods.registry_resolver import _is_framework_mod_id
             for mod in mods_svc.get_ap_mods():
-                if mod.mod_id and mod.mod_id.endswith(".framework"):
+                if mod.mod_id and _is_framework_mod_id(mod.mod_id):
                     return mod.version or "unknown"
         except Exception:
             pass

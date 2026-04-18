@@ -36,8 +36,15 @@ _GITHUB_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-_GITMODULES_PATH_RE = re.compile(r'path\s*=\s*(.+)')
-_GITMODULES_URL_RE  = re.compile(r'url\s*=\s*(.+)')
+_GITMODULES_PATH_RE  = re.compile(r'path\s*=\s*(.+)')
+_GITMODULES_URL_RE   = re.compile(r'url\s*=\s*(.+)')
+# Core framework mod ID pattern: archipelago.<game_id>.framework (exact match)
+_FRAMEWORK_MOD_RE    = re.compile(r'^archipelago\.[^.]+\.framework$')
+
+
+def _is_framework_mod_id(mod_id: str) -> bool:
+    """Return True only for exact archipelago.<game>.framework pattern."""
+    return bool(_FRAMEWORK_MOD_RE.match(mod_id or ""))
 
 
 def _parse_gitmodules(text: str) -> dict[str, str]:
@@ -66,8 +73,8 @@ class DiscoveredMod:
     owner: str
     repo: str
     folder: str          # subfolder path within the repo
-    manifest: dict       # raw manifest.json content
-    mod_id: str          # manifest["mod_id"]
+    manifest: dict       # raw manifest.json content (may be synthetic {"name": folder_name} for non-AP)
+    mod_id: str          # manifest["mod_id"] — empty string "" for non-AP mods
     readme_url: str = ""
     ue4ss_info: Optional[dict] = None      # parsed ue4ss.json (framework mod repos only)
     templates_paths: list = field(default_factory=list)  # e.g. ["Templates/Palworld"]
@@ -75,6 +82,13 @@ class DiscoveredMod:
     submodule_of: str = ""                 # "owner/repo" of the parent if from a submodule
     components: list = field(default_factory=lambda: ["lua"])
     bp_pak_files: list = field(default_factory=list)
+    # BP-Combined: True when BP paks coexist with Lua/C++ in the same mod folder.
+    # BP-Only (False): paks are standalone, install as their own content row.
+    bp_is_combined: bool = False
+    # All mods from the same registry repo share this slug for grouping in the pipeline.
+    source_package_id: str = ""           # "{owner}/{repo}"
+    # True when this mod's content came from a git submodule of the parent registry.
+    is_submodule_content: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +99,8 @@ class DiscoveredMod:
 class FolderTreeNode:
     """
     One node in the hierarchical folder tree shown by the Repo Viewer.
-    node_type: "root" | "dir" | "mod_dir" | "template_dir" | "file" | "submodule"
+    node_type: "root" | "dir" | "mod_dir" | "non_ap_mod" | "template_dir"
+               | "lua_dir" | "cpp_dir" | "bp_dir" | "file" | "submodule"
     """
     node_type: str
     name: str               # display name (no path prefix)
@@ -165,6 +180,9 @@ class RegistryResolver:
                     DiscoveredMod(
                         components=d.pop("components", ["lua"]),
                         bp_pak_files=d.pop("bp_pak_files", []),
+                        bp_is_combined=d.pop("bp_is_combined", False),
+                        source_package_id=d.pop("source_package_id", ""),
+                        is_submodule_content=d.pop("is_submodule_content", False),
                         **d,
                     )
                     for d in raw
@@ -223,6 +241,26 @@ class RegistryResolver:
                 (e for e in sub_contents if e["name"] == "manifest.json"), None
             )
             if not (manifest_entry and manifest_entry.get("download_url")):
+                # No manifest.json — detect non-AP mods from directory structure alone.
+                has_lua       = any(e["name"].lower() == "scripts"   and e["type"] == "dir" for e in sub_contents)
+                has_cpp       = any(e["name"].lower() == "dlls"      and e["type"] == "dir" for e in sub_contents)
+                has_logic_dir = any(e["name"].lower() == "logicmods" and e["type"] == "dir" for e in sub_contents)
+                has_bp_paks   = any(e["name"].lower().endswith(".pak")                       for e in sub_contents)
+                has_bp        = has_logic_dir or has_bp_paks
+                bp_combined   = has_bp and (has_lua or has_cpp)
+                if has_lua or has_cpp or has_bp:
+                    folder_name = folder_path.split("/")[-1] if "/" in folder_path else folder_path
+                    _comps   = (["lua"] if has_lua else []) + (["cpp"] if has_cpp else []) + (["blueprint"] if has_bp else [])
+                    _bp_paks = [e["name"] for e in sub_contents if e["name"].lower().endswith(".pak")]
+                    mods.append(DiscoveredMod(
+                        owner=owner, repo=repo, folder=folder_path,
+                        manifest={"name": folder_name},
+                        mod_id="",
+                        readme_url="", ue4ss_info=None, templates_paths=templates_paths,
+                        components=_comps, bp_pak_files=_bp_paks,
+                        bp_is_combined=bp_combined,
+                        source_package_id=f"{owner}/{repo}",
+                    ))
                 continue
 
             manifest_text = api.fetch_text(manifest_entry["download_url"])
@@ -232,8 +270,8 @@ class RegistryResolver:
                 manifest = json.loads(manifest_text)
             except Exception:
                 continue
-            # Include non-AP mods (no mod_id) as selectable items in the repo viewer.
-            # They still need a manifest.json to be discovered.
+
+            mod_id = manifest.get("mod_id", "")
 
             readme_url = ""
             readme_entry = next(
@@ -244,14 +282,16 @@ class RegistryResolver:
             if readme_entry and readme_entry.get("download_url"):
                 readme_url = readme_entry["download_url"]
 
-            # Attach ue4ss_info only to the framework mod in this repo
-            mod_ue4ss = ue4ss_info if manifest["mod_id"].endswith(".framework") else None
+            # Attach ue4ss_info only to the core framework mod in this repo
+            mod_ue4ss = ue4ss_info if _is_framework_mod_id(mod_id) else None
 
             # Component detection from sub_contents directory structure
             _detected = []
-            if any(e["name"].lower() == "scripts" and e["type"] == "dir" for e in sub_contents):
+            _has_lua = any(e["name"].lower() == "scripts" and e["type"] == "dir" for e in sub_contents)
+            _has_cpp = any(e["name"].lower() == "dlls"    and e["type"] == "dir" for e in sub_contents)
+            if _has_lua:
                 _detected.append("lua")
-            if any(e["name"].lower() == "dlls" and e["type"] == "dir" for e in sub_contents):
+            if _has_cpp:
                 _detected.append("cpp")
             _bp_pak_files = []
             _lm_entry = next(
@@ -269,19 +309,22 @@ class RegistryResolver:
                     pass
                 if _bp_pak_files:
                     _detected.append("blueprint")
-            _components = _detected or ["lua"]
+            _bp_combined = bool(_bp_pak_files) and (_has_lua or _has_cpp)
+            _components = _detected or ["lua"]  # AP mods default to lua if no dirs detected
 
             mods.append(DiscoveredMod(
                 owner=owner,
                 repo=repo,
                 folder=folder_path,
                 manifest=manifest,
-                mod_id=manifest["mod_id"],
+                mod_id=mod_id,
                 readme_url=readme_url,
                 ue4ss_info=mod_ue4ss,
                 templates_paths=templates_paths,
                 components=_components,
                 bp_pak_files=_bp_pak_files,
+                bp_is_combined=_bp_combined,
+                source_package_id=f"{owner}/{repo}",
             ))
 
         # Follow submodules recursively.
@@ -310,6 +353,9 @@ class RegistryResolver:
             for _sm in sub_mods:
                 if not _sm.submodule_of:
                     _sm.submodule_of = parent_key
+                _sm.is_submodule_content = True
+                if not _sm.source_package_id:
+                    _sm.source_package_id = parent_key
             if not sub_mods:
                 # Check if this submodule looks like a UE4SS repo and we have
                 # a framework mod in the parent without ue4ss_info yet
@@ -327,9 +373,9 @@ class RegistryResolver:
                             "docs": None,
                             "note": "",
                         }
-                        # Attach to any framework mod in this repo that lacks ue4ss_info
+                        # Attach to any core framework mod in this repo that lacks ue4ss_info
                         for mod in mods:
-                            if mod.mod_id.endswith(".framework") and not mod.ue4ss_info:
+                            if _is_framework_mod_id(mod.mod_id) and not mod.ue4ss_info:
                                 mod.ue4ss_info = synth_ue4ss
             mods.extend(sub_mods)
 
@@ -361,6 +407,10 @@ class RegistryResolver:
                         "templates_paths": m.templates_paths,
                         "components": m.components,
                         "bp_pak_files": m.bp_pak_files,
+                        "bp_is_combined": m.bp_is_combined,
+                        "source_package_id": m.source_package_id,
+                        "is_submodule_content": m.is_submodule_content,
+                        "submodule_of": m.submodule_of,
                     }
                     for m in mods
                 ]
@@ -501,23 +551,29 @@ class RegistryResolver:
             if manifest_text:
                 try:
                     manifest = json.loads(manifest_text)
-                    if manifest.get("mod_id"):
+                    _mod_id = manifest.get("mod_id", "")
+                    if _mod_id:
                         node_type = "mod_dir"
-                        readme_e = next(
-                            (e for e in sub_contents
-                             if e.get("name", "").lower() in ("readme.md", "readme.txt")),
-                            None,
-                        )
-                        mod = DiscoveredMod(
-                            owner=owner,
-                            repo=repo,
-                            folder=epath,
-                            manifest=manifest,
-                            mod_id=manifest["mod_id"],
-                            readme_url=readme_e["download_url"] if readme_e and readme_e.get("download_url") else "",
-                        )
+                    else:
+                        # manifest exists but no mod_id = treat as non-AP
+                        node_type = "non_ap_mod"
+                    readme_e = next(
+                        (e for e in sub_contents
+                         if e.get("name", "").lower() in ("readme.md", "readme.txt")),
+                        None,
+                    )
+                    mod = DiscoveredMod(
+                        owner=owner,
+                        repo=repo,
+                        folder=epath,
+                        manifest=manifest,
+                        mod_id=_mod_id,
+                        readme_url=readme_e["download_url"] if readme_e and readme_e.get("download_url") else "",
+                        source_package_id=f"{owner}/{repo}",
+                    )
+                    if _mod_id:
                         # Check game_id match
-                        parts = manifest["mod_id"].split(".")
+                        parts = _mod_id.split(".")
                         if game_id and len(parts) >= 2 and parts[1].lower() != game_id.lower():
                             game_id_match = False
                         # Check for ue4ss.json in same directory
@@ -541,6 +597,26 @@ class RegistryResolver:
         _eparts = epath.split("/")
         if len(_eparts) == 2 and _eparts[0] == "Templates":
             node_type = "template_dir"
+
+        # Non-AP mod detection: if still "dir" (no manifest), check sub_contents for component dirs
+        if node_type == "dir" and mod is None:
+            _na_lua  = any(e.get("name","").lower() == "scripts"   and e.get("type") == "dir" for e in sub_contents)
+            _na_cpp  = any(e.get("name","").lower() == "dlls"      and e.get("type") == "dir" for e in sub_contents)
+            _na_lmd  = any(e.get("name","").lower() == "logicmods" and e.get("type") == "dir" for e in sub_contents)
+            _na_paks = any(e.get("name","").lower().endswith(".pak")                            for e in sub_contents)
+            _na_bp   = _na_lmd or _na_paks
+            if _na_lua or _na_cpp or _na_bp:
+                node_type = "non_ap_mod"
+                _na_comps   = (["lua"] if _na_lua else []) + (["cpp"] if _na_cpp else []) + (["blueprint"] if _na_bp else [])
+                _na_bp_paks = [e["name"] for e in sub_contents if e.get("name","").lower().endswith(".pak")]
+                mod = DiscoveredMod(
+                    owner=owner, repo=repo, folder=epath,
+                    manifest={"name": ename}, mod_id="",
+                    readme_url="", ue4ss_info=None, templates_paths=[],
+                    components=_na_comps, bp_pak_files=_na_bp_paks,
+                    bp_is_combined=_na_bp and (_na_lua or _na_cpp),
+                    source_package_id=f"{owner}/{repo}",
+                )
 
         # Component directory types — only if not already classified
         if node_type == "dir":
