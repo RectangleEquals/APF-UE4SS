@@ -485,11 +485,20 @@ class GitHubReleaseManager:
             headers = self._api._cdn_headers()
             headers["Accept"] = "application/octet-stream"
             dest.parent.mkdir(parents=True, exist_ok=True)
+            has_auth = "Authorization" in headers
+            print(f"[release_mgr] download_asset url={asset_url!r} dest={dest} has_auth={has_auth}", flush=True)
             total = 0
             downloaded = 0
             with _httpx.stream(
                 "GET", asset_url, headers=headers, timeout=60, follow_redirects=True
             ) as resp:
+                print(
+                    f"[release_mgr] response status={resp.status_code} "
+                    f"content-type={resp.headers.get('content-type','?')} "
+                    f"content-length={resp.headers.get('content-length','?')} "
+                    f"final_url={str(resp.url)!r}",
+                    flush=True,
+                )
                 resp.raise_for_status()
                 total = int(resp.headers.get("Content-Length", 0))
                 with open(dest, "wb") as f:
@@ -498,8 +507,10 @@ class GitHubReleaseManager:
                         downloaded += len(chunk)
                         if progress_cb:
                             progress_cb(downloaded, total)
+            print(f"[release_mgr] download_asset complete downloaded={downloaded} total={total}", flush=True)
             return True
-        except Exception:
+        except Exception as exc:
+            print(f"[release_mgr] download_asset EXCEPTION {type(exc).__name__}: {exc}", flush=True)
             return False
 
     @staticmethod

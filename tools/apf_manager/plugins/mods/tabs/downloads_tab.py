@@ -785,6 +785,12 @@ class DownloadsTab(MDBoxLayout):
             pos_hint={"center_y": 0.5},
             on_release=lambda *_, k=cache_key: self._toggle_cache_expand(k),
         ))
+        # Make the whole header row clickable (not just the chevron)
+        def _on_header_touch(w, touch, k=cache_key):
+            if w.collide_point(*touch.pos) and touch.button == "left":
+                self._toggle_cache_expand(k)
+                return True
+        info.bind(on_touch_down=_on_header_touch)
         container.add_widget(header)
 
         if expanded:
@@ -901,6 +907,7 @@ class DownloadsTab(MDBoxLayout):
         if key in self._expanded_cache:
             self._expanded_cache.discard(key)
         else:
+            self._expanded_cache.clear()   # auto-collapse all other rows
             self._expanded_cache.add(key)
         Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
 
@@ -940,6 +947,17 @@ class DownloadsTab(MDBoxLayout):
 
             dest.mkdir(parents=True, exist_ok=True)
 
+            # Write metadata immediately after mkdir so category is recoverable
+            # even if the download fails partway through.
+            _mod_id = getattr(item.mod, "mod_id", "")
+            _id_parts = _mod_id.split(".")
+            _game_name = _id_parts[1] if len(_id_parts) >= 2 else getattr(item.mod, "game_id", "")
+            (dest / ".apf_meta.json").write_text(_json.dumps({
+                "category":     item.category,
+                "game_name":    _game_name,
+                "install_type": getattr(item.mod, "install_type", ""),
+            }))
+
             from ....core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
             token = _BUNDLED_TOKEN_PATH.read_text().strip() \
                 if _BUNDLED_TOKEN_PATH.exists() else ""
@@ -948,6 +966,11 @@ class DownloadsTab(MDBoxLayout):
                 import zipfile as _zipfile
                 opt = item.mod
                 opt_type = getattr(opt, "type", "manual")
+                self._host.log(
+                    f"[downloads] other-download: opt_type={opt_type!r} "
+                    f"owner={getattr(opt,'owner','')!r} repo={getattr(opt,'repo','')!r} "
+                    f"tag={getattr(opt,'tag','')!r} name={getattr(opt,'name','')!r}"
+                )
                 if opt_type == "github_release":
                     api = GitHubAPI(
                         repo_owner=getattr(opt, "owner", ""),
@@ -955,51 +978,49 @@ class DownloadsTab(MDBoxLayout):
                         token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
                         on_status=lambda lvl, msg: None,
                     )
-                    direct_url = getattr(opt, "url", "")
-                    if direct_url:
-                        # Use the direct asset URL populated by UpdatesService
-                        fname = direct_url.split("/")[-1].split("?")[0] or f"{getattr(opt, 'tag', 'release')}.zip"
-                        dest_file = dest / fname
-                        self._set_progress(item, 0.1)
-                        api.download_asset(
-                            direct_url, dest_file,
-                            progress_cb=lambda p: self._set_progress(item, 0.1 + p * 0.9),
+                    # Build list of assets to download from per-asset selection
+                    _raw_assets = getattr(opt, "assets", []) or []
+                    selected_assets = [a for a in _raw_assets if getattr(a, "selected", True)]
+                    if not selected_assets:
+                        # Backwards compat: no assets list — use legacy single url field
+                        direct_url = getattr(opt, "url", "")
+                        if direct_url:
+                            from ..registry_service import _OtherAsset as _OA
+                            _fname = direct_url.split("/")[-1].split("?")[0] or f"{getattr(opt,'tag','release')}.zip"
+                            selected_assets = [_OA(name=_fname, url=direct_url)]
+                    self._host.log(f"[downloads] selected_assets count={len(selected_assets)}")
+                    if not selected_assets:
+                        raise RuntimeError("No assets selected for download")
+                    n = len(selected_assets)
+                    for idx, asset in enumerate(selected_assets):
+                        asset_url = getattr(asset, "url", "")
+                        asset_name = getattr(asset, "name", asset_url.split("/")[-1])
+                        dest_file = dest / asset_name
+                        self._host.log(f"[downloads] downloading asset {idx+1}/{n}: {asset_name!r} url={asset_url!r}")
+                        self._set_progress(item, idx / n * 0.1)
+                        dl_ok = api.download_asset(
+                            asset_url, dest_file,
+                            progress_cb=lambda p, i=idx: self._set_progress(
+                                item, (i + 0.1 + p * 0.9) / n
+                            ),
                         )
-                    else:
-                        # Fallback: exact tag lookup (never tag_prefix)
-                        all_releases = api.list_releases()
-                        exact_tag = getattr(opt, "tag", "")
-                        release = next(
-                            (r for r in all_releases if r.get("tag_name") == exact_tag),
-                            None,
+                        self._host.log(
+                            f"[downloads] download_asset returned {dl_ok!r} "
+                            f"dest_file={dest_file} exists={dest_file.exists()} "
+                            f"size={dest_file.stat().st_size if dest_file.exists() else 'N/A'}"
                         )
-                        if not release:
-                            raise RuntimeError(
-                                f"Release tag '{exact_tag}' not found in "
-                                f"{getattr(opt, 'owner', '')}/{getattr(opt, 'repo', '')}"
-                            )
-                        asset = next(
-                            (a for a in release.get("assets", []) if a["name"].endswith(".zip")),
-                            None,
-                        )
-                        if not asset:
-                            raise RuntimeError(f"No .zip asset in release '{exact_tag}'")
-                        dest_file = dest / asset["name"]
-                        self._set_progress(item, 0.1)
-                        api.download_asset(
-                            asset["browser_download_url"],
-                            dest_file,
-                            progress_cb=lambda p: self._set_progress(item, 0.1 + p * 0.9),
-                        )
-                    # Post-download integrity check
-                    if not dest_file.exists() or dest_file.stat().st_size == 0:
-                        raise ValueError(f"Downloaded file is empty or missing: {dest_file}")
-                    try:
-                        with _zipfile.ZipFile(dest_file) as zf:
-                            zf.testzip()
-                    except _zipfile.BadZipFile:
-                        dest_file.unlink(missing_ok=True)
-                        raise ValueError(f"Downloaded file is not a valid zip: {dest_file.name}")
+                        # Per-file integrity check (zip assets only)
+                        if dest_file.suffix.lower() == ".zip":
+                            if not dest_file.exists() or dest_file.stat().st_size == 0:
+                                raise ValueError(f"Downloaded file is empty or missing: {dest_file}")
+                            try:
+                                with _zipfile.ZipFile(dest_file) as zf:
+                                    bad = zf.testzip()
+                                    self._host.log(f"[downloads] zipfile.testzip() {asset_name!r} returned {bad!r} (None=OK)")
+                            except _zipfile.BadZipFile as zexc:
+                                self._host.log(f"[downloads] BadZipFile {asset_name!r}: {zexc}")
+                                dest_file.unlink(missing_ok=True)
+                                raise ValueError(f"Downloaded file is not a valid zip: {asset_name}")
                 elif opt_type == "external_url":
                     raise RuntimeError("External URL options require manual download — open in browser")
                 else:
@@ -1013,16 +1034,6 @@ class DownloadsTab(MDBoxLayout):
             else:
                 _download_github_folder(owner, repo, folder, dest, token,
                                         progress_cb=lambda p: self._set_progress(item, p))
-
-            # Write metadata for category recovery during cache scan
-            _mod_id = getattr(item.mod, "mod_id", "")
-            _id_parts = _mod_id.split(".")
-            _game_name = _id_parts[1] if len(_id_parts) >= 2 else getattr(item.mod, "game_id", "")
-            (dest / ".apf_meta.json").write_text(_json.dumps({
-                "category":     item.category,
-                "game_name":    _game_name,
-                "install_type": getattr(item.mod, "install_type", ""),
-            }))
 
             with self._queue_lock:
                 item.status = "done"

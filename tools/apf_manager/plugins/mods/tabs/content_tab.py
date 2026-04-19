@@ -50,6 +50,7 @@ class ContentTab(MDBoxLayout):
         self._all_mods: list = []
         self._all_templates: list = []
         self._all_other: list = []
+        self._cached_other_items: list = []   # loaded in background; avoids main-thread HTTP
         # Framework state (set by mods_panel via set_framework_state)
         self._ue4ss_ok: bool = False
         self._fw_dir = None
@@ -92,7 +93,7 @@ class ContentTab(MDBoxLayout):
         toolbar.add_widget(TipIconButton(
             icon="refresh",
             tooltip_text="Refresh registry content",
-            on_release=lambda *_: self._do_refresh(),
+            on_release=lambda *_: self._load_other_items_bg(),
         ))
         self._btn_queue = MDButton(
             MDButtonText(text="Queue for Download"),
@@ -133,15 +134,17 @@ class ContentTab(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def refresh(self, game_id: str) -> None:
+        if self._game_id != game_id:
+            self._cached_other_items = []   # invalidate cache on game change
         self._game_id = game_id
-        self._do_refresh()
+        self._load_other_items_bg()
 
     def set_framework_state(self, ue4ss_ok: bool, fw_dir, fw_conflict: list) -> None:
         """Called by mods_panel after detection — drives section notices."""
         self._ue4ss_ok = ue4ss_ok
         self._fw_dir = fw_dir
         self._fw_conflict = list(fw_conflict) if fw_conflict else []
-        self._do_refresh()
+        self._do_refresh()   # framework state doesn't require re-fetching Other items
 
     def _do_refresh(self) -> None:
         self._list.clear_widgets()
@@ -214,29 +217,8 @@ class ContentTab(MDBoxLayout):
             ))
 
         # --- Other section (UE4SS + framework binaries) ---
-        # UE4SS items from registry (game-specific recommendations)
-        registry_ue4ss = registry_svc.get_other_content(self._game_id) if hasattr(registry_svc, "get_other_content") else []
-        updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
-        # UE4SS official releases — always present even without a registry (bootstrap path)
-        ue4ss_owner, ue4ss_repo = "UE4SS-RE", "RE-UE4SS"
-        if registry_ue4ss:
-            # If registry specifies a custom owner/repo for UE4SS, use it
-            for ri in registry_ue4ss:
-                if getattr(ri, "install_type", "") == "ue4ss":
-                    ue4ss_owner = getattr(ri, "owner", ue4ss_owner)
-                    ue4ss_repo  = getattr(ri, "repo", ue4ss_repo)
-                    break
-        ue4ss_official = (
-            updates_svc.get_ue4ss_releases_for_content(ue4ss_owner, ue4ss_repo)
-            if (updates_svc and hasattr(updates_svc, "get_ue4ss_releases_for_content"))
-            else []
-        )
-        fw_items = (
-            updates_svc.get_framework_releases_for_content()
-            if (updates_svc and hasattr(updates_svc, "get_framework_releases_for_content"))
-            else []
-        )
-        other_items = (registry_ue4ss or []) + (ue4ss_official or []) + (fw_items or [])
+        # Populated by _load_other_items_bg(); read from cache here to avoid main-thread HTTP
+        other_items = self._cached_other_items
         self._all_other = other_items
         if other_items:
             collapsed = "Other" in self._collapsed
@@ -248,6 +230,54 @@ class ContentTab(MDBoxLayout):
                     self._list.add_widget(self._other_row(item, i))
 
         self._sync_queue_btn()
+
+    def _load_other_items_bg(self) -> None:
+        """Fetch UE4SS + framework Other items in a background thread, then refresh."""
+        import threading
+
+        game_id = self._game_id
+
+        def _bg():
+            try:
+                registry_svc = self._host.get_service("registry")
+                updates_svc = (self._host.get_service("updates")
+                               if self._host.has_service("updates") else None)
+
+                registry_ue4ss = (
+                    registry_svc.get_other_content(game_id)
+                    if registry_svc and hasattr(registry_svc, "get_other_content")
+                    else []
+                ) or []
+
+                ue4ss_owner, ue4ss_repo = "UE4SS-RE", "RE-UE4SS"
+                for ri in registry_ue4ss:
+                    if getattr(ri, "install_type", "") == "ue4ss":
+                        ue4ss_owner = getattr(ri, "owner", ue4ss_owner)
+                        ue4ss_repo  = getattr(ri, "repo",  ue4ss_repo)
+                        break
+
+                ue4ss_official = (
+                    updates_svc.get_ue4ss_releases_for_content(ue4ss_owner, ue4ss_repo)
+                    if updates_svc and hasattr(updates_svc, "get_ue4ss_releases_for_content")
+                    else []
+                ) or []
+
+                fw_items = (
+                    updates_svc.get_framework_releases_for_content()
+                    if updates_svc and hasattr(updates_svc, "get_framework_releases_for_content")
+                    else []
+                ) or []
+
+                self._cached_other_items = registry_ue4ss + ue4ss_official + fw_items
+            except Exception:
+                self._cached_other_items = []
+
+            from kivy.clock import Clock
+            Clock.schedule_once(lambda dt: self._do_refresh(), 0)
+
+        threading.Thread(target=_bg, daemon=True).start()
+        # Show current state immediately while waiting for background result
+        self._do_refresh()
 
     # -----------------------------------------------------------------------
     # Row builders
@@ -605,7 +635,12 @@ class ContentTab(MDBoxLayout):
 
         mod_id = getattr(mod, "mod_id", "")
         desc   = getattr(mod, "description", "")
-        sub    = mod_id or desc
+        if mod_id:
+            sub = mod_id
+        elif desc:
+            sub = desc
+        else:
+            sub = "Non-AP Mod"
         if sub:
             info.add_widget(MDLabel(
                 text=sub, font_style="Label", role="small",
@@ -648,6 +683,14 @@ class ContentTab(MDBoxLayout):
                 text=desc, font_style="Label", role="small",
                 size_hint_y=None, height=dp(16),
                 theme_text_color="Secondary",
+            ))
+        elif not mod_id:
+            panel.add_widget(MDLabel(
+                text="This is a regular UE4SS mod that does not directly contribute toward "
+                     "Archipelago randomization on its own.",
+                font_style="Label", role="small",
+                size_hint_y=None, height=dp(32),
+                theme_text_color="Custom", text_color=_COL_DIM,
             ))
         else:
             panel.add_widget(MDLabel(
@@ -797,6 +840,11 @@ class ContentTab(MDBoxLayout):
             size_hint_y=None, height=dp(24),
         ))
         note = getattr(item, "note", "")
+        # Show partial-selection hint when some (not all) assets are selected
+        _assets = getattr(item, "assets", []) or []
+        _n_sel = sum(1 for a in _assets if getattr(a, "selected", True))
+        if _assets and 0 < _n_sel < len(_assets):
+            note = f"{note}   ({_n_sel}/{len(_assets)} assets)" if note else f"({_n_sel}/{len(_assets)} assets selected)"
         if note:
             info.add_widget(MDLabel(
                 text=note, font_style="Label", role="small",
@@ -828,10 +876,10 @@ class ContentTab(MDBoxLayout):
         container.add_widget(header)
 
         if expanded:
-            container.add_widget(self._other_detail(item))
+            container.add_widget(self._other_detail(item, outer_key=key))
         return container
 
-    def _other_detail(self, item) -> MDBoxLayout:
+    def _other_detail(self, item, outer_key: str = "") -> MDBoxLayout:
         """Expanded detail panel for an Other-category item."""
         panel = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
@@ -847,6 +895,7 @@ class ContentTab(MDBoxLayout):
         published_at = getattr(item, "published_at", "")
         asset_name   = getattr(item, "asset_name", "")
         changelog    = getattr(item, "changelog", "")
+        assets       = getattr(item, "assets", []) or []
 
         if install_type == "framework_binary":
             type_label = "Framework Binaries"
@@ -875,7 +924,7 @@ class ContentTab(MDBoxLayout):
             panel.add_widget(_detail_row("Tag", tag))
         if published_at:
             panel.add_widget(_detail_row("Published", published_at[:10]))
-        if asset_name:
+        if asset_name and not assets:
             panel.add_widget(_detail_row("Asset", asset_name))
 
         if opt_type == "manual":
@@ -885,6 +934,57 @@ class ContentTab(MDBoxLayout):
                 size_hint_y=None, height=dp(36),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
+
+        # --- Asset sub-rows ---
+        if assets:
+            sep = MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.2, 0.2, 0.25, 1))
+            panel.add_widget(sep)
+            assets_lbl = MDLabel(
+                text="Assets", font_style="Label", role="small",
+                size_hint_y=None, height=dp(18),
+                theme_text_color="Custom", text_color=_COL_DIM,
+            )
+            panel.add_widget(assets_lbl)
+
+            def _on_asset_check(asset, val, ok=outer_key):
+                asset.selected = val
+                # Auto-sync outer checkbox: uncheck release if no assets remain selected
+                any_selected = any(a.selected for a in assets)
+                if not any_selected and ok in self._checked:
+                    self._checked.discard(ok)
+                    self._sync_queue_btn()
+                elif any_selected and ok not in self._checked:
+                    self._checked.add(ok)
+                    self._sync_queue_btn()
+                # Refresh to update partial-selection indicator in row header
+                from kivy.clock import Clock
+                Clock.schedule_once(lambda dt: self._do_refresh(), 0)
+
+            for asset in assets:
+                asset_row = MDBoxLayout(
+                    orientation="horizontal", size_hint_y=None, height=dp(28),
+                    padding=[dp(8), 0, 0, 0], spacing=dp(8),
+                )
+                chk = MDCheckbox(
+                    size_hint=(None, None), size=(dp(20), dp(20)),
+                    pos_hint={"center_y": 0.5},
+                )
+                chk.active = asset.selected
+                chk.bind(active=lambda inst, val, a=asset: _on_asset_check(a, val))
+                asset_row.add_widget(chk)
+                asset_row.add_widget(MDLabel(
+                    text=asset.name, font_style="Label", role="small",
+                    size_hint=(1, 1),
+                ))
+                sz = getattr(asset, "size", 0) or 0
+                if sz:
+                    size_lbl = MDLabel(
+                        text=_fmt_bytes(sz), font_style="Label", role="small",
+                        size_hint=(None, 1), width=dp(72),
+                        halign="right", theme_text_color="Custom", text_color=_COL_DIM,
+                    )
+                    asset_row.add_widget(size_lbl)
+                panel.add_widget(asset_row)
 
         if changelog:
             def _show_changelog(*_):
@@ -971,6 +1071,7 @@ class ContentTab(MDBoxLayout):
             item for i, item in enumerate(self._all_other)
             if getattr(item, "type", "manual") == "github_release"
             and f"other:{getattr(item, 'owner', '')}+{getattr(item, 'repo', '')}/{getattr(item, 'tag', '') or getattr(item, 'name', str(i))}" in self._checked
+            and any(getattr(a, "selected", True) for a in (getattr(item, "assets", []) or [{"selected": True}]))
         ]
 
         if not checked_mods and not checked_templates and not checked_other:
@@ -1066,3 +1167,14 @@ class ContentTab(MDBoxLayout):
 
     def get_available_count(self) -> int:
         return len(self._all_mods) + len(self._all_templates) + len(self._all_other)
+
+
+def _fmt_bytes(n: int) -> str:
+    """Format byte count as human-readable string (e.g. '12.4 MB')."""
+    if n <= 0:
+        return ""
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
+        n /= 1024
+    return f"{n:.1f} TB"

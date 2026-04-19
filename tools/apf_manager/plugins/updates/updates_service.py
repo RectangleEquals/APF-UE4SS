@@ -157,7 +157,7 @@ class UpdatesService:
         Returns up to 3 latest stable releases tagged framework/vX.Y.Z.
         """
         try:
-            from ..mods.registry_service import _OtherEntry
+            from ..mods.registry_service import _OtherEntry, _OtherAsset
             api = self._make_apf_api()
             releases = api.list_releases(tag_prefix="framework/")
             entries = []
@@ -169,6 +169,20 @@ class UpdatesService:
                 ver = (full_tag[len("framework/"):]
                        if full_tag.startswith("framework/") else full_tag)
                 body = (release.get("body") or "")
+                # Build full assets list, filtering out installer and apworld
+                _assets = [
+                    _OtherAsset(
+                        name=a.get("name", ""),
+                        url=a.get("browser_download_url", ""),
+                        size=a.get("size", 0),
+                        selected=True,
+                    )
+                    for a in release.get("assets", [])
+                    if not (
+                        a.get("name", "").endswith(".exe") or
+                        a.get("name", "").endswith(".apworld")
+                    )
+                ]
                 entries.append(_OtherEntry(
                     name         = f"APF Framework {ver}",
                     note         = f"framework binaries  ·  RectangleEquals/APF-UE4SS",
@@ -181,6 +195,7 @@ class UpdatesService:
                     published_at = release.get("published_at", ""),
                     asset_name   = asset.get("name", "") if asset else "",
                     changelog    = body[:2000],
+                    assets       = _assets,
                 ))
             return entries
         except Exception:
@@ -197,7 +212,7 @@ class UpdatesService:
         entries even if no registry is configured (bootstrap path).
         """
         try:
-            from ..mods.registry_service import _OtherEntry
+            from ..mods.registry_service import _OtherEntry, _OtherAsset
             api = self._make_ue4ss_api(owner, repo)
             typed_releases = api.releases.fetch_all()
 
@@ -209,6 +224,15 @@ class UpdatesService:
                 asset = next(
                     (a for a in r.assets if a.name.endswith(".zip")), None
                 )
+                _assets = [
+                    _OtherAsset(
+                        name=a.name,
+                        url=a.browser_download_url,
+                        size=getattr(a, "size", 0),
+                        selected=True,
+                    )
+                    for a in r.assets
+                ]
                 entries.append(_OtherEntry(
                     name         = f"{repo} {r.tag_name}",
                     note         = f"stable  ·  {owner}/{repo}",
@@ -221,6 +245,7 @@ class UpdatesService:
                     published_at = r.published_at or "",
                     asset_name   = asset.name if asset else "",
                     changelog    = (r.body or "")[:2000],
+                    assets       = _assets,
                 ))
 
             if experimental:
@@ -228,6 +253,15 @@ class UpdatesService:
                 asset = next(
                     (a for a in r.assets if a.name.endswith(".zip")), None
                 )
+                _assets = [
+                    _OtherAsset(
+                        name=a.name,
+                        url=a.browser_download_url,
+                        size=getattr(a, "size", 0),
+                        selected=True,
+                    )
+                    for a in r.assets
+                ]
                 entries.append(_OtherEntry(
                     name         = f"{repo} {r.tag_name}",
                     note         = f"experimental  ·  {owner}/{repo}",
@@ -240,6 +274,7 @@ class UpdatesService:
                     published_at = r.published_at or "",
                     asset_name   = asset.name if asset else "",
                     changelog    = (r.body or "")[:2000],
+                    assets       = _assets,
                 ))
             return entries
         except Exception:

@@ -98,19 +98,29 @@ class UE4SSInfo:
 
 
 @dataclass
+class _OtherAsset:
+    """A single downloadable asset within a GitHub release."""
+    name: str               # filename (e.g. "UE4SS_v3.0.1.zip")
+    url: str                # browser_download_url
+    size: int = 0           # bytes; 0 = unknown
+    selected: bool = True   # default: user has it checked
+
+
+@dataclass
 class _OtherEntry:
-    """Represents a bootstrap content item from ue4ss.json options."""
+    """Represents a bootstrap content item from ue4ss.json options or a GitHub release."""
     name: str
     note: str
     type: str        # "github_release" | "external_url" | "manual"
     owner: str       # For github_release: UE4SS repo owner (may be a fork)
     repo: str        # For github_release: UE4SS repo name
     tag: str         # For github_release: exact release tag
-    url: str         # For external_url: direct URL
+    url: str         # For external_url / backwards-compat primary asset URL
     install_type: str = "ue4ss"   # "ue4ss" | "framework_binary"
     published_at: str = ""        # ISO date string from release
-    asset_name: str = ""          # filename of the primary download asset
+    asset_name: str = ""          # primary asset filename (backwards compat)
     changelog: str = ""           # first 2000 chars of release body
+    assets: list = field(default_factory=list)  # list[_OtherAsset] — full asset list
 
 
 @dataclass
@@ -467,6 +477,10 @@ class RegistryService:
                 if mod.mod_id:
                     parts = mod.mod_id.split(".")
                     if game_id and len(parts) >= 2 and parts[1].lower() != game_id.lower():
+                        continue
+                # Non-AP mods: filter by the registry's stored game_id
+                else:
+                    if game_id and entry.game_id and entry.game_id.lower() != game_id.lower():
                         continue
                 results.append(RegistryModEntry(
                     mod_id=mod.mod_id,

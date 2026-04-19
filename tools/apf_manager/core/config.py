@@ -85,6 +85,31 @@ class APFConfig:
     def __init__(self) -> None:
         self._settings = GlobalSettings()
         self._path = _config_path()
+        self._handle_pending_reset()
+
+    @staticmethod
+    def _handle_pending_reset() -> None:
+        """If a pending-reset marker exists, delete all app data before services initialize."""
+        import shutil
+        app_dir = Path.home() / ".apf_manager"
+        marker = app_dir / "_pending_reset"
+        if not marker.exists():
+            return
+        # Delete everything except the marker itself, then remove marker
+        try:
+            for child in app_dir.iterdir():
+                if child.name == "_pending_reset":
+                    continue
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            marker.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     def load(self) -> None:
         if not self._path.exists():

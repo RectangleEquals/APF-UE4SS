@@ -59,6 +59,8 @@ html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3
 .badge-cpp  { background: #1f6feb33; color: #58a6ff; }
 .badge-bp   { background: #d2930333; color: #f0883e; }
 .badge-ue4ss{ background: #8b5cf633; color: #a78bfa; }
+.badge-ap   { background: #2ea04333; color: #3fb950; }
+.badge-nap  { background: #6b452533; color: #d4a06a; }
 .tree-children { display: block; }
 .tree-node.collapsed > .tree-children { display: none; }
 .expand-btn { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 10px; width: 16px; flex-shrink: 0; text-align: center; padding: 0; }
@@ -315,13 +317,14 @@ function appendBadges(row, node) {
   if (t === "mod") {
     const isFramework = /^archipelago\.[^.]+\.framework$/.test(node.mod_id || "");
     if (isFramework) addBadge(row, "FW", "badge-fw");
+    addBadge(row, "AP", "badge-ap");
     const comps = node.components || [];
     if (comps.includes("cpp"))       addBadge(row, "C++", "badge-cpp");
     if (comps.includes("lua"))       addBadge(row, "LUA", "badge-lua");
     if (comps.includes("blueprint")) addBadge(row, "BP",  "badge-bp");
   }
   if (t === "non_ap_mod") {
-    addBadge(row, "UE4SS", "badge-ue4ss");
+    addBadge(row, "NAP", "badge-nap");
     const comps = node.components || [];
     if (comps.includes("cpp"))       addBadge(row, "C++", "badge-cpp");
     if (comps.includes("lua"))       addBadge(row, "LUA", "badge-lua");

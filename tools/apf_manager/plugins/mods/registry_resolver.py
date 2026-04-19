@@ -282,8 +282,22 @@ class RegistryResolver:
             if readme_entry and readme_entry.get("download_url"):
                 readme_url = readme_entry["download_url"]
 
-            # Attach ue4ss_info only to the core framework mod in this repo
+            # Attach ue4ss_info to the core framework mod in this repo.
+            # Prefer root-level ue4ss.json; fall back to subfolder ue4ss.json (e.g. APFrameworkMod/).
             mod_ue4ss = ue4ss_info if _is_framework_mod_id(mod_id) else None
+            if _is_framework_mod_id(mod_id) and not mod_ue4ss:
+                _sub_ue4ss_e = next(
+                    (e for e in sub_contents
+                     if e.get("name") == "ue4ss.json" and e.get("download_url")),
+                    None,
+                )
+                if _sub_ue4ss_e:
+                    _ue4ss_text = api.fetch_text(_sub_ue4ss_e["download_url"])
+                    if _ue4ss_text:
+                        try:
+                            mod_ue4ss = json.loads(_ue4ss_text)
+                        except Exception:
+                            pass
 
             # Component detection from sub_contents directory structure
             _detected = []

@@ -523,16 +523,15 @@ class SettingsScreen(MDScreen):
         dlg.open()
 
     def _run_reset_app_data(self) -> None:
-        import shutil
         app_data_dir = Path.home() / ".apf_manager"
+        marker = app_data_dir / "_pending_reset"
         try:
-            if app_data_dir.is_dir():
-                shutil.rmtree(app_data_dir, ignore_errors=True)
             app_data_dir.mkdir(parents=True, exist_ok=True)
+            marker.write_text("1", encoding="utf-8")
         except Exception as exc:
-            self._show_snackbar(f"Error resetting app data: {exc}")
+            self._show_snackbar(f"Error scheduling reset: {exc}")
             return
-        # Restart the app so all services re-initialize cleanly
+        # Restart; APFConfig.__init__ will perform the actual deletion on next launch
         self._restart_app()
 
     def _go_back(self, *_) -> None:
