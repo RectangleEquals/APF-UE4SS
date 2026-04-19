@@ -318,6 +318,22 @@ class DocsPanel:
     # Private — view modes
     # -----------------------------------------------------------------------
 
+    def show_inline(
+        self,
+        content: str,
+        title: str = "Release Notes",
+        sidebar_mode: str = "verbose",
+        allow_mode_toggle: bool = False,
+    ) -> None:
+        """Render an inline markdown string in the viewer (no file or network I/O)."""
+        viewer = self._html_viewer()
+        if viewer is None:
+            self._host.log("[docs_viewer] html_viewer service not available")
+            return
+        from .md_to_html import convert
+        html = convert(content or "_No content available._", title=title)
+        viewer.show(title, html)
+
     def _open_local_file(self, viewer, path: Path) -> None:
         """Read a local .md file and render it in a simple HTML viewer window."""
         from .md_to_html import convert

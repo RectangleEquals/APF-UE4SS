@@ -197,13 +197,20 @@ def _build_tree_nodes(
                 })
             # BUG-8: Surface UE4SS options from ue4ss.json in the repo viewer
             if mod.ue4ss_info:
-                for opt in (mod.ue4ss_info.get("options") or []):
+                _all_opts = mod.ue4ss_info.get("options") or []
+                _has_automated = any(
+                    o.get("type", "manual") in ("github_release", "external_url")
+                    for o in _all_opts
+                )
+                for opt in _all_opts:
                     opt_key = f"{opt.get('repo', '')}:{opt.get('tag', '')}"
                     if opt_key in seen_ue4ss_options:
                         continue
                     seen_ue4ss_options.add(opt_key)
                     opt_type = opt.get("type", "manual")
                     opt_label = opt.get("note") or f"UE4SS {opt.get('tag', 'latest')}"
+                    # All options are selectable; manual options checked only when no automated option exists
+                    _checked = True if opt_type in ("github_release", "external_url") else not _has_automated
                     children.append({
                         "type": "ue4ss_option",
                         "id": f"ue4ss:{opt_key}",
@@ -213,8 +220,9 @@ def _build_tree_nodes(
                         "repo": opt.get("repo", ""),
                         "tag": opt.get("tag", ""),
                         "url": opt.get("url", ""),
-                        "selectable": opt_type in ("github_release", "external_url"),
-                        "checked": opt_type == "github_release",
+                        "docs": opt.get("docs", ""),
+                        "selectable": True,
+                        "checked": _checked,
                         "install_type": "ue4ss",
                     })
             # Deduplicated template nodes per repo
@@ -405,14 +413,20 @@ def _inject_ue4ss_nodes(nodes: list[dict], mods: list, game_id: str) -> None:
             continue
         rkey = f"{mod.owner}/{mod.repo}"
         repo_options.setdefault(rkey, [])
+        _all_opts2 = mod.ue4ss_info.get("options") or []
+        _has_automated2 = any(
+            o.get("type", "manual") in ("github_release", "external_url")
+            for o in _all_opts2
+        )
         seen_in_repo: set[str] = set()
-        for opt in (mod.ue4ss_info.get("options") or []):
+        for opt in _all_opts2:
             opt_key = f"{opt.get('repo', '')}:{opt.get('tag', '')}"
             if opt_key in seen_in_repo:
                 continue
             seen_in_repo.add(opt_key)
             opt_type = opt.get("type", "manual")
             opt_label = opt.get("note") or f"UE4SS {opt.get('tag', 'latest')}"
+            _checked2 = True if opt_type in ("github_release", "external_url") else not _has_automated2
             repo_options[rkey].append({
                 "type": "ue4ss_option",
                 "id": f"ue4ss:{opt_key}",
@@ -422,8 +436,9 @@ def _inject_ue4ss_nodes(nodes: list[dict], mods: list, game_id: str) -> None:
                 "repo": opt.get("repo", ""),
                 "tag": opt.get("tag", ""),
                 "url": opt.get("url", ""),
-                "selectable": opt_type in ("github_release", "external_url"),
-                "checked": opt_type == "github_release",
+                "docs": opt.get("docs", ""),
+                "selectable": True,
+                "checked": _checked2,
                 "install_type": "ue4ss",
                 "game_id_match": True,
                 "conflict": False,

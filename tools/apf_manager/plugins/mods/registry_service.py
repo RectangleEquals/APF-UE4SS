@@ -94,7 +94,6 @@ class FrameworkModCandidate:
 class UE4SSInfo:
     options: list
     docs: Optional[str] = None
-    note: str = ""
 
 
 @dataclass
@@ -121,6 +120,7 @@ class _OtherEntry:
     asset_name: str = ""          # primary asset filename (backwards compat)
     changelog: str = ""           # first 2000 chars of release body
     assets: list = field(default_factory=list)  # list[_OtherAsset] — full asset list
+    docs: str = ""                              # relative path to documentation file in repo
 
 
 @dataclass
@@ -541,7 +541,9 @@ class RegistryService:
 
     def get_other_content(self, game_id: str) -> list:
         """Return _OtherEntry list for UE4SS options from ue4ss.json in game registries."""
+        print(f"[P3-4][get_other_content] game_id={game_id!r}")
         info = self.get_ue4ss_info(game_id)
+        print(f"[P3-4][get_other_content] get_ue4ss_info returned: {info!r}")
         if not info:
             return []
         entries = []
@@ -558,6 +560,7 @@ class RegistryService:
                 tag          = opt.get("tag", ""),
                 url          = opt.get("url", ""),
                 install_type = "ue4ss",
+                docs         = opt.get("docs", ""),
             ))
         return entries
 
@@ -601,28 +604,36 @@ class RegistryService:
         resolver = self._get_resolver()
         cache = self._get_cache()
 
+        print(f"[P3-4][get_ue4ss_info] game_id={game_id!r} — starting search")
+
         # 1. Targeted topic search
         try:
             core_repos = resolver.search_github_core(game_id)
+            print(f"[P3-4][get_ue4ss_info] search_github_core({game_id!r}) returned {len(core_repos)} repo(s): {[f\"{r.get('owner','?')}/{r.get('repo','?')}\" for r in core_repos]}")
             for r in core_repos:
-                discovered = resolver.traverse(
-                    f"https://github.com/{r['owner']}/{r['repo']}", cache
-                )
+                repo_url = f"https://github.com/{r['owner']}/{r['repo']}"
+                print(f"[P3-4][get_ue4ss_info] traversing {repo_url}")
+                discovered = resolver.traverse(repo_url, cache)
+                print(f"[P3-4][get_ue4ss_info]   traverse yielded {len(discovered)} mod(s)")
                 for mod in discovered:
+                    print(f"[P3-4][get_ue4ss_info]   mod: mod_id={mod.mod_id!r} has_ue4ss_info={mod.ue4ss_info is not None}")
                     if mod.ue4ss_info:
                         info = mod.ue4ss_info
+                        print(f"[P3-4][get_ue4ss_info]   FOUND via topic search: options={info.get('options')}")
                         return UE4SSInfo(
                             options=info.get("options", []),
                             docs=info.get("docs"),
-                            note=info.get("note", ""),
                         )
-        except Exception:
-            pass
+        except Exception as _exc:
+            print(f"[P3-4][get_ue4ss_info] topic search exception: {_exc!r}")
 
         # 2. Existing registry data
-        for entry in self.get_mods(game_id):
+        all_mods = self.get_mods(game_id)
+        print(f"[P3-4][get_ue4ss_info] checking {len(all_mods)} registered mod(s) for ue4ss_info")
+        for entry in all_mods:
             if entry.ue4ss_info:
                 info = entry.ue4ss_info
+                print(f"[P3-4][get_ue4ss_info] FOUND via registered mod {entry.mod_id!r}: options={info.get('options')}")
                 return UE4SSInfo(
                     options=info.get("options", []),
                     docs=info.get("docs"),
@@ -630,6 +641,7 @@ class RegistryService:
                 )
 
         # No game-specific UE4SS info found
+        print(f"[P3-4][get_ue4ss_info] no UE4SS info found for game_id={game_id!r} — returning None")
         return None
 
     # -----------------------------------------------------------------------

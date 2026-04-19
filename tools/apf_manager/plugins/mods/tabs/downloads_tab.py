@@ -149,6 +149,8 @@ class DownloadsTab(MDBoxLayout):
         self._selected_cache: set[str] = set()        # set of cache_path str for checked rows
         self._collapsed_sections: set[str] = set()   # collapsed section/sub-section keys
         self._expanded_cache: set[str] = set()        # expanded cached-row detail panels
+        self._cache_dirty: bool = False               # True when cache needs re-scan (e.g. after clear)
+        self._title_label = None                      # set by _build_ui
         self._build_ui()
 
     # -----------------------------------------------------------------------
@@ -160,10 +162,11 @@ class DownloadsTab(MDBoxLayout):
             orientation="horizontal", size_hint_y=None, height=dp(48),
             md_bg_color=(0.12, 0.16, 0.20, 1), padding=(dp(8), 0), spacing=dp(4),
         )
-        toolbar.add_widget(MDLabel(
+        self._title_label = MDLabel(
             text="Downloads", font_style="Title", role="medium",
             size_hint_x=1, halign="left",
-        ))
+        )
+        toolbar.add_widget(self._title_label)
         toolbar.add_widget(TipIconButton(
             icon="refresh",
             tooltip_text="Rescan cache",
@@ -205,7 +208,12 @@ class DownloadsTab(MDBoxLayout):
         self._framework_detected = bool(
             mods_svc and mods_svc.get_framework_mod_dir() is not None
         ) if self._ue4ss_detected else False
+        self._cache_dirty = False
         self._scan_cache_and_rebuild()
+
+    def mark_stale(self) -> None:
+        """Mark the cache as dirty so it re-scans the next time the tab is shown/activated."""
+        self._cache_dirty = True
 
     def add_to_queue(self, items: list) -> None:
         """Called by ContentTab when the user queues items for download.
@@ -336,8 +344,50 @@ class DownloadsTab(MDBoxLayout):
         "other":    ("Other",     "package-variant"),
     }
 
+    def _update_title_size(self) -> None:
+        """Refresh title label with total and per-game cache sizes."""
+        if not self._title_label:
+            return
+        try:
+            cache_root = Path.home() / ".apf_manager" / "cache"
+            if not cache_root.exists():
+                self._title_label.text = "Downloads"
+                return
+
+            total_bytes = 0
+            game_bytes = 0
+            for item in self._cached:
+                try:
+                    size = sum(f.stat().st_size for f in item.cache_path.rglob("*") if f.is_file())
+                except Exception:
+                    size = 0
+                total_bytes += size
+                if item.category != "other" and self._game_id and item.game_name == self._game_id:
+                    game_bytes += size
+
+            def _fmt(b: int) -> str:
+                if b >= 1_073_741_824:
+                    return f"{b / 1_073_741_824:.1f} GB"
+                if b >= 1_048_576:
+                    return f"{b / 1_048_576:.1f} MB"
+                if b >= 1_024:
+                    return f"{b / 1_024:.1f} KB"
+                return f"{b} B"
+
+            if total_bytes == 0:
+                self._title_label.text = "Downloads"
+            elif self._game_id and game_bytes > 0:
+                self._title_label.text = (
+                    f"Downloads — Total: {_fmt(total_bytes)} — This game: {_fmt(game_bytes)}"
+                )
+            else:
+                self._title_label.text = f"Downloads — Total: {_fmt(total_bytes)}"
+        except Exception:
+            self._title_label.text = "Downloads"
+
     def _rebuild_ui(self) -> None:
         self._content.clear_widgets()
+        self._update_title_size()
 
         # APF Updates section (framework update)
         self._maybe_add_updates_section()
@@ -951,7 +1001,11 @@ class DownloadsTab(MDBoxLayout):
             # even if the download fails partway through.
             _mod_id = getattr(item.mod, "mod_id", "")
             _id_parts = _mod_id.split(".")
-            _game_name = _id_parts[1] if len(_id_parts) >= 2 else getattr(item.mod, "game_id", "")
+            # Derive game_name: prefer mod_id segment, then game_id attr, then current game
+            _game_name = (
+                _id_parts[1] if len(_id_parts) >= 2 and _id_parts[1]
+                else getattr(item.mod, "game_id", "") or self._game_id
+            )
             (dest / ".apf_meta.json").write_text(_json.dumps({
                 "category":     item.category,
                 "game_name":    _game_name,
@@ -1105,9 +1159,13 @@ class DownloadsTab(MDBoxLayout):
         self._scan_cache_and_rebuild()
 
     def _validate_and_install(self, items: list) -> None:
+        # "other" items (UE4SS, framework binaries) bypass all mod-level validation.
+        other_items = [ci for ci in items if getattr(ci, "category", "mod") == "other"]
+        mod_items   = [ci for ci in items if getattr(ci, "category", "mod") != "other"]
+
         validation_svc = self._host.get_service("validation")
-        if validation_svc and self._detection:
-            results = validation_svc.validate_cached(items, self._detection)
+        if validation_svc and self._detection and mod_items:
+            results = validation_svc.validate_cached(mod_items, self._detection)
             errors   = [r for r in results if r.status == "error"]
             warnings = [r for r in results if r.status == "warn"]
             if errors:
@@ -1117,6 +1175,7 @@ class DownloadsTab(MDBoxLayout):
                 self._show_install_warn(errors, warnings, allow_proceed=True,
                                         items=items)
                 return
+        # Install all items (other items bypass validation entirely)
         self._do_install(items)
 
     # Keep old _on_install_all for backwards compatibility with any callers

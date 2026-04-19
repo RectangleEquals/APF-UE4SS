@@ -390,6 +390,18 @@ function selectNodeById(id) {
   if (node) selectNode(node, row);
 }
 
+function selectNodeByPath(targetPath) {
+  const node = findNodeByPath(TREE_DATA, targetPath);
+  if (!node) return;
+  const wrapper = document.querySelector(`.tree-node[data-id="${CSS.escape(node.id)}"]`);
+  if (!wrapper) return;
+  const row = wrapper.querySelector(":scope > .tree-row");
+  if (row) {
+    selectNode(node, row);
+    row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
 // Find a docs node by relative path from a base directory path
 function findDocsByRelPath(nodes, relPath, basePath) {
   // Resolve path
@@ -548,6 +560,10 @@ function renderDetail(node) {
         ${node.tag ? `<div class="prop-row"><span class="prop-key">Tag</span><span class="prop-val">${escHtml(node.tag)}</span></div>` : ""}
         ${node.url ? `<div class="prop-row"><span class="prop-key">URL</span><span class="prop-val"><a class="ext-url" href="#" onclick="pywebview.api.open_url('${escAttr(node.url || "")}');return false">${escHtml(node.url)}</a></span></div>` : ""}
       </div>
+      ${node.docs ? `
+      <div class="section">
+        <button class="btn btn-secondary" onclick="selectNodeByPath('${escAttr(node.docs)}')">📄 View Documentation</button>
+      </div>` : ""}
       ${node.option_type === "manual" ? `<div class="section"><div style="color:#8b949e;font-size:12px">This option requires manual installation. Refer to the UE4SS documentation for this game.</div></div>` : ""}`;
 
   } else if (node.type === "template") {

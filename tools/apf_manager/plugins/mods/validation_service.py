@@ -188,33 +188,58 @@ class ValidationService:
         game_id: str,
         installed_mod_ids: Optional[set] = None,
     ) -> list[ValidationResult]:
+        """
+        Pre-download/pre-install validation.
+
+        Dependency chain enforced:
+        - UE4SS / framework binaries (install_type in "ue4ss"/"framework_binary"):
+            no mod-level validation — they are self-contained installs.
+        - Non-AP mods (mod_id empty, not "other"):
+            require UE4SS; no framework dependency.
+        - AP mods (non-empty mod_id, not framework):
+            require UE4SS installed/staged + core framework mod installed/staged.
+        - Core framework mods:
+            require UE4SS installed/staged.
+        """
         results: list[ValidationResult] = []
         installed_mod_ids = installed_mod_ids or set()
 
-        staged_ids = {getattr(m, "mod_id", "") for m in staged if getattr(m, "mod_id", "")}
+        from .registry_resolver import _is_framework_mod_id
+
+        # Partition staged items by type — "other" items (UE4SS / framework binaries)
+        # skip ALL mod-level validation rules.
+        def _is_other(m) -> bool:
+            return getattr(m, "install_type", "") in ("ue4ss", "framework_binary") \
+                or getattr(m, "category", "") == "other"
+
+        mod_items = [m for m in staged if not _is_other(m)]
+
+        staged_ids = {getattr(m, "mod_id", "") for m in mod_items if getattr(m, "mod_id", "")}
         all_ids = staged_ids | installed_mod_ids
 
-        # 1. Framework candidate in registry (if non-framework mods staged)
-        from .registry_resolver import _is_framework_mod_id
-        non_fw_staged = [m for m in staged if not _is_framework_mod_id(getattr(m, "mod_id", ""))]
-        if non_fw_staged:
-            has_fw = any(_is_framework_mod_id(getattr(m, "mod_id", "")) for m in staged) or \
-                     any(_is_framework_mod_id(mid) for mid in installed_mod_ids)
+        ap_mods = [m for m in mod_items
+                   if getattr(m, "mod_id", "")
+                   and not _is_framework_mod_id(getattr(m, "mod_id", ""))]
+        fw_mods = [m for m in mod_items
+                   if _is_framework_mod_id(getattr(m, "mod_id", ""))]
+
+        # 1. Framework requirement — only AP mods require it (not non-AP, not "other")
+        if ap_mods:
+            has_fw = bool(fw_mods) or any(_is_framework_mod_id(mid) for mid in installed_mod_ids)
             if not has_fw:
                 registry_svc = self._host.get_service("registry")
-                if registry_svc:
-                    candidates = registry_svc.get_framework_candidates(game_id)
-                    if not candidates:
-                        results.append(ValidationResult(
-                            label="No framework mod candidate",
-                            detail="AP Framework mod is required but not in any registry.",
-                            status="error",
-                            source="Framework",
-                        ))
+                candidates = registry_svc.get_framework_candidates(game_id) if registry_svc else []
+                if not candidates:
+                    results.append(ValidationResult(
+                        label="No framework mod candidate",
+                        detail="AP mods require a core framework mod. Add a registry that includes one.",
+                        status="error",
+                        source="Framework",
+                    ))
 
         # 2. Duplicate mod_ids in staged list
         seen: dict[str, int] = {}
-        for m in staged:
+        for m in mod_items:
             mid = getattr(m, "mod_id", "")
             if mid:
                 seen[mid] = seen.get(mid, 0) + 1
@@ -228,7 +253,7 @@ class ValidationService:
                 ))
 
         # 3. Dependencies satisfied by staged ∪ installed
-        for mod in staged:
+        for mod in mod_items:
             for dep_str in getattr(mod, "depends", []) or getattr(mod, "manifest", {}).get("depends", []):
                 dep_id = dep_str.split(" ")[0].strip()
                 if dep_id not in all_ids:
@@ -240,7 +265,7 @@ class ValidationService:
                     ))
 
         # 4. Incompatibilities within staged set
-        for mod in staged:
+        for mod in mod_items:
             for incompat_id in getattr(mod, "incompatible", []) or getattr(mod, "manifest", {}).get("incompatible", []):
                 incompat_base = incompat_id.split(" ")[0].strip()
                 if incompat_base in staged_ids:

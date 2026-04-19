@@ -234,6 +234,7 @@ class GameHubScreen(MDScreen):
             if contrib.panel_class:
                 panel = contrib.panel_class(host=self._host)
                 self._panel_map[contrib.label] = panel
+                contrib.panel_instance = panel
 
         # Build action buttons — width handled automatically by adaptive_width=True
         for contrib in actions:

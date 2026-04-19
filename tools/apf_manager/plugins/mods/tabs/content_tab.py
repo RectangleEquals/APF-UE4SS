@@ -243,11 +243,20 @@ class ContentTab(MDBoxLayout):
                 updates_svc = (self._host.get_service("updates")
                                if self._host.has_service("updates") else None)
 
+                # P3-4 diagnostic logging
+                _log = lambda msg: (self._host.log(f"[P3-4][other_items] {msg}"), print(f"[P3-4][other_items] {msg}"))
+                user_regs = registry_svc.get_user_registries() if registry_svc else []
+                _log(f"game_id={game_id!r}, user_registries=[{', '.join(r.url for r in user_regs)}]")
+
                 registry_ue4ss = (
                     registry_svc.get_other_content(game_id)
                     if registry_svc and hasattr(registry_svc, "get_other_content")
                     else []
                 ) or []
+
+                _log(f"get_other_content({game_id!r}) returned {len(registry_ue4ss)} item(s):")
+                for _e in registry_ue4ss:
+                    _log(f"  entry: name={getattr(_e,'name','?')!r} owner={getattr(_e,'owner','?')!r} repo={getattr(_e,'repo','?')!r} type={getattr(_e,'type','?')!r} install_type={getattr(_e,'install_type','?')!r}")
 
                 ue4ss_owner, ue4ss_repo = "UE4SS-RE", "RE-UE4SS"
                 for ri in registry_ue4ss:
@@ -256,11 +265,17 @@ class ContentTab(MDBoxLayout):
                         ue4ss_repo  = getattr(ri, "repo",  ue4ss_repo)
                         break
 
+                _log(f"using ue4ss owner/repo: {ue4ss_owner}/{ue4ss_repo}")
+
                 ue4ss_official = (
                     updates_svc.get_ue4ss_releases_for_content(ue4ss_owner, ue4ss_repo)
                     if updates_svc and hasattr(updates_svc, "get_ue4ss_releases_for_content")
                     else []
                 ) or []
+
+                _log(f"get_ue4ss_releases_for_content({ue4ss_owner!r},{ue4ss_repo!r}) returned {len(ue4ss_official)} item(s):")
+                for _e in ue4ss_official:
+                    _log(f"  release: name={getattr(_e,'name','?')!r} tag={getattr(_e,'tag','?')!r} owner={getattr(_e,'owner','?')!r} repo={getattr(_e,'repo','?')!r}")
 
                 fw_items = (
                     updates_svc.get_framework_releases_for_content()
@@ -268,8 +283,12 @@ class ContentTab(MDBoxLayout):
                     else []
                 ) or []
 
+                _log(f"get_framework_releases_for_content() returned {len(fw_items)} item(s)")
+                _log(f"final _cached_other_items count: {len(registry_ue4ss) + len(ue4ss_official) + len(fw_items)}")
+
                 self._cached_other_items = registry_ue4ss + ue4ss_official + fw_items
-            except Exception:
+            except Exception as _exc:
+                print(f"[P3-4][other_items] EXCEPTION: {_exc!r}")
                 self._cached_other_items = []
 
             from kivy.clock import Clock
@@ -623,12 +642,16 @@ class ContentTab(MDBoxLayout):
         ))
         if "cpp" in components:
             name_row.add_widget(MDIcon(
-                icon="code-braces", size_hint=(None, 1), width=dp(20),
+                icon="code-braces",
+                size_hint=(None, None), size=(dp(20), dp(20)),
+                pos_hint={"center_y": 0.5},
                 theme_icon_color="Custom", icon_color=_COL_CPP,
             ))
         if "blueprint" in components:
             name_row.add_widget(MDIcon(
-                icon="blueprint", size_hint=(None, 1), width=dp(20),
+                icon="blueprint",
+                size_hint=(None, None), size=(dp(20), dp(20)),
+                pos_hint={"center_y": 0.5},
                 theme_icon_color="Custom", icon_color=_COL_BP,
             ))
         info.add_widget(name_row)
@@ -799,6 +822,38 @@ class ContentTab(MDBoxLayout):
         from kivy.clock import Clock
         Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
+    def _open_other_docs(self, docs_path: str, owner: str, repo: str) -> None:
+        """Open documentation for a ue4ss_option entry via the docs_viewer service."""
+        docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+        if docs_svc and hasattr(docs_svc, "show_url"):
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{docs_path}"
+            docs_svc.show_url(raw_url, title=docs_path.rsplit("/", 1)[-1],
+                              view_mode="verbose", allow_mode_toggle=False)
+        elif docs_svc and hasattr(docs_svc, "show_inline"):
+            # Fetch raw content then show inline
+            import threading
+            def _fetch():
+                try:
+                    from ...core.remote.github_api import GitHubAPI
+                    from ...core.config import APFConfig
+                    from pathlib import Path as _Path
+                    _tok = _Path(__file__).parents[3] / "data" / ".github_token"
+                    api = GitHubAPI(repo_owner=owner, repo_name=repo,
+                                   token_file_path=_tok if _tok.exists() else None,
+                                   on_status=lambda *_: None)
+                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{docs_path}"
+                    content = api.fetch_text(raw_url) or "_Documentation not available._"
+                except Exception:
+                    content = "_Failed to load documentation._"
+                from kivy.clock import Clock
+                Clock.schedule_once(lambda dt: docs_svc.show_inline(
+                    content=content,
+                    title=docs_path.rsplit("/", 1)[-1],
+                    sidebar_mode="verbose",
+                    allow_mode_toggle=False,
+                ), 0)
+            threading.Thread(target=_fetch, daemon=True).start()
+
     def _other_row(self, item, index: int) -> MDBoxLayout:
         """Row for an Other-category item (UE4SS option or framework binary release)."""
         opt_type = getattr(item, "type", "manual")
@@ -851,9 +906,25 @@ class ContentTab(MDBoxLayout):
                 size_hint_y=None, height=dp(18),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
-        info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
-                  if w.collide_point(*t.pos) else None)
+        # Manual rows are informational-only — no expand toggle
+        if opt_type != "manual":
+            info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
+                      if w.collide_point(*t.pos) else None)
         header.add_widget(info)
+
+        # "View Docs" button — shown when item has a docs path
+        _docs_path = getattr(item, "docs", "")
+        if _docs_path:
+            _docs_owner = getattr(item, "owner", "")
+            _docs_repo  = getattr(item, "repo",  "")
+            header.add_widget(MDIconButton(
+                icon="file-document-outline",
+                size_hint=(None, None), size=(dp(32), dp(32)),
+                pos_hint={"center_y": 0.5},
+                on_release=lambda *_, dpath=_docs_path, do=_docs_owner, dr=_docs_repo: (
+                    self._open_other_docs(dpath, do, dr)
+                ),
+            ))
 
         if opt_type == "external_url":
             import webbrowser
@@ -864,7 +935,7 @@ class ContentTab(MDBoxLayout):
                 pos_hint={"center_y": 0.5},
                 on_release=lambda *_, u=url: webbrowser.open(u) if u else None,
             ))
-        elif opt_type in ("github_release", "manual"):
+        elif opt_type == "github_release":
             chevron_icon = "chevron-up" if expanded else "chevron-down"
             header.add_widget(MDIconButton(
                 icon=chevron_icon,
@@ -872,6 +943,9 @@ class ContentTab(MDBoxLayout):
                 pos_hint={"center_y": 0.5},
                 on_release=lambda *_, k=key: self._toggle_expand(k),
             ))
+        elif opt_type == "manual":
+            # dp(32) spacer keeps all rows column-aligned (no chevron for informational rows)
+            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
 
         container.add_widget(header)
 
@@ -987,24 +1061,36 @@ class ContentTab(MDBoxLayout):
                 panel.add_widget(asset_row)
 
         if changelog:
-            def _show_changelog(*_):
-                from kivymd.uix.dialog import (
-                    MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-                    MDDialogButtonContainer,
-                )
-                dlg_ref = [None]
-                def _close(*_):
-                    if dlg_ref[0]:
-                        dlg_ref[0].dismiss()
-                dlg = MDDialog(
-                    MDDialogHeadlineText(text="Release Notes"),
-                    MDDialogSupportingText(text=changelog),
-                    MDDialogButtonContainer(
-                        MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
-                    ),
-                )
-                dlg_ref[0] = dlg
-                dlg.open()
+            _name = getattr(item, "name", "Release Notes")
+
+            def _show_changelog(*_, _cl=changelog, _nm=_name):
+                docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+                if docs_svc and hasattr(docs_svc, "show_inline"):
+                    docs_svc.show_inline(
+                        content=_cl,
+                        title=f"{_nm} — Release Notes",
+                        sidebar_mode="verbose",
+                        allow_mode_toggle=False,
+                    )
+                else:
+                    # Fallback: plain MDDialog if docs_viewer unavailable
+                    from kivymd.uix.dialog import (
+                        MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+                        MDDialogButtonContainer,
+                    )
+                    dlg_ref = [None]
+                    def _close(*_):
+                        if dlg_ref[0]:
+                            dlg_ref[0].dismiss()
+                    dlg = MDDialog(
+                        MDDialogHeadlineText(text="Release Notes"),
+                        MDDialogSupportingText(text=_cl[:500]),
+                        MDDialogButtonContainer(
+                            MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
+                        ),
+                    )
+                    dlg_ref[0] = dlg
+                    dlg.open()
 
             panel.add_widget(MDButton(
                 MDButtonText(text="Release Notes"),

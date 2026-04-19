@@ -45,6 +45,7 @@ class PluginContribution:
     panel_class: Any = None             # Widget class for hub_panel / home_screen
     handler: Optional[Callable] = None  # For hub_action / dialog
     dialog_id: str = ""                 # For dialog contributions
+    panel_instance: Any = None          # Live instance set by hub after panel creation
 
 
 @dataclass

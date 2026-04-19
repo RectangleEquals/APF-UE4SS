@@ -843,7 +843,11 @@ class RegistryResolver:
         Search for repos tagged apf-ue4ss-registry-{game_id}-core.
         NOT cached — used for targeted UE4SS discovery.
         """
-        return self._call_search_api(f"apf-ue4ss-registry-{game_id}-core") or []
+        topic = f"apf-ue4ss-registry-{game_id}-core"
+        print(f"[P3-4][search_github_core] searching GitHub for topic={topic!r}")
+        results = self._call_search_api(topic) or []
+        print(f"[P3-4][search_github_core] GitHub search returned {len(results)} result(s): {[f\"{r.get('owner','?')}/{r.get('repo','?')}\" for r in results]}")
+        return results
 
     def _call_search_api(self, topic: str) -> Optional[list[dict]]:
         api = self._make_api(_BLACKLIST_OWNER, _BLACKLIST_REPO)

@@ -209,6 +209,7 @@ class ModsPanel(PluginPanel):
         tabs._tabs_carousel = carousel
         carousel._tabs = tabs
         carousel.bind(_offset=tabs.android_animation, index=tabs.on_carousel_index)
+        carousel.bind(index=self._on_tab_index_changed)
 
         # Instantiate tab content widgets and add to carousel.
         self._tab_registries = RegistriesTab(
@@ -375,6 +376,23 @@ class ModsPanel(PluginPanel):
         if framework and framework.is_update_available:
             count += 1
         return count
+
+    def _on_tab_index_changed(self, carousel, index: int) -> None:
+        """Triggered whenever the user switches tabs. Re-scans Downloads if stale."""
+        if index == _TAB_DOWNLOADS and self._tab_downloads:
+            if getattr(self._tab_downloads, "_cache_dirty", False):
+                self._tab_downloads._cache_dirty = False
+                self._tab_downloads._scan_cache_and_rebuild()
+
+    def mark_downloads_stale(self) -> None:
+        """Mark the Downloads tab cache as stale so it re-scans on next activation."""
+        if self._tab_downloads:
+            self._tab_downloads.mark_stale()
+        # If the Downloads tab is currently active, re-scan immediately
+        if self._carousel and self._carousel.index == _TAB_DOWNLOADS:
+            if self._tab_downloads:
+                self._tab_downloads._cache_dirty = False
+                self._tab_downloads._scan_cache_and_rebuild()
 
     def _refresh_content_tab(self) -> None:
         """Called by RegistriesTab whenever the registry list changes."""

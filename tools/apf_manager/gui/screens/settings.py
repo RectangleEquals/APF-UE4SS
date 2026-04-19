@@ -451,8 +451,21 @@ class SettingsScreen(MDScreen):
                     else:
                         child.unlink(missing_ok=True)
             self._show_snackbar("Download cache cleared.")
+            # Notify the Downloads tab to re-scan next time it's visible
+            self._notify_downloads_stale()
         except Exception as exc:
             self._show_snackbar(f"Error clearing cache: {exc}")
+
+    def _notify_downloads_stale(self) -> None:
+        """Mark the Downloads tab cache as stale so it re-scans on next activation."""
+        try:
+            for contrib in self._host.get_contributions("hub_panel"):
+                panel = getattr(contrib, "panel_instance", None)
+                if panel and hasattr(panel, "mark_downloads_stale"):
+                    panel.mark_downloads_stale()
+                    break
+        except Exception:
+            pass
 
     def _confirm_reset_app_data(self, *_) -> None:
         from kivymd.uix.dialog import (
