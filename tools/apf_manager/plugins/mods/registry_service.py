@@ -609,7 +609,8 @@ class RegistryService:
         # 1. Targeted topic search
         try:
             core_repos = resolver.search_github_core(game_id)
-            print(f"[P3-4][get_ue4ss_info] search_github_core({game_id!r}) returned {len(core_repos)} repo(s): {[f\"{r.get('owner','?')}/{r.get('repo','?')}\" for r in core_repos]}")
+            _repo_slugs = [r.get("owner", "?") + "/" + r.get("repo", "?") for r in core_repos]
+            print(f"[P3-4][get_ue4ss_info] search_github_core({game_id!r}) returned {len(core_repos)} repo(s): {_repo_slugs}")
             for r in core_repos:
                 repo_url = f"https://github.com/{r['owner']}/{r['repo']}"
                 print(f"[P3-4][get_ue4ss_info] traversing {repo_url}")
