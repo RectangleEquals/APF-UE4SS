@@ -33,7 +33,7 @@ _WORLDS_DIR      = Path.home() / ".apf_manager" / "worlds"
 _CHECK_INTERVAL  = 3600   # 1-hour in-memory TTL for update checks
 
 # How many stable UE4SS releases to surface in the Content tab Other section
-_UE4SS_STABLE_COUNT = 3
+_UE4SS_STABLE_COUNT = 1
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ class UpdatesService:
         Returns up to 3 latest stable releases tagged framework/vX.Y.Z.
         """
         try:
-            from ..mods.registry_service import _OtherEntry, _OtherAsset
+            from ..mods.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
             api = self._make_apf_api()
             releases = api.list_releases(tag_prefix="framework/")
             entries = []
@@ -183,9 +183,9 @@ class UpdatesService:
                         a.get("name", "").endswith(".apworld")
                     )
                 ]
-                entries.append(_OtherEntry(
-                    name         = f"APF Framework {ver}",
-                    note         = f"framework binaries  ·  RectangleEquals/APF-UE4SS",
+                _entry = _OtherEntry(
+                    name         = f"APF Framework \u2022 {ver}",
+                    note         = "framework binaries  \u00b7  RectangleEquals/APF-UE4SS",
                     type         = "github_release",
                     owner        = "RectangleEquals",
                     repo         = "APF-UE4SS",
@@ -196,7 +196,9 @@ class UpdatesService:
                     asset_name   = asset.get("name", "") if asset else "",
                     changelog    = body[:2000],
                     assets       = _assets,
-                ))
+                )
+                _entry.content_hash = _compute_other_entry_hash(_entry)
+                entries.append(_entry)
             return entries
         except Exception:
             return []
@@ -212,11 +214,11 @@ class UpdatesService:
         entries even if no registry is configured (bootstrap path).
         """
         try:
-            from ..mods.registry_service import _OtherEntry, _OtherAsset
+            from ..mods.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
             api = self._make_ue4ss_api(owner, repo)
             typed_releases = api.releases.fetch_all()
 
-            stable      = [r for r in typed_releases if not r.prerelease and not r.draft]
+            stable       = [r for r in typed_releases if not r.prerelease and not r.draft]
             experimental = [r for r in typed_releases if r.prerelease and not r.draft]
 
             entries = []
@@ -233,9 +235,9 @@ class UpdatesService:
                     )
                     for a in r.assets
                 ]
-                entries.append(_OtherEntry(
-                    name         = f"{repo} {r.tag_name}",
-                    note         = f"stable  ·  {owner}/{repo}",
+                _entry = _OtherEntry(
+                    name         = f"{repo} \u2022 {r.tag_name}",
+                    note         = f"stable  \u00b7  {owner}/{repo}",
                     type         = "github_release",
                     owner        = owner,
                     repo         = repo,
@@ -246,7 +248,10 @@ class UpdatesService:
                     asset_name   = asset.name if asset else "",
                     changelog    = (r.body or "")[:2000],
                     assets       = _assets,
-                ))
+                    prerelease   = False,
+                )
+                _entry.content_hash = _compute_other_entry_hash(_entry)
+                entries.append(_entry)
 
             if experimental:
                 r = experimental[0]
@@ -262,9 +267,9 @@ class UpdatesService:
                     )
                     for a in r.assets
                 ]
-                entries.append(_OtherEntry(
-                    name         = f"{repo} {r.tag_name}",
-                    note         = f"experimental  ·  {owner}/{repo}",
+                _entry = _OtherEntry(
+                    name         = f"{repo} \u2022 {r.tag_name}",
+                    note         = f"experimental  \u00b7  {owner}/{repo}",
                     type         = "github_release",
                     owner        = owner,
                     repo         = repo,
@@ -275,7 +280,10 @@ class UpdatesService:
                     asset_name   = asset.name if asset else "",
                     changelog    = (r.body or "")[:2000],
                     assets       = _assets,
-                ))
+                    prerelease   = True,
+                )
+                _entry.content_hash = _compute_other_entry_hash(_entry)
+                entries.append(_entry)
             return entries
         except Exception:
             return []

@@ -75,6 +75,13 @@ class UE4SSDetector:
         # --- Find ue4ss/ directory containing UE4SS.dll ---
         ue4ss_dir = UE4SSDetector._find_ue4ss_dir(root)
         if ue4ss_dir is None:
+            # UE4SS absent — still locate Binaries/<arch>/ so fresh installs know where to extract
+            platform_dir = UE4SSDetector._find_platform_dir(root)
+            if platform_dir:
+                result.platform_dir = platform_dir
+                parent_of_platform = platform_dir.parent
+                if parent_of_platform.name.lower() == "binaries":
+                    result.binaries_dir = parent_of_platform
             result.missing.append("UE4SS not installed")
             return result
         result.ue4ss_dir = ue4ss_dir
@@ -126,6 +133,36 @@ class UE4SSDetector:
             try:
                 for entry in directory.iterdir():
                     if entry.is_dir():
+                        found = scan(entry, depth + 1)
+                        if found:
+                            return found
+            except (PermissionError, OSError):
+                pass
+            return None
+
+        return scan(root, 0)
+
+    @staticmethod
+    def _find_platform_dir(root: Path) -> Path | None:
+        """Find Binaries/<arch>/ even when ue4ss/ is absent (fresh install)."""
+        def scan(directory: Path, depth: int) -> Path | None:
+            if depth > MAX_SCAN_DEPTH:
+                return None
+            binaries = _find_dir_ci(directory, "Binaries")
+            if binaries:
+                for arch in ("Win64", "WinGDK", "Win32"):
+                    arch_dir = _find_dir_ci(binaries, arch)
+                    if arch_dir:
+                        return arch_dir
+                try:
+                    for entry in binaries.iterdir():
+                        if entry.is_dir():
+                            return entry
+                except (PermissionError, OSError):
+                    pass
+            try:
+                for entry in directory.iterdir():
+                    if entry.is_dir() and entry.name.lower() != "binaries":
                         found = scan(entry, depth + 1)
                         if found:
                             return found

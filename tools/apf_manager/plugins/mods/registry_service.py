@@ -120,7 +120,27 @@ class _OtherEntry:
     asset_name: str = ""          # primary asset filename (backwards compat)
     changelog: str = ""           # first 2000 chars of release body
     assets: list = field(default_factory=list)  # list[_OtherAsset] — full asset list
-    docs: str = ""                              # relative path to documentation file in repo
+    docs: str = ""               # relative path to documentation file in repo
+    registry_owner: str = ""     # owner of registry repo that provided this option
+    registry_repo:  str = ""     # repo of registry repo that provided this option
+    prerelease: bool = False     # True if this is a pre-release/experimental
+    content_hash: str = ""       # SHA-256 fingerprint for collision-proof expand keys
+    has_duplicate_source: bool = False  # True when another entry targets the same endpoint
+
+
+def _compute_other_entry_hash(entry: "_OtherEntry") -> str:
+    """Compute a short SHA-256 content hash for stable expand/collapse key generation."""
+    import hashlib
+    fingerprint = "|".join([
+        entry.owner or "",
+        entry.repo or "",
+        entry.tag or "",
+        entry.install_type or "",
+        entry.registry_owner or "",
+        entry.registry_repo or "",
+        entry.type or "",
+    ])
+    return hashlib.sha256(fingerprint.encode()).hexdigest()[:20]
 
 
 @dataclass
@@ -541,28 +561,33 @@ class RegistryService:
 
     def get_other_content(self, game_id: str) -> list:
         """Return _OtherEntry list for UE4SS options from ue4ss.json in game registries."""
-        print(f"[P3-4][get_other_content] game_id={game_id!r}")
-        info = self.get_ue4ss_info(game_id)
-        print(f"[P3-4][get_other_content] get_ue4ss_info returned: {info!r}")
-        if not info:
-            return []
-        entries = []
-        for opt in getattr(info, "options", []):
-            opt_type = opt.get("type", "manual")
-            raw_repo = opt.get("repo", "")
-            owner, repo = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
-            entries.append(_OtherEntry(
-                name         = opt.get("note", "UE4SS"),
-                note         = opt.get("note", ""),
-                type         = opt_type,
-                owner        = owner,
-                repo         = repo,
-                tag          = opt.get("tag", ""),
-                url          = opt.get("url", ""),
-                install_type = "ue4ss",
-                docs         = opt.get("docs", ""),
-            ))
-        return entries
+        from .registry_resolver import _is_framework_mod_id
+        for entry in self.get_mods(game_id):
+            if entry.ue4ss_info and _is_framework_mod_id(entry.mod_id):
+                info = entry.ue4ss_info
+                reg = entry.registry
+                reg_owner = reg.owner if reg else ""
+                reg_repo  = reg.repo  if reg else ""
+                entries = []
+                for opt in info.get("options", []):
+                    opt_type = opt.get("type", "manual")
+                    raw_repo = opt.get("repo", "")
+                    owner, repo = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
+                    entries.append(_OtherEntry(
+                        name           = opt.get("note", "UE4SS"),
+                        note           = opt.get("note", ""),
+                        type           = opt_type,
+                        owner          = owner,
+                        repo           = repo,
+                        tag            = opt.get("tag", ""),
+                        url            = opt.get("url", ""),
+                        install_type   = "ue4ss",
+                        docs           = opt.get("docs", ""),
+                        registry_owner = reg_owner,
+                        registry_repo  = reg_repo,
+                    ))
+                return entries
+        return []
 
     def get_framework_candidates(self, game_id: str) -> list[FrameworkModCandidate]:
         """Return scored framework mod candidates from all registered registries."""
@@ -592,57 +617,19 @@ class RegistryService:
 
     def get_ue4ss_info(self, game_id: str) -> Optional[UE4SSInfo]:
         """
-        Discover UE4SS installation options.
-
-        Priority:
-          1. GitHub topic apf-ue4ss-registry-{game_id}-core repos → ue4ss.json
-          2. Already-added registry data → ue4ss.json in framework mod repos
+        Discover UE4SS installation options from user-registered registry data only.
 
         Returns None when no game-specific UE4SS info is found.
         Callers that need a bootstrap path should use UpdatesService.get_ue4ss_releases_for_content().
         """
-        resolver = self._get_resolver()
-        cache = self._get_cache()
-
-        print(f"[P3-4][get_ue4ss_info] game_id={game_id!r} — starting search")
-
-        # 1. Targeted topic search
-        try:
-            core_repos = resolver.search_github_core(game_id)
-            _repo_slugs = [r.get("owner", "?") + "/" + r.get("repo", "?") for r in core_repos]
-            print(f"[P3-4][get_ue4ss_info] search_github_core({game_id!r}) returned {len(core_repos)} repo(s): {_repo_slugs}")
-            for r in core_repos:
-                repo_url = f"https://github.com/{r['owner']}/{r['repo']}"
-                print(f"[P3-4][get_ue4ss_info] traversing {repo_url}")
-                discovered = resolver.traverse(repo_url, cache)
-                print(f"[P3-4][get_ue4ss_info]   traverse yielded {len(discovered)} mod(s)")
-                for mod in discovered:
-                    print(f"[P3-4][get_ue4ss_info]   mod: mod_id={mod.mod_id!r} has_ue4ss_info={mod.ue4ss_info is not None}")
-                    if mod.ue4ss_info:
-                        info = mod.ue4ss_info
-                        print(f"[P3-4][get_ue4ss_info]   FOUND via topic search: options={info.get('options')}")
-                        return UE4SSInfo(
-                            options=info.get("options", []),
-                            docs=info.get("docs"),
-                        )
-        except Exception as _exc:
-            print(f"[P3-4][get_ue4ss_info] topic search exception: {_exc!r}")
-
-        # 2. Existing registry data
-        all_mods = self.get_mods(game_id)
-        print(f"[P3-4][get_ue4ss_info] checking {len(all_mods)} registered mod(s) for ue4ss_info")
-        for entry in all_mods:
-            if entry.ue4ss_info:
+        from .registry_resolver import _is_framework_mod_id
+        for entry in self.get_mods(game_id):
+            if entry.ue4ss_info and _is_framework_mod_id(entry.mod_id):
                 info = entry.ue4ss_info
-                print(f"[P3-4][get_ue4ss_info] FOUND via registered mod {entry.mod_id!r}: options={info.get('options')}")
                 return UE4SSInfo(
                     options=info.get("options", []),
                     docs=info.get("docs"),
-                    note=info.get("note", ""),
                 )
-
-        # No game-specific UE4SS info found
-        print(f"[P3-4][get_ue4ss_info] no UE4SS info found for game_id={game_id!r} — returning None")
         return None
 
     # -----------------------------------------------------------------------

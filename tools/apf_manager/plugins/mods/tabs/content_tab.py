@@ -239,14 +239,10 @@ class ContentTab(MDBoxLayout):
 
         def _bg():
             try:
+                from ..registry_service import _OtherEntry, _compute_other_entry_hash
                 registry_svc = self._host.get_service("registry")
                 updates_svc = (self._host.get_service("updates")
                                if self._host.has_service("updates") else None)
-
-                # P3-4 diagnostic logging
-                _log = lambda msg: (self._host.log(f"[P3-4][other_items] {msg}"), print(f"[P3-4][other_items] {msg}"))
-                user_regs = registry_svc.get_user_registries() if registry_svc else []
-                _log(f"game_id={game_id!r}, user_registries=[{', '.join(r.url for r in user_regs)}]")
 
                 registry_ue4ss = (
                     registry_svc.get_other_content(game_id)
@@ -254,28 +250,72 @@ class ContentTab(MDBoxLayout):
                     else []
                 ) or []
 
-                _log(f"get_other_content({game_id!r}) returned {len(registry_ue4ss)} item(s):")
-                for _e in registry_ue4ss:
-                    _log(f"  entry: name={getattr(_e,'name','?')!r} owner={getattr(_e,'owner','?')!r} repo={getattr(_e,'repo','?')!r} type={getattr(_e,'type','?')!r} install_type={getattr(_e,'install_type','?')!r}")
+                # Enrich custom entries with real GitHub release metadata
+                sep = " \u2022 "
+                enriched_custom = []
+                for entry in registry_ue4ss:
+                    if entry.type == "github_release" and entry.owner and entry.repo and entry.tag:
+                        fork_releases = (
+                            updates_svc.get_ue4ss_releases_for_content(entry.owner, entry.repo)
+                            if updates_svc else []
+                        ) or []
+                        matched = next((r for r in fork_releases if r.tag == entry.tag), None)
+                        if matched:
+                            reg_pfx = (f"{entry.registry_owner}/{entry.registry_repo}"
+                                       if entry.registry_owner else "")
+                            fork_pfx = f"{entry.owner}/{entry.repo}"
+                            subtitle = f"{reg_pfx}{sep}{fork_pfx}" if reg_pfx else fork_pfx
+                            new_entry = _OtherEntry(
+                                name           = f"{entry.repo}{sep}{entry.note}",
+                                note           = subtitle,
+                                type           = entry.type,
+                                owner          = entry.owner,
+                                repo           = entry.repo,
+                                tag            = entry.tag,
+                                url            = matched.url,
+                                install_type   = entry.install_type,
+                                published_at   = matched.published_at,
+                                asset_name     = matched.asset_name,
+                                changelog      = matched.changelog,
+                                assets         = matched.assets,
+                                docs           = entry.docs,
+                                registry_owner = entry.registry_owner,
+                                registry_repo  = entry.registry_repo,
+                                prerelease     = matched.prerelease,
+                            )
+                            new_entry.content_hash = _compute_other_entry_hash(new_entry)
+                            enriched_custom.append(new_entry)
+                        else:
+                            entry.content_hash = _compute_other_entry_hash(entry)
+                            enriched_custom.append(entry)
+                    elif entry.type == "manual":
+                        reg_pfx = (f"{entry.registry_owner}/{entry.registry_repo}"
+                                   if entry.registry_owner else "")
+                        subtitle = f"{reg_pfx}{sep}MANUAL" if reg_pfx else "MANUAL"
+                        new_entry = _OtherEntry(
+                            name           = f"UE4SS{sep}{entry.note}",
+                            note           = subtitle,
+                            type           = entry.type,
+                            owner          = entry.owner,
+                            repo           = entry.repo,
+                            tag            = entry.tag,
+                            url            = entry.url,
+                            install_type   = entry.install_type,
+                            docs           = entry.docs,
+                            registry_owner = entry.registry_owner,
+                            registry_repo  = entry.registry_repo,
+                        )
+                        new_entry.content_hash = _compute_other_entry_hash(new_entry)
+                        enriched_custom.append(new_entry)
+                    else:
+                        enriched_custom.append(entry)
 
-                ue4ss_owner, ue4ss_repo = "UE4SS-RE", "RE-UE4SS"
-                for ri in registry_ue4ss:
-                    if getattr(ri, "install_type", "") == "ue4ss":
-                        ue4ss_owner = getattr(ri, "owner", ue4ss_owner)
-                        ue4ss_repo  = getattr(ri, "repo",  ue4ss_repo)
-                        break
-
-                _log(f"using ue4ss owner/repo: {ue4ss_owner}/{ue4ss_repo}")
-
+                # Always use official UE4SS-RE/RE-UE4SS for official releases (never overridden)
                 ue4ss_official = (
-                    updates_svc.get_ue4ss_releases_for_content(ue4ss_owner, ue4ss_repo)
+                    updates_svc.get_ue4ss_releases_for_content("UE4SS-RE", "RE-UE4SS")
                     if updates_svc and hasattr(updates_svc, "get_ue4ss_releases_for_content")
                     else []
                 ) or []
-
-                _log(f"get_ue4ss_releases_for_content({ue4ss_owner!r},{ue4ss_repo!r}) returned {len(ue4ss_official)} item(s):")
-                for _e in ue4ss_official:
-                    _log(f"  release: name={getattr(_e,'name','?')!r} tag={getattr(_e,'tag','?')!r} owner={getattr(_e,'owner','?')!r} repo={getattr(_e,'repo','?')!r}")
 
                 fw_items = (
                     updates_svc.get_framework_releases_for_content()
@@ -283,12 +323,12 @@ class ContentTab(MDBoxLayout):
                     else []
                 ) or []
 
-                _log(f"get_framework_releases_for_content() returned {len(fw_items)} item(s)")
-                _log(f"final _cached_other_items count: {len(registry_ue4ss) + len(ue4ss_official) + len(fw_items)}")
-
-                self._cached_other_items = registry_ue4ss + ue4ss_official + fw_items
-            except Exception as _exc:
-                print(f"[P3-4][other_items] EXCEPTION: {_exc!r}")
+                # Custom entries appear above official; deduplicate by endpoint
+                combined = enriched_custom + ue4ss_official + fw_items
+                self._cached_other_items = _dedup_other_items(combined)
+            except Exception:
+                import traceback
+                traceback.print_exc()
                 self._cached_other_items = []
 
             from kivy.clock import Clock
@@ -822,37 +862,19 @@ class ContentTab(MDBoxLayout):
         from kivy.clock import Clock
         Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
-    def _open_other_docs(self, docs_path: str, owner: str, repo: str) -> None:
+    def _open_other_docs(self, docs_path: str, owner: str, repo: str,
+                          registry_owner: str = "", registry_repo: str = "") -> None:
         """Open documentation for a ue4ss_option entry via the docs_viewer service."""
         docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
-        if docs_svc and hasattr(docs_svc, "show_url"):
-            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{docs_path}"
-            docs_svc.show_url(raw_url, title=docs_path.rsplit("/", 1)[-1],
-                              view_mode="verbose", allow_mode_toggle=False)
-        elif docs_svc and hasattr(docs_svc, "show_inline"):
-            # Fetch raw content then show inline
-            import threading
-            def _fetch():
-                try:
-                    from ...core.remote.github_api import GitHubAPI
-                    from ...core.config import APFConfig
-                    from pathlib import Path as _Path
-                    _tok = _Path(__file__).parents[3] / "data" / ".github_token"
-                    api = GitHubAPI(repo_owner=owner, repo_name=repo,
-                                   token_file_path=_tok if _tok.exists() else None,
-                                   on_status=lambda *_: None)
-                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{docs_path}"
-                    content = api.fetch_text(raw_url) or "_Documentation not available._"
-                except Exception:
-                    content = "_Failed to load documentation._"
-                from kivy.clock import Clock
-                Clock.schedule_once(lambda dt: docs_svc.show_inline(
-                    content=content,
-                    title=docs_path.rsplit("/", 1)[-1],
-                    sidebar_mode="verbose",
-                    allow_mode_toggle=False,
-                ), 0)
-            threading.Thread(target=_fetch, daemon=True).start()
+        if not docs_svc:
+            return
+        # docs_path is relative to the registry repo, not the UE4SS fork repo
+        raw_owner = registry_owner or owner
+        raw_repo  = registry_repo  or repo
+        raw_url = f"https://raw.githubusercontent.com/{raw_owner}/{raw_repo}/HEAD/{docs_path}"
+        title = docs_path.rsplit("/", 1)[-1].replace("_", " ").replace(".md", "").title()
+        if hasattr(docs_svc, "open_url"):
+            docs_svc.open_url(raw_url, title=title, show_sidebar=False, show_mode_toggle=False)
 
     def _other_row(self, item, index: int) -> MDBoxLayout:
         """Row for an Other-category item (UE4SS option or framework binary release)."""
@@ -860,7 +882,11 @@ class ContentTab(MDBoxLayout):
         tag      = getattr(item, "tag", "")
         owner    = getattr(item, "owner", "")
         repo_    = getattr(item, "repo", "")
-        key      = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(index))}"
+        _hash    = getattr(item, "content_hash", "")
+        if _hash:
+            key = f"other:{_hash}"
+        else:
+            key = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(index))}"
         bg       = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
         expanded = key in self._expanded
 
@@ -881,7 +907,7 @@ class ContentTab(MDBoxLayout):
             cb.bind(active=lambda inst, val, k=key: self._on_check(k, val))
             header.add_widget(cb)
         else:
-            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
+            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(24)))
 
         header.add_widget(MDIcon(
             icon="package-variant", size_hint=(None, 1), width=dp(22),
@@ -906,6 +932,13 @@ class ContentTab(MDBoxLayout):
                 size_hint_y=None, height=dp(18),
                 theme_text_color="Custom", text_color=_COL_DIM,
             ))
+        if getattr(item, "has_duplicate_source", False):
+            info.add_widget(MDLabel(
+                text="duplicate source",
+                font_style="Label", role="small",
+                size_hint_y=None, height=dp(14),
+                theme_text_color="Custom", text_color=(1.0, 0.75, 0.0, 1),
+            ))
         # Manual rows are informational-only — no expand toggle
         if opt_type != "manual":
             info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
@@ -917,12 +950,14 @@ class ContentTab(MDBoxLayout):
         if _docs_path:
             _docs_owner = getattr(item, "owner", "")
             _docs_repo  = getattr(item, "repo",  "")
+            _reg_owner  = getattr(item, "registry_owner", "")
+            _reg_repo   = getattr(item, "registry_repo",  "")
             header.add_widget(MDIconButton(
                 icon="file-document-outline",
                 size_hint=(None, None), size=(dp(32), dp(32)),
                 pos_hint={"center_y": 0.5},
-                on_release=lambda *_, dpath=_docs_path, do=_docs_owner, dr=_docs_repo: (
-                    self._open_other_docs(dpath, do, dr)
+                on_release=lambda *_, dpath=_docs_path, do=_docs_owner, dr=_docs_repo, ro=_reg_owner, rr=_reg_repo: (
+                    self._open_other_docs(dpath, do, dr, ro, rr)
                 ),
             ))
 
@@ -945,7 +980,7 @@ class ContentTab(MDBoxLayout):
             ))
         elif opt_type == "manual":
             # dp(32) spacer keeps all rows column-aligned (no chevron for informational rows)
-            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
+            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(24)))
 
         container.add_widget(header)
 
@@ -976,7 +1011,7 @@ class ContentTab(MDBoxLayout):
         elif opt_type == "manual":
             type_label = "Manual Installation"
         else:
-            type_label = "UE4SS stable" if "stable" in getattr(item, "note", "") else "UE4SS experimental"
+            type_label = "UE4SS experimental" if getattr(item, "prerelease", False) else "UE4SS stable"
 
         def _detail_row(key_text: str, val_text: str) -> MDBoxLayout:
             r = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8))
@@ -1133,10 +1168,9 @@ class ContentTab(MDBoxLayout):
             self._checked.add(key) if checked else self._checked.discard(key)
         for i, item in enumerate(self._all_other):
             if getattr(item, "type", "manual") == "github_release":
-                tag   = getattr(item, "tag", "")
-                owner = getattr(item, "owner", "")
-                repo_ = getattr(item, "repo", "")
-                key   = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(i))}"
+                _hash = getattr(item, "content_hash", "")
+                key = (f"other:{_hash}" if _hash else
+                       f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
                 self._checked.add(key) if checked else self._checked.discard(key)
         self._sync_queue_btn()
         self._do_refresh()
@@ -1153,12 +1187,18 @@ class ContentTab(MDBoxLayout):
             t for i, t in enumerate(self._all_templates)
             if f"tmpl:{getattr(t, 'path', str(i))}" in self._checked
         ]
-        checked_other = [
-            item for i, item in enumerate(self._all_other)
-            if getattr(item, "type", "manual") == "github_release"
-            and f"other:{getattr(item, 'owner', '')}+{getattr(item, 'repo', '')}/{getattr(item, 'tag', '') or getattr(item, 'name', str(i))}" in self._checked
-            and any(getattr(a, "selected", True) for a in (getattr(item, "assets", []) or [{"selected": True}]))
-        ]
+        checked_other = []
+        for i, item in enumerate(self._all_other):
+            if getattr(item, "type", "manual") != "github_release":
+                continue
+            _hash = getattr(item, "content_hash", "")
+            _key = (f"other:{_hash}" if _hash else
+                    f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
+            if _key not in self._checked:
+                continue
+            if not any(getattr(a, "selected", True) for a in (getattr(item, "assets", []) or [{"selected": True}])):
+                continue
+            checked_other.append(item)
 
         if not checked_mods and not checked_templates and not checked_other:
             return
@@ -1239,10 +1279,9 @@ class ContentTab(MDBoxLayout):
             path = getattr(tmpl, "path", str(i))
             self._checked.discard(f"tmpl:{path}")
         for i, item in enumerate(other):
-            tag   = getattr(item, "tag", "")
-            owner = getattr(item, "owner", "")
-            repo_ = getattr(item, "repo", "")
-            key   = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(i))}"
+            _hash = getattr(item, "content_hash", "")
+            key = (f"other:{_hash}" if _hash else
+                   f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
             self._checked.discard(key)
         self._sync_queue_btn()
         self._do_refresh()
@@ -1264,3 +1303,22 @@ def _fmt_bytes(n: int) -> str:
             return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
         n /= 1024
     return f"{n:.1f} TB"
+
+
+def _dedup_other_items(items: list) -> list:
+    """Deduplicate Other items by endpoint (owner:repo:tag:install_type). First occurrence wins."""
+    seen_endpoints: dict = {}
+    result = []
+    for item in items:
+        ep = "{}:{}:{}:{}".format(
+            getattr(item, "owner", ""),
+            getattr(item, "repo", ""),
+            getattr(item, "tag", ""),
+            getattr(item, "install_type", ""),
+        )
+        if ep in seen_endpoints:
+            seen_endpoints[ep].has_duplicate_source = True
+        else:
+            seen_endpoints[ep] = item
+            result.append(item)
+    return result

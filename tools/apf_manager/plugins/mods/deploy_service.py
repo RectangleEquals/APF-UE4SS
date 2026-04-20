@@ -209,14 +209,17 @@ class DeployService:
         UE4SS zip contains dwmapi.dll at root + ue4ss/ subfolder — extractall preserves this.
         Framework binary zip contains APFrameworkCore.dll + dep DLLs — flat extract.
         """
-        if not detection or not getattr(detection, "platform_dir", None):
+        platform_dir = getattr(detection, "platform_dir", None)
+        if not detection or platform_dir is None or not platform_dir.parts:
             raise RuntimeError("Game platform directory not detected")
         import zipfile
-        dest_dir = detection.platform_dir
+        dest_dir = platform_dir
         dest_dir.mkdir(parents=True, exist_ok=True)
-        zips = list(cache_path.glob("*.zip"))
-        if zips:
-            with zipfile.ZipFile(zips[0], "r") as zf:
+        zips = sorted(cache_path.glob("*.zip"))
+        preferred = [z for z in zips if "dev" not in z.stem.lower() and "debug" not in z.stem.lower()]
+        target_zip = preferred[0] if preferred else (zips[0] if zips else None)
+        if target_zip:
+            with zipfile.ZipFile(target_zip, "r") as zf:
                 zf.extractall(str(dest_dir))
         else:
             for f in cache_path.iterdir():

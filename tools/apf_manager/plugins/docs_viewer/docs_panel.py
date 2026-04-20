@@ -325,14 +325,47 @@ class DocsPanel:
         sidebar_mode: str = "verbose",
         allow_mode_toggle: bool = False,
     ) -> None:
-        """Render an inline markdown string in the viewer (no file or network I/O)."""
+        """Render an inline markdown string in the full SPA viewer."""
         viewer = self._html_viewer()
         if viewer is None:
             self._host.log("[docs_viewer] html_viewer service not available")
             return
-        from .md_to_html import convert
-        html = convert(content or "_No content available._", title=title)
-        viewer.show(title, html)
+        from .md_to_html import convert_body
+        body_html = convert_body(content or "_No content available._")
+        doc_key = "inline"
+        tree_json = json.dumps(
+            [
+                {
+                    "display_name": title,
+                    "path": doc_key,
+                    "download_url": "",
+                    "section": "",
+                    "commit": "",
+                    "commit_url": "",
+                }
+            ],
+            ensure_ascii=False,
+        ).replace("</", "<\\/")
+        docs_html_json = json.dumps(
+            {doc_key: body_html}, ensure_ascii=False
+        ).replace("</", "<\\/")
+        spa_html = self._build_spa_html(
+            tree_json=tree_json,
+            docs_html_json=docs_html_json,
+            fw_version=_get_framework_version(),
+            sidebar_mode=sidebar_mode,
+            show_mode_toggle=allow_mode_toggle,
+            initial_path=doc_key,
+            show_sidebar=False,
+            titlebar_text=title,
+        )
+        viewer.show(
+            title,
+            spa_html,
+            width=1000,
+            height=750,
+            inject_titlebar=False,
+        )
 
     def _open_local_file(self, viewer, path: Path) -> None:
         """Read a local .md file and render it in a simple HTML viewer window."""
