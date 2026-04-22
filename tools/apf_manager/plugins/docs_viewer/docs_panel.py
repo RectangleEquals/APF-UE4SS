@@ -356,7 +356,7 @@ class DocsPanel:
             sidebar_mode=sidebar_mode,
             show_mode_toggle=allow_mode_toggle,
             initial_path=doc_key,
-            show_sidebar=False,
+            show_sidebar=True,
             titlebar_text=title,
         )
         viewer.show(

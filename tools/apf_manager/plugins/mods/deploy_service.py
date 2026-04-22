@@ -20,6 +20,25 @@ if TYPE_CHECKING:
     from .mod_service import ModInfo, ModService
 
 
+def _classify_zip(zf) -> str:
+    """Inspect a ZipFile TOC to determine the appropriate install target.
+
+    Returns one of: "ue4ss" | "framework_bin" | "blueprint_pak" | "unknown"
+    """
+    names_lower = {info.filename.lower() for info in zf.infolist()}
+    # UE4SS: has ue4ss/ folder containing UE4SS.dll (universal UE4SS marker)
+    if any("ue4ss/ue4ss.dll" in n for n in names_lower):
+        return "ue4ss"
+    # Framework binary: has APFrameworkCore.dll
+    if any("apframeworkcore.dll" in n for n in names_lower):
+        return "framework_bin"
+    # Standalone blueprint pak: ALL non-directory entries are .pak files
+    non_dir = [n for n in names_lower if not n.endswith("/")]
+    if non_dir and all(n.endswith(".pak") for n in non_dir):
+        return "blueprint_pak"
+    return "unknown"
+
+
 class DeployService:
     def __init__(self, host) -> None:
         self._host = host
@@ -204,10 +223,13 @@ class DeployService:
         install_type: str,
         detection: "Optional[UE4SSResult]",
     ) -> None:
-        """Deploy an Other-category item (UE4SS or framework binaries) to platform_dir.
-        install_type: "ue4ss" | "framework_binary"
-        UE4SS zip contains dwmapi.dll at root + ue4ss/ subfolder — extractall preserves this.
-        Framework binary zip contains APFrameworkCore.dll + dep DLLs — flat extract.
+        """Deploy an Other-category item (UE4SS or framework binaries).
+
+        Each selected zip is inspected by TOC to determine its install target:
+          "ue4ss"          → extract to platform_dir (Binaries/<arch>/)
+          "framework_bin"  → extract to platform_dir
+          "blueprint_pak"  → copy .pak files to logicmods_dir (Content/Paks/LogicMods/)
+          "unknown"        → extract to platform_dir (safe fallback)
         """
         platform_dir = getattr(detection, "platform_dir", None)
         if not detection or platform_dir is None or not platform_dir.parts:
@@ -216,11 +238,21 @@ class DeployService:
         dest_dir = platform_dir
         dest_dir.mkdir(parents=True, exist_ok=True)
         zips = sorted(cache_path.glob("*.zip"))
-        preferred = [z for z in zips if "dev" not in z.stem.lower() and "debug" not in z.stem.lower()]
-        target_zip = preferred[0] if preferred else (zips[0] if zips else None)
-        if target_zip:
-            with zipfile.ZipFile(target_zip, "r") as zf:
-                zf.extractall(str(dest_dir))
+        if zips:
+            for zip_path in zips:
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    kind = _classify_zip(zf)
+                    if kind == "blueprint_pak":
+                        lm_dir = getattr(detection, "logicmods_dir", None)
+                        if lm_dir and lm_dir.parts:
+                            lm_dir.mkdir(parents=True, exist_ok=True)
+                            for info in zf.infolist():
+                                if info.filename.lower().endswith(".pak"):
+                                    zf.extract(info, str(lm_dir))
+                        else:
+                            zf.extractall(str(dest_dir))
+                    else:
+                        zf.extractall(str(dest_dir))
         else:
             for f in cache_path.iterdir():
                 if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):

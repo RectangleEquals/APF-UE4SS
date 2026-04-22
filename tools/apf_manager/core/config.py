@@ -267,7 +267,8 @@ class APFConfig:
             return entries
         return [r for r in entries if not r.get("game_id") or r["game_id"] == game_id]
 
-    def add_user_registry(self, url: str, game_id: str = "") -> None:
+    def add_user_registry(self, url: str, game_id: str = "",
+                           selected_content: "Optional[list]" = None) -> None:
         """Add a registry URL if not already present, then save."""
         from datetime import datetime, timezone
         existing_urls = {r["url"] for r in self._settings.user_registries}
@@ -278,6 +279,8 @@ class APFConfig:
             }
             if game_id:
                 entry["game_id"] = game_id
+            if selected_content is not None:
+                entry["selected_content"] = selected_content
             self._settings.user_registries.append(entry)
             self.save()
 

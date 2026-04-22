@@ -133,6 +133,16 @@ def _build_tree_nodes(
                 "checked": False,
             })
 
+        # Derive registry game context from AP mods' mod_ids for cross-game detection
+        _registry_game_id = ""
+        for _m in repo_mods:
+            if _m.mod_id:
+                _parts = _m.mod_id.split(".")
+                if len(_parts) >= 2:
+                    _registry_game_id = _parts[1].lower()
+                    break
+        _cross_game_registry = bool(game_id and _registry_game_id and _registry_game_id != game_id.lower())
+
         seen_tpaths: set[str] = set()
         seen_ue4ss_options: set[str] = set()
         for mod in repo_mods:
@@ -192,11 +202,16 @@ def _build_tree_nodes(
                     "components": getattr(mod, "components", []),
                     "bp_pak_files": getattr(mod, "bp_pak_files", []),
                     "bp_is_combined": getattr(mod, "bp_is_combined", False),
+                    "game_id_match": not _cross_game_registry,
+                    "cross_game": _cross_game_registry,
                     "selectable": True,
-                    "checked": True,
+                    "checked": not _cross_game_registry,
+                    "disabled": False,
                 })
             # BUG-8: Surface UE4SS options from ue4ss.json in the repo viewer
             if mod.ue4ss_info:
+                _fw_game_id = mod.mod_id.split(".")[1] if mod.mod_id and mod.mod_id.count(".") >= 2 else ""
+                _ue4ss_game_match = (not _fw_game_id) or (not game_id) or (_fw_game_id.lower() == game_id.lower())
                 _all_opts = mod.ue4ss_info.get("options") or []
                 _has_automated = any(
                     o.get("type", "manual") in ("github_release", "external_url")
@@ -221,8 +236,10 @@ def _build_tree_nodes(
                         "tag": opt.get("tag", ""),
                         "url": opt.get("url", ""),
                         "docs": opt.get("docs", ""),
+                        "game_id_match": _ue4ss_game_match,
                         "selectable": True,
-                        "checked": _checked,
+                        "checked": _checked and _ue4ss_game_match,
+                        "disabled": not _ue4ss_game_match,
                         "install_type": "ue4ss",
                     })
             # Deduplicated template nodes per repo
@@ -358,6 +375,7 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
         elif spa_type == "non_ap_mod" and node.mod:
             m = node.mod
             folder_name = m.folder.split("/")[-1] if "/" in m.folder else (m.folder or node.name)
+            _cross_game = not node.game_id_match
             base.update({
                 "mod_id": "",
                 "folder": m.folder,
@@ -367,8 +385,10 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
                 "components": getattr(m, "components", []),
                 "bp_pak_files": getattr(m, "bp_pak_files", []),
                 "bp_is_combined": getattr(m, "bp_is_combined", False),
+                "game_id_match": not _cross_game,
+                "cross_game": _cross_game,
                 "selectable": True,
-                "checked": True,
+                "checked": not _cross_game,
                 "disabled": False,
             })
 
@@ -413,6 +433,8 @@ def _inject_ue4ss_nodes(nodes: list[dict], mods: list, game_id: str) -> None:
             continue
         rkey = f"{mod.owner}/{mod.repo}"
         repo_options.setdefault(rkey, [])
+        _fw_game_id2 = mod.mod_id.split(".")[1] if mod.mod_id and mod.mod_id.count(".") >= 2 else ""
+        _ue4ss_game_match2 = (not _fw_game_id2) or (not game_id) or (_fw_game_id2.lower() == game_id.lower())
         _all_opts2 = mod.ue4ss_info.get("options") or []
         _has_automated2 = any(
             o.get("type", "manual") in ("github_release", "external_url")
@@ -437,12 +459,12 @@ def _inject_ue4ss_nodes(nodes: list[dict], mods: list, game_id: str) -> None:
                 "tag": opt.get("tag", ""),
                 "url": opt.get("url", ""),
                 "docs": opt.get("docs", ""),
+                "game_id_match": _ue4ss_game_match2,
                 "selectable": True,
-                "checked": _checked2,
+                "checked": _checked2 and _ue4ss_game_match2,
                 "install_type": "ue4ss",
-                "game_id_match": True,
                 "conflict": False,
-                "disabled": False,
+                "disabled": not _ue4ss_game_match2,
             })
 
     if not repo_options:
@@ -597,7 +619,7 @@ class RepoViewerPanel:
                         seen.add(key)
                         deduped.append(m)
                 if on_confirm:
-                    on_confirm(deduped)
+                    on_confirm(deduped, selected_ids)
             else:
                 if on_cancel:
                     on_cancel()

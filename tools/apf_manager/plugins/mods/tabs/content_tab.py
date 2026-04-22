@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from typing import Optional, Callable
 
+from kivy.animation import Animation
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
+from kivymd.uix.behaviors import HoverBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
@@ -36,6 +38,34 @@ _COL_CPP      = (0.4, 0.7, 1.0, 1)
 _COL_BP       = (1.0, 0.6, 0.2, 1)
 _COL_SECTION  = (0.85, 0.85, 0.95, 1)
 _COL_DIM      = (0.5, 0.5, 0.5, 1)
+
+
+_HOVER_DURATION_IN  = 0.08
+_HOVER_DURATION_OUT = 0.30
+
+
+class _HoverRow(HoverBehavior, MDBoxLayout):
+    """MDBoxLayout with animated hover feedback — used for expandable github_release rows."""
+
+    def on_enter(self):
+        from kivy.core.window import Window
+        Window.set_system_cursor("hand")
+        Animation.cancel_all(self, "md_bg_color")
+        hover_color = self.theme_cls.surfaceContainerHighestColor[:3] + [0.15]
+        Animation(md_bg_color=hover_color, duration=_HOVER_DURATION_IN).start(self)
+
+    def on_leave(self):
+        from kivy.core.window import Window
+        Window.set_system_cursor("arrow")
+        Animation.cancel_all(self, "md_bg_color")
+        Animation(md_bg_color=[0, 0, 0, 0], duration=_HOVER_DURATION_OUT).start(self)
+
+    def on_parent(self, widget, parent):
+        if parent is None:
+            from kivy.core.window import Window
+            Window.set_system_cursor("arrow")
+            Animation.cancel_all(self, "md_bg_color")
+            self.md_bg_color = [0, 0, 0, 0]
 
 
 class ContentTab(MDBoxLayout):
@@ -874,7 +904,7 @@ class ContentTab(MDBoxLayout):
         raw_url = f"https://raw.githubusercontent.com/{raw_owner}/{raw_repo}/HEAD/{docs_path}"
         title = docs_path.rsplit("/", 1)[-1].replace("_", " ").replace(".md", "").title()
         if hasattr(docs_svc, "open_url"):
-            docs_svc.open_url(raw_url, title=title, show_sidebar=False, show_mode_toggle=False)
+            docs_svc.open_url(raw_url, title=title, show_sidebar=True, show_mode_toggle=False)
 
     def _other_row(self, item, index: int) -> MDBoxLayout:
         """Row for an Other-category item (UE4SS option or framework binary release)."""
@@ -895,10 +925,16 @@ class ContentTab(MDBoxLayout):
             md_bg_color=bg,
         )
 
-        header = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(52),
-            padding=[dp(8), dp(4)], spacing=dp(8),
-        )
+        if opt_type == "github_release":
+            header = _HoverRow(
+                orientation="horizontal", size_hint_y=None, height=dp(52),
+                padding=[dp(8), dp(4)], spacing=dp(8),
+            )
+        else:
+            header = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(52),
+                padding=[dp(8), dp(4)], spacing=dp(8),
+            )
 
         if opt_type == "github_release":
             cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
@@ -923,7 +959,7 @@ class ContentTab(MDBoxLayout):
         note = getattr(item, "note", "")
         # Show partial-selection hint when some (not all) assets are selected
         _assets = getattr(item, "assets", []) or []
-        _n_sel = sum(1 for a in _assets if getattr(a, "selected", True))
+        _n_sel = sum(1 for a in _assets if getattr(a, "selected", False))
         if _assets and 0 < _n_sel < len(_assets):
             note = f"{note}   ({_n_sel}/{len(_assets)} assets)" if note else f"({_n_sel}/{len(_assets)} assets selected)"
         if note:
@@ -945,7 +981,7 @@ class ContentTab(MDBoxLayout):
                       if w.collide_point(*t.pos) else None)
         header.add_widget(info)
 
-        # "View Docs" button — shown when item has a docs path
+        # Docs slot — always dp(32) wide for column consistency across all row types
         _docs_path = getattr(item, "docs", "")
         if _docs_path:
             _docs_owner = getattr(item, "owner", "")
@@ -960,7 +996,10 @@ class ContentTab(MDBoxLayout):
                     self._open_other_docs(dpath, do, dr, ro, rr)
                 ),
             ))
+        else:
+            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
 
+        # Trailing action slot — always dp(32) wide
         if opt_type == "external_url":
             import webbrowser
             url = getattr(item, "url", "")
@@ -978,9 +1017,8 @@ class ContentTab(MDBoxLayout):
                 pos_hint={"center_y": 0.5},
                 on_release=lambda *_, k=key: self._toggle_expand(k),
             ))
-        elif opt_type == "manual":
-            # dp(32) spacer keeps all rows column-aligned (no chevron for informational rows)
-            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(24)))
+        else:  # manual — dp(32) spacer for column alignment (matches chevron width)
+            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(40)))
 
         container.add_widget(header)
 
@@ -1196,7 +1234,7 @@ class ContentTab(MDBoxLayout):
                     f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
             if _key not in self._checked:
                 continue
-            if not any(getattr(a, "selected", True) for a in (getattr(item, "assets", []) or [{"selected": True}])):
+            if not any(getattr(a, "selected", False) for a in (getattr(item, "assets", []) or [{"selected": True}])):
                 continue
             checked_other.append(item)
 

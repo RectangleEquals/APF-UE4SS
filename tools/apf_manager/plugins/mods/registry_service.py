@@ -39,6 +39,7 @@ class RegistryEntry:
     status: str = "pending"    # "pending" | "ok" | "error" | "loading"
     error_msg: str = ""
     children: list["RegistryEntry"] = field(default_factory=list)
+    selected_content: Optional[list] = None  # ["framework_mod:id", "mod:id", "ue4ss_option:...", "template:..."]
 
 
 @dataclass
@@ -102,7 +103,7 @@ class _OtherAsset:
     name: str               # filename (e.g. "UE4SS_v3.0.1.zip")
     url: str                # browser_download_url
     size: int = 0           # bytes; 0 = unknown
-    selected: bool = True   # default: user has it checked
+    selected: bool = False  # default: user must opt-in per asset
 
 
 @dataclass
@@ -208,7 +209,8 @@ class RegistryService:
                 continue
             owner, repo = parsed
             entry = RegistryEntry(url=r["url"], owner=owner, repo=repo,
-                                  game_id=r.get("game_id", ""))
+                                  game_id=r.get("game_id", ""),
+                                  selected_content=r.get("selected_content"))
             added_at = r.get("added_at")
             if added_at:
                 try:
@@ -293,15 +295,33 @@ class RegistryService:
                 except Exception:
                     pass
 
-            def _finalize(selected_mods):
+            def _finalize(selected_mods, raw_selected_ids=None):
                 """Called by Repo Viewer on_confirm (main thread) or directly."""
+                from .registry_resolver import _is_framework_mod_id
                 ap_count     = sum(1 for m in selected_mods if m.mod_id)
                 non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
                 parts = [f"{ap_count} AP mod(s)"] if ap_count else []
                 if non_ap_count:
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
-                self._host.config.add_user_registry(url, game_id=derived_game_id)
+                # Build selected_content from checked mods + raw SPA item IDs
+                sc: Optional[list] = None
+                if raw_selected_ids is not None:
+                    sc = []
+                    for m in selected_mods:
+                        key = m.mod_id or m.folder
+                        if key:
+                            prefix = "framework_mod" if _is_framework_mod_id(m.mod_id) else "mod"
+                            sc.append(f"{prefix}:{key}")
+                    for sid in raw_selected_ids:
+                        if sid.startswith("ue4ss:"):
+                            sc.append(f"ue4ss_option:{sid[len('ue4ss:'):]}")
+                        elif sid.startswith("tpl:"):
+                            parts_tpl = sid[len("tpl:"):].split(":", 1)
+                            if len(parts_tpl) == 2:
+                                sc.append(f"template:{parts_tpl[1]}")
+                self._host.config.add_user_registry(url, game_id=derived_game_id,
+                                                     selected_content=sc)
                 self._invalidate_mods_cache()
                 _ui(lambda: on_done(True, f"Registry added — {summary} found."))
 
@@ -372,6 +392,27 @@ class RegistryService:
                     if derived_game_id:
                         break
 
+            # Reject if no valid content found for the current game
+            current_game_id = (self._get_game_id() or "").lower()
+            if current_game_id:
+                valid_count = 0
+                for m in mods:
+                    if m.mod_id:
+                        _parts = m.mod_id.split(".")
+                        if len(_parts) >= 2 and _parts[1].lower() == current_game_id:
+                            valid_count += 1
+                    for tp in m.templates_paths:
+                        _gdir = (tp.split("/")[-1] if "/" in tp else tp).lower()
+                        if _gdir == current_game_id:
+                            valid_count += 1
+                if valid_count == 0:
+                    _ui(lambda: on_done(
+                        False,
+                        f"This registry has no content for '{current_game_id}'. "
+                        f"It may be intended for a different game."
+                    ))
+                    return
+
             # Existing mod_ids for conflict detection
             existing_mod_ids: set = set()
             for reg_entry in self.get_user_registries():
@@ -390,14 +431,31 @@ class RegistryService:
             except Exception:
                 folder_tree = None
 
-            def _finalize(selected_mods):
+            def _finalize(selected_mods, raw_selected_ids=None):
+                from .registry_resolver import _is_framework_mod_id
                 ap_count     = sum(1 for m in selected_mods if m.mod_id)
                 non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
                 parts = [f"{ap_count} AP mod(s)"] if ap_count else []
                 if non_ap_count:
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
-                self._host.config.add_user_registry(url, game_id=derived_game_id)
+                sc: Optional[list] = None
+                if raw_selected_ids is not None:
+                    sc = []
+                    for m in selected_mods:
+                        key = m.mod_id or m.folder
+                        if key:
+                            prefix = "framework_mod" if _is_framework_mod_id(m.mod_id) else "mod"
+                            sc.append(f"{prefix}:{key}")
+                    for sid in raw_selected_ids:
+                        if sid.startswith("ue4ss:"):
+                            sc.append(f"ue4ss_option:{sid[len('ue4ss:'):]}")
+                        elif sid.startswith("tpl:"):
+                            parts_tpl = sid[len("tpl:"):].split(":", 1)
+                            if len(parts_tpl) == 2:
+                                sc.append(f"template:{parts_tpl[1]}")
+                self._host.config.add_user_registry(url, game_id=derived_game_id,
+                                                     selected_content=sc)
                 self._invalidate_mods_cache()
                 _ui(lambda: on_done(True, f"Registry added — {summary} found."))
 
@@ -489,6 +547,13 @@ class RegistryService:
                 self._host.log(f"[registry] Traversal error for {entry.url}: {exc}")
                 continue
 
+            # Build selected key set from stored selection (None = include all)
+            selected_content = set(entry.selected_content or [])
+            selected_mod_keys = (
+                {s[len("mod:"):] for s in selected_content if s.startswith("mod:")} |
+                {s[len("framework_mod:"):] for s in selected_content if s.startswith("framework_mod:")}
+            ) if selected_content else None
+
             for mod in discovered:
                 # Skip synthetic container entries with no mod content
                 if not mod.mod_id and not mod.components:
@@ -498,9 +563,13 @@ class RegistryService:
                     parts = mod.mod_id.split(".")
                     if game_id and len(parts) >= 2 and parts[1].lower() != game_id.lower():
                         continue
+                    if selected_mod_keys is not None and mod.mod_id not in selected_mod_keys:
+                        continue
                 # Non-AP mods: filter by the registry's stored game_id
                 else:
                     if game_id and entry.game_id and entry.game_id.lower() != game_id.lower():
+                        continue
+                    if selected_mod_keys is not None and mod.folder not in selected_mod_keys:
                         continue
                 results.append(RegistryModEntry(
                     mod_id=mod.mod_id,
@@ -534,11 +603,14 @@ class RegistryService:
                 discovered = resolver.traverse(entry.url, cache)
             except Exception:
                 continue
+            selected_content = set(entry.selected_content or [])
             for mod in discovered:
                 for tpath in mod.templates_paths:
                     # tpath is like "Templates/Palworld"
                     game_dir = tpath.split("/")[-1] if "/" in tpath else tpath
                     if game_id and game_dir.lower() != game_id.lower():
+                        continue
+                    if selected_content and f"template:{tpath}" not in selected_content:
                         continue
                     repo_key = f"{mod.owner}/{mod.repo}"
                     existing = seen.setdefault(tpath, [])
@@ -568,18 +640,25 @@ class RegistryService:
                 reg = entry.registry
                 reg_owner = reg.owner if reg else ""
                 reg_repo  = reg.repo  if reg else ""
+                selected_content = set(reg.selected_content or []) if reg else set()
                 entries = []
                 for opt in info.get("options", []):
                     opt_type = opt.get("type", "manual")
                     raw_repo = opt.get("repo", "")
                     owner, repo = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
+                    tag = opt.get("tag", "")
+                    # Filter by per-option selection if a selection was made in repo viewer
+                    if selected_content:
+                        opt_key = f"ue4ss_option:{raw_repo}:{tag}"
+                        if opt_key not in selected_content:
+                            continue
                     entries.append(_OtherEntry(
                         name           = opt.get("note", "UE4SS"),
                         note           = opt.get("note", ""),
                         type           = opt_type,
                         owner          = owner,
                         repo           = repo,
-                        tag            = opt.get("tag", ""),
+                        tag            = tag,
                         url            = opt.get("url", ""),
                         install_type   = "ue4ss",
                         docs           = opt.get("docs", ""),

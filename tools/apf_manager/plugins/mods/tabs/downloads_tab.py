@@ -270,9 +270,9 @@ class DownloadsTab(MDBoxLayout):
 
         def _add_item(folder_dir: Path, owner: str, repo: str) -> None:
             category, game_name, install_type = _read_meta(folder_dir)
-            # Skip game-specific items that belong to a different game.
-            # "other" items (UE4SS, framework binaries) are game-agnostic and always shown.
-            if category != "other" and game_name and game_name != self._game_id:
+            # Skip items that belong to a different game.
+            # Official UE4SS / framework binaries write game_name="" so they always pass.
+            if game_name and game_name != self._game_id:
                 return
             mod_ref = mod_by_folder.get(folder_dir.name)
             components = _detect_components(folder_dir)
@@ -999,13 +999,23 @@ class DownloadsTab(MDBoxLayout):
 
             # Write metadata immediately after mkdir so category is recoverable
             # even if the download fails partway through.
-            _mod_id = getattr(item.mod, "mod_id", "")
-            _id_parts = _mod_id.split(".")
-            # Derive game_name: prefer mod_id segment, then game_id attr, then current game
-            _game_name = (
-                _id_parts[1] if len(_id_parts) >= 2 and _id_parts[1]
-                else getattr(item.mod, "game_id", "") or self._game_id
-            )
+            if item.category == "other":
+                _install_type = getattr(item.mod, "install_type", "")
+                _reg_owner    = getattr(item.mod, "registry_owner", "")
+                if _install_type == "framework_binary" or not _reg_owner:
+                    # Official UE4SS or APF Framework binaries — game-agnostic
+                    _game_name = ""
+                else:
+                    # Custom registry-provided fork — game-specific
+                    _game_name = self._game_id
+            else:
+                _mod_id = getattr(item.mod, "mod_id", "")
+                _id_parts = _mod_id.split(".")
+                # Derive game_name: prefer mod_id segment, then game_id attr, then current game
+                _game_name = (
+                    _id_parts[1] if len(_id_parts) >= 2 and _id_parts[1]
+                    else getattr(item.mod, "game_id", "") or self._game_id
+                )
             (dest / ".apf_meta.json").write_text(_json.dumps({
                 "category":     item.category,
                 "game_name":    _game_name,
@@ -1034,7 +1044,7 @@ class DownloadsTab(MDBoxLayout):
                     )
                     # Build list of assets to download from per-asset selection
                     _raw_assets = getattr(opt, "assets", []) or []
-                    selected_assets = [a for a in _raw_assets if getattr(a, "selected", True)]
+                    selected_assets = [a for a in _raw_assets if getattr(a, "selected", False)]
                     if not selected_assets:
                         # Backwards compat: no assets list — use legacy single url field
                         direct_url = getattr(opt, "url", "")

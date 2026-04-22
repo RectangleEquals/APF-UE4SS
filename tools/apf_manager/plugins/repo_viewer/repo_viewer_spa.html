@@ -61,6 +61,7 @@ html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3
 .badge-ue4ss{ background: #8b5cf633; color: #a78bfa; }
 .badge-ap   { background: #2ea04333; color: #3fb950; }
 .badge-nap  { background: #6b452533; color: #d4a06a; }
+.badge-warn { background: #d2930344; color: #f0883e; }
 .tree-children { display: block; }
 .tree-node.collapsed > .tree-children { display: none; }
 .expand-btn { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 10px; width: 16px; flex-shrink: 0; text-align: center; padding: 0; }
@@ -220,7 +221,7 @@ function buildNodeEl(node, depth) {
   wrapper.dataset.id = node.id;
 
   const row = document.createElement("div");
-  const isDisabled = node.disabled || !node.game_id_match;
+  const isDisabled = !!node.disabled;
   row.className = "tree-row" + (isDisabled ? " disabled-content" : "");
   row.style.paddingLeft = `${8 + depth * 14}px`;
 
@@ -329,6 +330,7 @@ function appendBadges(row, node) {
     if (comps.includes("cpp"))       addBadge(row, "C++", "badge-cpp");
     if (comps.includes("lua"))       addBadge(row, "LUA", "badge-lua");
     if (comps.includes("blueprint")) addBadge(row, "BP",  "badge-bp");
+    if (node.cross_game)             addBadge(row, "⚠ XGAME", "badge-warn");
   }
   if (t === "lua_dir")   addBadge(row, "LUA",   "badge-lua");
   if (t === "cpp_dir")   addBadge(row, "C++",   "badge-cpp");
@@ -507,9 +509,13 @@ function renderDetail(node) {
   } else if (node.type === "non_ap_mod") {
     const icon = nodeIcon(node);
     const comps = (node.components || []).map(c => c.toUpperCase()).join(" + ") || "Unknown";
+    const crossGameBanner = node.cross_game
+      ? `<div class="banner" style="background:#d2930322;border:1px solid #f0883e;color:#f0883e;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px">⚠ This mod is from a registry targeting a different game. You can still add it, but it may not be compatible with your current game.</div>`
+      : "";
     html = `
       <h2>${icon} ${escHtml(node.label)}</h2>
       <div class="subtitle">UE4SS Mod (Non-AP) — ${escHtml(node.owner)}/${escHtml(node.repo)}</div>
+      ${crossGameBanner}
       <div class="section">
         <div class="section-title">Identity</div>
         ${node.description ? `<div class="prop-row"><span class="prop-key">Description</span><span class="prop-val">${escHtml(node.description)}</span></div>` : ""}
