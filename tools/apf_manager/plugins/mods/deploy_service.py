@@ -190,7 +190,8 @@ class DeployService:
             dest = detection.mods_dir / folder_name
             if dest.exists():
                 shutil.rmtree(str(dest))
-            shutil.copytree(str(cache_path), str(dest))
+            shutil.copytree(str(cache_path), str(dest),
+                            ignore=shutil.ignore_patterns("enabled.txt"))
             with self._lock:
                 if self._mods_txt:
                     self._mods_txt.ensure_entry(folder_name, enabled=True)
@@ -240,6 +241,14 @@ class DeployService:
         zips = sorted(cache_path.glob("*.zip"))
         if zips:
             for zip_path in zips:
+                # zMapGenBP: UE4SS tool for .usmap generation — root-level contents
+                # go directly into ue4ss/MapGenBP/ (not platform_dir root)
+                if zip_path.stem.lower() == "zmapgenbp":
+                    mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
+                    mapgen_dir.mkdir(parents=True, exist_ok=True)
+                    with zipfile.ZipFile(zip_path, "r") as zf:
+                        zf.extractall(str(mapgen_dir))
+                    continue
                 with zipfile.ZipFile(zip_path, "r") as zf:
                     kind = _classify_zip(zf)
                     if kind == "blueprint_pak":
@@ -251,6 +260,11 @@ class DeployService:
                                     zf.extract(info, str(lm_dir))
                         else:
                             zf.extractall(str(dest_dir))
+                    elif kind == "unknown":
+                        self._host.log(
+                            f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
+                            "manual installation required (destination picker coming in a future update)"
+                        )
                     else:
                         zf.extractall(str(dest_dir))
         else:

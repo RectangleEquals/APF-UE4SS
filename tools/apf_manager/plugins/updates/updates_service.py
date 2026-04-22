@@ -175,7 +175,7 @@ class UpdatesService:
                         name=a.get("name", ""),
                         url=a.get("browser_download_url", ""),
                         size=a.get("size", 0),
-                        selected=True,
+                        selected=False,
                     )
                     for a in release.get("assets", [])
                     if not (
@@ -231,7 +231,7 @@ class UpdatesService:
                         name=a.name,
                         url=a.browser_download_url,
                         size=getattr(a, "size", 0),
-                        selected=True,
+                        selected=False,
                     )
                     for a in r.assets
                 ]
@@ -263,7 +263,7 @@ class UpdatesService:
                         name=a.name,
                         url=a.browser_download_url,
                         size=getattr(a, "size", 0),
-                        selected=True,
+                        selected=False,
                     )
                     for a in r.assets
                 ]

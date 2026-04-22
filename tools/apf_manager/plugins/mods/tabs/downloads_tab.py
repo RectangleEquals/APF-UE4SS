@@ -59,6 +59,7 @@ class _QueueItem:
     error_msg: str = ""
     cache_path: Optional[Path] = None
     category: str = "mod"        # "mod" | "template" | "other"
+    game_id: str = ""            # game this item was queued for; "" = any game
 
     @property
     def key(self) -> str:
@@ -227,7 +228,7 @@ class DownloadsTab(MDBoxLayout):
                     mod_obj, category = item
                 else:
                     mod_obj, category = item, "mod"
-                qi = _QueueItem(mod=mod_obj, category=category)
+                qi = _QueueItem(mod=mod_obj, category=category, game_id=self._game_id or "")
                 if qi.key not in existing_keys:
                     self._queue.append(qi)
                     existing_keys.add(qi.key)
@@ -392,9 +393,10 @@ class DownloadsTab(MDBoxLayout):
         # APF Updates section (framework update)
         self._maybe_add_updates_section()
 
-        # Queue section
+        # Queue section — only show items queued for the current game
         with self._queue_lock:
             queue_snapshot = list(self._queue)
+        queue_snapshot = [q for q in queue_snapshot if not q.game_id or q.game_id == self._game_id]
         active_items  = [q for q in queue_snapshot if q.status not in ("done", "error")]
         error_items   = [q for q in queue_snapshot if q.status == "error"]
 
@@ -1273,6 +1275,18 @@ class DownloadsTab(MDBoxLayout):
         mods_svc = self._host.get_service("mods")
         if mods_svc:
             mods_svc.rescan()
+
+        ue4ss_installed = any(
+            ci.category == "other" and getattr(ci.mod, "install_type", "") == "ue4ss"
+            for ci in items
+        )
+        if ue4ss_installed:
+            profile = self._host.get_game_context()
+            if profile:
+                from ....core.ue4ss import UE4SSDetector
+                new_detection = UE4SSDetector.detect(profile.game_root)
+                self._detection = new_detection
+                self._host.set_game_context(profile, new_detection)
 
         if self._on_switch_to_installed:
             self._on_switch_to_installed()

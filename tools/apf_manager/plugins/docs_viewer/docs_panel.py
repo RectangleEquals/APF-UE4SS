@@ -258,7 +258,7 @@ class DocsPanel:
             tree_json=tree_json,
             docs_html_json=docs_html_json,
             fw_version=_get_framework_version(),
-            sidebar_mode="default",
+            sidebar_mode="verbose",
             show_mode_toggle=show_mode_toggle,
             initial_path=doc_key,
             show_sidebar=show_sidebar,

@@ -269,20 +269,24 @@ class APFConfig:
 
     def add_user_registry(self, url: str, game_id: str = "",
                            selected_content: "Optional[list]" = None) -> None:
-        """Add a registry URL if not already present, then save."""
+        """Add a registry URL if not already present; update selected_content if it is."""
         from datetime import datetime, timezone
-        existing_urls = {r["url"] for r in self._settings.user_registries}
-        if url not in existing_urls:
-            entry: dict = {
-                "url": url,
-                "added_at": datetime.now(timezone.utc).isoformat(),
-            }
-            if game_id:
-                entry["game_id"] = game_id
-            if selected_content is not None:
-                entry["selected_content"] = selected_content
-            self._settings.user_registries.append(entry)
-            self.save()
+        for entry in self._settings.user_registries:
+            if entry["url"] == url:
+                if selected_content is not None:
+                    entry["selected_content"] = selected_content
+                self.save()
+                return
+        new_entry: dict = {
+            "url": url,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if game_id:
+            new_entry["game_id"] = game_id
+        if selected_content is not None:
+            new_entry["selected_content"] = selected_content
+        self._settings.user_registries.append(new_entry)
+        self.save()
 
     def remove_user_registry(self, url: str) -> None:
         """Remove a registry URL by URL string, then save."""

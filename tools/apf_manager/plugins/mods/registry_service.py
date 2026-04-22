@@ -286,14 +286,10 @@ class RegistryService:
             tpl_items = [tp for m in mods for tp in m.templates_paths]
             content_count = len(mod_items) + len(tpl_items)
 
-            # Compute existing mod_ids for conflict detection in the viewer.
-            existing_mod_ids: set = set()
-            for reg_entry in self.get_user_registries():
-                try:
-                    reg_mods = resolver.traverse(reg_entry.url, cache)
-                    existing_mod_ids.update(m.mod_id for m in reg_mods if m.mod_id)
-                except Exception:
-                    pass
+            # DUP = already in Content tab from a different source.
+            # Use get_mods() which reflects actual selected_content state.
+            current_game_id = self._get_game_id() or ""
+            existing_mod_ids: set = {m.mod_id for m in self.get_mods(current_game_id) if m.mod_id}
 
             def _finalize(selected_mods, raw_selected_ids=None):
                 """Called by Repo Viewer on_confirm (main thread) or directly."""
@@ -413,14 +409,9 @@ class RegistryService:
                     ))
                     return
 
-            # Existing mod_ids for conflict detection
-            existing_mod_ids: set = set()
-            for reg_entry in self.get_user_registries():
-                try:
-                    reg_mods = resolver.traverse(reg_entry.url, cache)
-                    existing_mod_ids.update(m.mod_id for m in reg_mods if m.mod_id)
-                except Exception:
-                    pass
+            # DUP = already in Content tab from a different source.
+            # Use get_mods() which reflects actual selected_content state.
+            existing_mod_ids: set = {m.mod_id for m in self.get_mods(current_game_id) if m.mod_id}
 
             # Build folder tree
             try:
@@ -632,41 +623,47 @@ class RegistryService:
         return results
 
     def get_other_content(self, game_id: str) -> list:
-        """Return _OtherEntry list for UE4SS options from ue4ss.json in game registries."""
+        """Return _OtherEntry list for UE4SS options from ue4ss.json in game registries.
+
+        Traverses registries directly (not through get_mods) so that UE4SS options
+        are gated only by their own ue4ss_option: keys — independent of whether the
+        framework mod itself is in selected_content.
+        """
         from .registry_resolver import _is_framework_mod_id
-        for entry in self.get_mods(game_id):
-            if entry.ue4ss_info and _is_framework_mod_id(entry.mod_id):
-                info = entry.ue4ss_info
-                reg = entry.registry
-                reg_owner = reg.owner if reg else ""
-                reg_repo  = reg.repo  if reg else ""
-                selected_content = set(reg.selected_content or []) if reg else set()
-                entries = []
-                for opt in info.get("options", []):
-                    opt_type = opt.get("type", "manual")
+        resolver = self._get_resolver()
+        cache = self._get_cache()
+        results = []
+        for entry in self.get_user_registries():
+            if game_id and entry.game_id and entry.game_id.lower() != game_id.lower():
+                continue
+            selected_content = set(entry.selected_content or [])
+            try:
+                discovered = resolver.traverse(entry.url, cache)
+            except Exception:
+                continue
+            for mod in discovered:
+                if not mod.ue4ss_info or not _is_framework_mod_id(getattr(mod, "mod_id", "")):
+                    continue
+                for opt in mod.ue4ss_info.get("options", []):
                     raw_repo = opt.get("repo", "")
                     owner, repo = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
                     tag = opt.get("tag", "")
-                    # Filter by per-option selection if a selection was made in repo viewer
-                    if selected_content:
-                        opt_key = f"ue4ss_option:{raw_repo}:{tag}"
-                        if opt_key not in selected_content:
-                            continue
-                    entries.append(_OtherEntry(
+                    if selected_content and f"ue4ss_option:{raw_repo}:{tag}" not in selected_content:
+                        continue
+                    results.append(_OtherEntry(
                         name           = opt.get("note", "UE4SS"),
                         note           = opt.get("note", ""),
-                        type           = opt_type,
+                        type           = opt.get("type", "manual"),
                         owner          = owner,
                         repo           = repo,
                         tag            = tag,
                         url            = opt.get("url", ""),
                         install_type   = "ue4ss",
                         docs           = opt.get("docs", ""),
-                        registry_owner = reg_owner,
-                        registry_repo  = reg_repo,
+                        registry_owner = entry.owner,
+                        registry_repo  = entry.repo,
                     ))
-                return entries
-        return []
+        return results
 
     def get_framework_candidates(self, game_id: str) -> list[FrameworkModCandidate]:
         """Return scored framework mod candidates from all registered registries."""

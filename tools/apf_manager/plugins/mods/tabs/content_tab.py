@@ -42,30 +42,46 @@ _COL_DIM      = (0.5, 0.5, 0.5, 1)
 
 _HOVER_DURATION_IN  = 0.08
 _HOVER_DURATION_OUT = 0.30
+_TARGET_ALPHA       = 0.07
 
 
 class _HoverRow(HoverBehavior, MDBoxLayout):
     """MDBoxLayout with animated hover feedback — used for expandable github_release rows."""
 
+    _hovering = False
+
     def on_enter(self):
+        if self._hovering:
+            return
+        self._hovering = True
         from kivy.core.window import Window
         Window.set_system_cursor("hand")
-        Animation.cancel_all(self, "md_bg_color")
-        hover_color = self.theme_cls.surfaceContainerHighestColor[:3] + [0.15]
-        Animation(md_bg_color=hover_color, duration=_HOVER_DURATION_IN).start(self)
+        current_alpha = (self.md_bg_color or [0, 0, 0, 0])[3]
+        remaining = _TARGET_ALPHA - current_alpha
+        if remaining <= 0:
+            return
+        duration = max(_HOVER_DURATION_IN * (remaining / _TARGET_ALPHA), 0.01)
+        Animation(md_bg_color=(1, 1, 1, _TARGET_ALPHA), duration=duration).start(self)
 
     def on_leave(self):
+        if not self._hovering:
+            return
+        self._hovering = False
         from kivy.core.window import Window
         Window.set_system_cursor("arrow")
-        Animation.cancel_all(self, "md_bg_color")
-        Animation(md_bg_color=[0, 0, 0, 0], duration=_HOVER_DURATION_OUT).start(self)
+        current_alpha = (self.md_bg_color or [0, 0, 0, 0])[3]
+        if current_alpha <= 0:
+            return
+        duration = max(_HOVER_DURATION_OUT * (current_alpha / _TARGET_ALPHA), 0.01)
+        Animation(md_bg_color=(0, 0, 0, 0), duration=duration).start(self)
 
     def on_parent(self, widget, parent):
         if parent is None:
+            self._hovering = False
             from kivy.core.window import Window
             Window.set_system_cursor("arrow")
             Animation.cancel_all(self, "md_bg_color")
-            self.md_bg_color = [0, 0, 0, 0]
+            self.md_bg_color = (0, 0, 0, 0)
 
 
 class ContentTab(MDBoxLayout):
