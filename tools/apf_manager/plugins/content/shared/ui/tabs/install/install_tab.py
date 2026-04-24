@@ -565,7 +565,7 @@ class InstalledTab(MDBoxLayout):
         if not logicmods_dir or not logicmods_dir.is_dir():
             return
 
-        from ..install_state import InstallStateManager
+        from .....shared.data.install_state import InstallStateManager
         game_id = self._get_game_id()
         state = InstallStateManager(game_id) if game_id else None
 
