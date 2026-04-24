@@ -310,7 +310,7 @@ class RegistriesTab(MDBoxLayout):
                 spacing=dp(8),
             )
             row.add_widget(MDLabel(
-                text=f"{entry.owner}/{entry.repo}",
+                text=entry.repo.full_name,
                 size_hint=(1, 1),
             ))
             row.add_widget(MDIconButton(

@@ -27,7 +27,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .pipeline_state import InstallRecord
 
 
 def _state_path(game_id: str) -> Path:
@@ -89,7 +92,6 @@ class InstallStateManager:
     # -----------------------------------------------------------------------
 
     def add(self, entry: dict) -> None:
-        """Add or replace an entry (matched by folder_name). Sets deployed_at if absent."""
         if "deployed_at" not in entry:
             entry = dict(entry)
             entry["deployed_at"] = datetime.now(timezone.utc).isoformat()
@@ -97,8 +99,18 @@ class InstallStateManager:
         self._data.append(entry)
         self._save()
 
+    def add_record(self, record: "InstallRecord") -> None:
+        from .pipeline_state import InstallRecord
+        self._data = [e for e in self._data if e.get("folder_name") != record.folder_name]
+        self._data.append(record.to_dict())
+        self._save()
+
+    def find_record(self, folder_name: str) -> Optional["InstallRecord"]:
+        from .pipeline_state import InstallRecord
+        entry = self.find(folder_name)
+        return InstallRecord.from_dict(entry) if entry else None
+
     def remove(self, folder_name: str) -> None:
-        """Remove an entry by folder_name. No-op if not found."""
         before = len(self._data)
         self._data = [e for e in self._data if e.get("folder_name") != folder_name]
         if len(self._data) != before:

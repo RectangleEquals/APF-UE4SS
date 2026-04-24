@@ -17,29 +17,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
+from ..shared.data.content_base import GitHubRepo, RegistrySource, ModComponents, DocInfo, ContentTags
+from ..shared.data.content_types import (
+    RegistryDescriptor, APModDescriptor, FrameworkModDescriptor, ThirdPartyModDescriptor,
+    TemplateDescriptor, GithubReleaseBinary, ReleaseSource,
+)
+from ..shared.data.content_filter import ContentFilter
+
 if TYPE_CHECKING:
     from ....core.config import GameProfile
     from ....core.plugin_host import PluginHost
     from ..utils.registry.resolver import DiscoveredMod
     from ..utils.registry.cache import RegistryCache
-
-
-# ---------------------------------------------------------------------------
-# Dataclasses
-# ---------------------------------------------------------------------------
-
-@dataclass
-class RegistryEntry:
-    url: str
-    owner: str
-    repo: str
-    game_id: str = ""
-    mod_count: int = 0
-    last_refresh: Optional[datetime] = None
-    status: str = "pending"    # "pending" | "ok" | "error" | "loading"
-    error_msg: str = ""
-    children: list["RegistryEntry"] = field(default_factory=list)
-    selected_content: Optional[list] = None  # ["framework_mod:id", "mod:id", "ue4ss_option:...", "template:..."]
 
 
 @dataclass
@@ -51,7 +40,7 @@ class RegistryModEntry:
     folder: str
     description: str = ""
     readme_url: str = ""
-    registry: Optional[RegistryEntry] = None
+    registry: Optional[RegistryDescriptor] = None
     ue4ss_info: Optional[dict] = None
     templates_paths: list = field(default_factory=list)
     components: list = field(default_factory=lambda: ["lua"])
@@ -195,28 +184,24 @@ class RegistryService:
     # Registry management
     # -----------------------------------------------------------------------
 
-    def get_user_registries(self, game_id: str = "") -> list[RegistryEntry]:
-        """Return RegistryEntry objects for user-added registry URLs.
-
-        If game_id is given, returns only registries associated with that game
-        (plus any older entries that have no game_id stored).
-        """
+    def get_user_registries(self, game_id: str = "") -> list[RegistryDescriptor]:
+        """Return RegistryDescriptor objects for user-added registry URLs."""
         from ..utils.registry.resolver import parse_github_url
         entries = []
         for r in self._host.config.get_user_registries(game_id):
             parsed = parse_github_url(r["url"])
             if not parsed:
                 continue
-            owner, repo = parsed
-            entry = RegistryEntry(url=r["url"], owner=owner, repo=repo,
-                                  game_id=r.get("game_id", ""),
-                                  selected_content=r.get("selected_content"))
+            owner, repo_name = parsed
+            entry = RegistryDescriptor(
+                url=r["url"],
+                repo=GitHubRepo(owner=owner, repo=repo_name),
+                game_id=r.get("game_id", ""),
+                selected_content=r.get("selected_content"),
+            )
             added_at = r.get("added_at")
             if added_at:
-                try:
-                    entry.last_refresh = datetime.fromisoformat(added_at)
-                except Exception:
-                    pass
+                entry.last_refresh = added_at
             entries.append(entry)
         return entries
 
@@ -292,30 +277,13 @@ class RegistryService:
             existing_mod_ids: set = {m.mod_id for m in self.get_mods(current_game_id) if m.mod_id}
 
             def _finalize(selected_mods, raw_selected_ids=None):
-                """Called by Repo Viewer on_confirm (main thread) or directly."""
-                from ..utils.registry.resolver import _is_framework_mod_id
                 ap_count     = sum(1 for m in selected_mods if m.mod_id)
                 non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
                 parts = [f"{ap_count} AP mod(s)"] if ap_count else []
                 if non_ap_count:
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
-                # Build selected_content from checked mods + raw SPA item IDs
-                sc: Optional[list] = None
-                if raw_selected_ids is not None:
-                    sc = []
-                    for m in selected_mods:
-                        key = m.mod_id or m.folder
-                        if key:
-                            prefix = "framework_mod" if _is_framework_mod_id(m.mod_id) else "mod"
-                            sc.append(f"{prefix}:{key}")
-                    for sid in raw_selected_ids:
-                        if sid.startswith("ue4ss:"):
-                            sc.append(f"ue4ss_option:{sid[len('ue4ss:'):]}")
-                        elif sid.startswith("tpl:"):
-                            parts_tpl = sid[len("tpl:"):].split(":", 1)
-                            if len(parts_tpl) == 2:
-                                sc.append(f"template:{parts_tpl[1]}")
+                sc = _build_sc_from_viewer_result(selected_mods, raw_selected_ids)
                 self._host.config.add_user_registry(url, game_id=derived_game_id,
                                                      selected_content=sc)
                 self._invalidate_mods_cache()
@@ -324,12 +292,14 @@ class RegistryService:
             if content_count > 1 and self._host.has_service("repo_viewer"):
                 game_id_for_viewer = current_game_id or derived_game_id
                 _eids = existing_mod_ids
+                _esc = self._get_existing_sc(url)
                 _ui(lambda: self._host.show_dialog(
                     "repo_viewer",
                     repo_url=url,
                     game_id=game_id_for_viewer,
                     traversal_result=mods,
                     existing_mod_ids=_eids,
+                    initial_selected_content=_esc,
                     on_confirm=_finalize,
                     on_cancel=lambda: _ui(lambda: on_done(False, "Cancelled.")),
                 ))
@@ -423,40 +393,25 @@ class RegistryService:
                 folder_tree = None
 
             def _finalize(selected_mods, raw_selected_ids=None):
-                from ..utils.registry.resolver import _is_framework_mod_id
                 ap_count     = sum(1 for m in selected_mods if m.mod_id)
                 non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
                 parts = [f"{ap_count} AP mod(s)"] if ap_count else []
                 if non_ap_count:
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
-                sc: Optional[list] = None
-                if raw_selected_ids is not None:
-                    sc = []
-                    for m in selected_mods:
-                        key = m.mod_id or m.folder
-                        if key:
-                            prefix = "framework_mod" if _is_framework_mod_id(m.mod_id) else "mod"
-                            sc.append(f"{prefix}:{key}")
-                    for sid in raw_selected_ids:
-                        if sid.startswith("ue4ss:"):
-                            sc.append(f"ue4ss_option:{sid[len('ue4ss:'):]}")
-                        elif sid.startswith("tpl:"):
-                            parts_tpl = sid[len("tpl:"):].split(":", 1)
-                            if len(parts_tpl) == 2:
-                                sc.append(f"template:{parts_tpl[1]}")
+                sc = _build_sc_from_viewer_result(selected_mods, raw_selected_ids)
                 self._host.config.add_user_registry(url, game_id=derived_game_id,
                                                      selected_content=sc)
                 self._invalidate_mods_cache()
                 _ui(lambda: on_done(True, f"Registry added — {summary} found."))
 
             if not self._host.has_service("repo_viewer"):
-                # Fallback: add directly without viewer
                 _finalize(mods)
                 return
 
             _ft = folder_tree
             _eids = existing_mod_ids
+            _esc = self._get_existing_sc(url)
             _ui(lambda: self._host.show_dialog(
                 "repo_viewer",
                 repo_url=url,
@@ -464,6 +419,7 @@ class RegistryService:
                 traversal_result=mods,
                 folder_tree=_ft,
                 existing_mod_ids=_eids,
+                initial_selected_content=_esc,
                 on_confirm=_finalize,
                 on_cancel=lambda: _ui(lambda: on_done(False, "Cancelled.")),
             ))
@@ -481,7 +437,7 @@ class RegistryService:
             cache = self._get_cache()
             resolver = self._get_resolver()
             for entry in self.get_user_registries():
-                cache_key = f"{entry.owner}+{entry.repo}/traversal.json"
+                cache_key = f"{entry.repo.owner}+{entry.repo.repo}/traversal.json"
                 cache.invalidate(cache_key)
                 try:
                     resolver.traverse(entry.url, cache)
@@ -538,12 +494,7 @@ class RegistryService:
                 self._host.log(f"[registry] Traversal error for {entry.url}: {exc}")
                 continue
 
-            # Build selected key set from stored selection (None = include all)
-            selected_content = set(entry.selected_content or [])
-            selected_mod_keys = (
-                {s[len("mod:"):] for s in selected_content if s.startswith("mod:")} |
-                {s[len("framework_mod:"):] for s in selected_content if s.startswith("framework_mod:")}
-            ) if selected_content else None
+            sc = entry.selected_content
 
             for mod in discovered:
                 # Skip synthetic container entries with no mod content
@@ -554,13 +505,13 @@ class RegistryService:
                     parts = mod.mod_id.split(".")
                     if game_id and len(parts) >= 2 and parts[1].lower() != game_id.lower():
                         continue
-                    if selected_mod_keys is not None and mod.mod_id not in selected_mod_keys:
+                    if not ContentFilter.includes_ap_mod(sc, mod.mod_id):
                         continue
                 # Non-AP mods: filter by the registry's stored game_id
                 else:
                     if game_id and entry.game_id and entry.game_id.lower() != game_id.lower():
                         continue
-                    if selected_mod_keys is not None and mod.folder not in selected_mod_keys:
+                    if not ContentFilter.includes_non_ap_mod(sc, mod.folder):
                         continue
                 results.append(RegistryModEntry(
                     mod_id=mod.mod_id,
@@ -594,14 +545,13 @@ class RegistryService:
                 discovered = resolver.traverse(entry.url, cache)
             except Exception:
                 continue
-            selected_content = set(entry.selected_content or [])
             for mod in discovered:
                 for tpath in mod.templates_paths:
                     # tpath is like "Templates/Palworld"
                     game_dir = tpath.split("/")[-1] if "/" in tpath else tpath
                     if game_id and game_dir.lower() != game_id.lower():
                         continue
-                    if selected_content and f"template:{tpath}" not in selected_content:
+                    if not ContentFilter.includes_template(entry.selected_content, tpath):
                         continue
                     repo_key = f"{mod.owner}/{mod.repo}"
                     existing = seen.setdefault(tpath, [])
@@ -636,7 +586,6 @@ class RegistryService:
         for entry in self.get_user_registries():
             if game_id and entry.game_id and entry.game_id.lower() != game_id.lower():
                 continue
-            selected_content = set(entry.selected_content or [])
             try:
                 discovered = resolver.traverse(entry.url, cache)
             except Exception:
@@ -648,7 +597,7 @@ class RegistryService:
                     raw_repo = opt.get("repo", "")
                     owner, repo = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
                     tag = opt.get("tag", "")
-                    if selected_content and f"ue4ss_option:{raw_repo}:{tag}" not in selected_content:
+                    if not ContentFilter.includes_ue4ss(entry.selected_content, raw_repo, tag):
                         continue
                     results.append(_OtherEntry(
                         name           = opt.get("note", "UE4SS"),
@@ -660,8 +609,8 @@ class RegistryService:
                         url            = opt.get("url", ""),
                         install_type   = "ue4ss",
                         docs           = opt.get("docs", ""),
-                        registry_owner = entry.owner,
-                        registry_repo  = entry.repo,
+                        registry_owner = entry.repo.owner,
+                        registry_repo  = entry.repo.repo,
                     ))
         return results
 
@@ -795,8 +744,8 @@ class RegistryService:
             ))
         return docs
 
-    def get_registry_docs(self, entry: RegistryEntry) -> list[DocEntry]:
-        api = self._make_api(entry.owner, entry.repo)
+    def get_registry_docs(self, entry: RegistryDescriptor) -> list[DocEntry]:
+        api = self._make_api(entry.repo.owner, entry.repo.repo)
         try:
             contents = api.list_contents("")
         except Exception:
@@ -807,12 +756,12 @@ class RegistryService:
         )
         if root_readme and root_readme.get("download_url"):
             docs.append(DocEntry(
-                owner=entry.owner,
-                repo=entry.repo,
+                owner=entry.repo.owner,
+                repo=entry.repo.repo,
                 ref="HEAD",
                 path="README.md",
                 raw_url=root_readme["download_url"],
-                title=f"{entry.repo} — README",
+                title=f"{entry.repo.repo} — README",
                 doc_type="registry",
             ))
         docs_dir = next(
@@ -824,8 +773,8 @@ class RegistryService:
                 for f in sub:
                     if f["name"].endswith(".md") and f.get("download_url"):
                         docs.append(DocEntry(
-                            owner=entry.owner,
-                            repo=entry.repo,
+                            owner=entry.repo.owner,
+                            repo=entry.repo.repo,
                             ref="HEAD",
                             path=f["path"],
                             raw_url=f["download_url"],
@@ -879,6 +828,63 @@ class RegistryService:
         if mods_svc:
             return mods_svc._resolve_templates_dirs()
         return []
+
+    # -----------------------------------------------------------------------
+    # Typed descriptor conversion
+    # -----------------------------------------------------------------------
+
+    def _to_content_descriptor(self, mod: "DiscoveredMod", entry: RegistryDescriptor):
+        """Convert a DiscoveredMod to the appropriate typed ContentDescriptor subclass."""
+        from ..utils.registry.resolver import _is_framework_mod_id
+        source = RegistrySource(
+            repo=entry.repo,
+            registry_url=entry.url,
+            folder=mod.folder,
+            submodule_parent=(
+                GitHubRepo.from_full_name(mod.submodule_of)
+                if getattr(mod, "submodule_of", None) else None
+            ),
+        )
+        components = ModComponents.from_lists(
+            mod.components or [], mod.bp_pak_files or []
+        )
+        docs = DocInfo(readme_url=mod.readme_url or "")
+        tags = ContentTags(
+            is_framework=_is_framework_mod_id(mod.mod_id or ""),
+            is_submodule=source.is_submodule,
+        )
+        name = mod.manifest.get("name") or mod.folder.split("/")[-1]
+        version = mod.manifest.get("version", "")
+        if mod.mod_id:
+            parts = mod.mod_id.split(".")
+            game_id = parts[1] if len(parts) >= 2 else ""
+            if _is_framework_mod_id(mod.mod_id):
+                return FrameworkModDescriptor(
+                    name=name, version=version, game_id=game_id,
+                    folder_name=mod.folder.split("/")[-1],
+                    description=mod.manifest.get("description", ""),
+                    author=mod.manifest.get("author", ""),
+                    mod_id=mod.mod_id,
+                    source=source, components=components, docs=docs, tags=tags,
+                    capabilities_includes=mod.manifest.get("capabilities", {}).get("include", []),
+                )
+            return APModDescriptor(
+                name=name, version=version, game_id=game_id,
+                folder_name=mod.folder.split("/")[-1],
+                description=mod.manifest.get("description", ""),
+                author=mod.manifest.get("author", ""),
+                mod_id=mod.mod_id,
+                source=source, components=components, docs=docs, tags=tags,
+                capabilities_includes=mod.manifest.get("capabilities", {}).get("include", []),
+            )
+        return ThirdPartyModDescriptor(
+            name=name, version=version,
+            game_id=entry.game_id,
+            folder_name=mod.folder.split("/")[-1],
+            description=mod.manifest.get("description", ""),
+            author=mod.manifest.get("author", ""),
+            source=source, components=components, docs=docs, tags=tags,
+        )
 
     # -----------------------------------------------------------------------
     # Helpers
@@ -989,6 +995,13 @@ class RegistryService:
             return self._profile.display_name.lower().replace(" ", "_")
         return None
 
+    def _get_existing_sc(self, url: str) -> Optional[list]:
+        """Return the current selected_content stored for url, or None if not found."""
+        for r in self._host.config.get_user_registries():
+            if r.get("url") == url:
+                return r.get("selected_content")
+        return None
+
     def _make_api(self, owner: str, repo: str):
         from ....core.remote.github_api import GitHubAPI
         from ..utils.registry.resolver import _BUNDLED_PAT
@@ -1002,8 +1015,29 @@ class RegistryService:
 
 
 # ---------------------------------------------------------------------------
-# Internal helper
+# Internal helpers
 # ---------------------------------------------------------------------------
+
+def _build_sc_from_viewer_result(selected_mods, raw_selected_ids) -> Optional[list]:
+    """Shared _finalize helper: build selected_content list from viewer result."""
+    from ..utils.registry.resolver import _is_framework_mod_id
+    if raw_selected_ids is None:
+        return None
+    sc: list = []
+    for m in selected_mods:
+        key = m.mod_id or m.folder
+        if key:
+            prefix = "framework_mod" if _is_framework_mod_id(m.mod_id) else "mod"
+            sc.append(f"{prefix}:{key}")
+    for sid in raw_selected_ids:
+        if sid.startswith("ue4ss:"):
+            sc.append(f"ue4ss_option:{sid[len('ue4ss:'):]}")
+        elif sid.startswith("tpl:"):
+            parts_tpl = sid[len("tpl:"):].split(":", 1)
+            if len(parts_tpl) == 2:
+                sc.append(f"template:{parts_tpl[1]}")
+    return sc
+
 
 def _to_discovered(entry: RegistryModEntry) -> "DiscoveredMod":
     """Convert a RegistryModEntry back to a DiscoveredMod for scoring."""

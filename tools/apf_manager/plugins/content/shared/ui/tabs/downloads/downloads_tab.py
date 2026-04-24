@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
+from .....shared.data.content_base import ContentDescriptor
+
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
@@ -104,17 +106,22 @@ class _CacheItem:
     cache_path: Path
     components: list = field(default_factory=lambda: ["lua"])
     bp_pak_files: list = field(default_factory=list)
-    mod_ref: Optional[object] = None   # RegistryModEntry if still known
+    content: Optional[ContentDescriptor] = None
+    mod_ref: Optional[object] = None   # RegistryModEntry fallback
     category: str = "mod"              # "mod" | "template" | "other"
     game_name: str = ""
     install_type: str = ""
 
     @property
     def display_name(self) -> str:
+        if self.content and self.content.name:
+            return self.content.name
         return getattr(self.mod_ref, "name", self.folder_name) if self.mod_ref else self.folder_name
 
     @property
     def version(self) -> str:
+        if self.content and self.content.version:
+            return self.content.version
         return getattr(self.mod_ref, "version", "") if self.mod_ref else ""
 
     @property
@@ -246,7 +253,6 @@ class DownloadsTab(MDBoxLayout):
         threading.Thread(target=_bg, daemon=True).start()
 
     def _scan_cache(self) -> list[_CacheItem]:
-        import json as _json
         items = []
         if not _CACHE_DIR.is_dir():
             return items
@@ -258,21 +264,26 @@ class DownloadsTab(MDBoxLayout):
 
         _SKIP = {"github", "_framework"}
 
-        def _read_meta(folder_dir: Path) -> tuple[str, str, str]:
-            """Return (category, game_name, install_type) from .apf_meta.json or defaults."""
-            meta_file = folder_dir / ".apf_meta.json"
-            if meta_file.exists():
-                try:
-                    m = _json.loads(meta_file.read_text())
-                    return m.get("category", "mod"), m.get("game_name", ""), m.get("install_type", "")
-                except Exception:
-                    pass
-            return "mod", "", ""
-
         def _add_item(folder_dir: Path, owner: str, repo: str) -> None:
-            category, game_name, install_type = _read_meta(folder_dir)
+            from .....shared.data.pipeline_state import ContentSerializer
+            from .....shared.data.content_types import BinaryDescriptor, TemplateDescriptor
+            result = ContentSerializer().load_cache(folder_dir)
+            if result:
+                content, _ = result
+                ct = content.content_type
+                if ct in ("ap_mod", "framework_mod", "third_party_mod"):
+                    category = "mod"
+                elif ct == "template":
+                    category = "template"
+                else:
+                    category = "other"
+                game_name = content.game_id or ""
+                install_type = getattr(content, "install_type", "")
+            else:
+                content = None
+                category, game_name, install_type = "mod", "", ""
             # Skip items that belong to a different game.
-            # Official UE4SS / framework binaries write game_name="" so they always pass.
+            # Official UE4SS / framework binaries have game_id="" so they always pass.
             if game_name and game_name != self._game_id:
                 return
             mod_ref = mod_by_folder.get(folder_dir.name)
@@ -284,6 +295,7 @@ class DownloadsTab(MDBoxLayout):
                 cache_path=folder_dir,
                 components=components,
                 bp_pak_files=bp_files,
+                content=content,
                 mod_ref=mod_ref,
                 category=category,
                 game_name=game_name,
@@ -907,8 +919,10 @@ class DownloadsTab(MDBoxLayout):
             theme_text_color="Custom", text_color=_COL_DIM,
         ))
         # Changelog button for other-category items (UE4SS / framework releases)
-        # Resolve the _OtherEntry for this cached item by matching owner/repo/tag
+        from .....shared.data.content_types import GithubReleaseBinary
         _other_ref = ci.mod_ref
+        if ci.category == "other" and isinstance(ci.content, GithubReleaseBinary) and ci.content.source:
+            _other_ref = ci.content  # use typed content as changelog source
         if ci.category == "other" and _other_ref is None:
             registry_svc = self._host.get_service("registry") if self._host.has_service("registry") else None
             updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
@@ -925,7 +939,10 @@ class DownloadsTab(MDBoxLayout):
                     _other_ref = entry
                     break
         if ci.category == "other" and _other_ref is not None:
-            changelog = getattr(_other_ref, "changelog", "")
+            if isinstance(_other_ref, GithubReleaseBinary) and _other_ref.source:
+                changelog = _other_ref.source.changelog
+            else:
+                changelog = getattr(_other_ref, "changelog", "")
             if changelog:
                 def _show_changelog(*_, _cl=changelog):
                     from kivymd.uix.dialog import (
@@ -981,7 +998,6 @@ class DownloadsTab(MDBoxLayout):
 
     def _download_item_bg(self, item: _QueueItem) -> None:
         try:
-            import json as _json
             owner  = getattr(item.mod, "owner", "")
             repo   = getattr(item.mod, "repo",  "")
             folder = getattr(item.mod, "folder", getattr(item.mod, "mod_id", ""))
@@ -999,30 +1015,9 @@ class DownloadsTab(MDBoxLayout):
 
             dest.mkdir(parents=True, exist_ok=True)
 
-            # Write metadata immediately after mkdir so category is recoverable
+            # Write .apf_cache immediately after mkdir so category is recoverable
             # even if the download fails partway through.
-            if item.category == "other":
-                _install_type = getattr(item.mod, "install_type", "")
-                _reg_owner    = getattr(item.mod, "registry_owner", "")
-                if _install_type == "framework_binary" or not _reg_owner:
-                    # Official UE4SS or APF Framework binaries — game-agnostic
-                    _game_name = ""
-                else:
-                    # Custom registry-provided fork — game-specific
-                    _game_name = self._game_id
-            else:
-                _mod_id = getattr(item.mod, "mod_id", "")
-                _id_parts = _mod_id.split(".")
-                # Derive game_name: prefer mod_id segment, then game_id attr, then current game
-                _game_name = (
-                    _id_parts[1] if len(_id_parts) >= 2 and _id_parts[1]
-                    else getattr(item.mod, "game_id", "") or self._game_id
-                )
-            (dest / ".apf_meta.json").write_text(_json.dumps({
-                "category":     item.category,
-                "game_name":    _game_name,
-                "install_type": getattr(item.mod, "install_type", ""),
-            }))
+            _save_descriptor_cache(item, dest, self._game_id)
 
             from .......core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
             token = _BUNDLED_TOKEN_PATH.read_text().strip() \
@@ -1255,12 +1250,17 @@ class DownloadsTab(MDBoxLayout):
                         continue
                     components   = ci.components
                     bp_pak_files = ci.bp_pak_files
+                    from .....shared.data.content_types import APModDescriptor
                     metadata     = {
-                        "mod_id":        getattr(ci.mod_ref, "mod_id", "") if ci.mod_ref else "",
+                        "content_type":  ci.content.content_type if ci.content else "ap_mod",
+                        "name":          ci.display_name,
+                        "mod_id":        ci.content.mod_id if isinstance(ci.content, APModDescriptor) else (getattr(ci.mod_ref, "mod_id", "") if ci.mod_ref else ""),
                         "folder_name":   ci.folder_name,
                         "source_repo":   f"{ci.owner}/{ci.repo}",
                         "source_folder": ci.folder_name,
                         "version":       ci.version,
+                        "description":   ci.content.description if hasattr(ci.content, "description") else "",
+                        "author":        ci.content.author if hasattr(ci.content, "author") else "",
                     }
                     deploy_svc.deploy_mod(
                         ci.cache_path, ci.folder_name,
@@ -1276,8 +1276,9 @@ class DownloadsTab(MDBoxLayout):
         if mods_svc:
             mods_svc.rescan()
 
+        from .....shared.data.content_types import BinaryDescriptor
         ue4ss_installed = any(
-            ci.category == "other" and getattr(ci.mod, "install_type", "") == "ue4ss"
+            isinstance(ci.content, BinaryDescriptor) and ci.install_type == "ue4ss"
             for ci in items
         )
         if ue4ss_installed:
@@ -1296,9 +1297,13 @@ class DownloadsTab(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def get_download_count(self) -> int:
-        """Active queue count, or cached count if queue is idle."""
+        """Active queue count for current game, or cached count if queue is idle."""
         with self._queue_lock:
-            active = sum(1 for q in self._queue if q.status in ("queued", "downloading"))
+            active = sum(
+                1 for q in self._queue
+                if q.status in ("queued", "downloading")
+                and (not q.game_id or q.game_id == self._game_id)
+            )
         if active:
             return active
         return len(self._cached)
@@ -1336,6 +1341,89 @@ def _detect_bp_paks(folder: Path) -> list:
         f.name for f in lm.iterdir()
         if f.is_file() and f.suffix.lower() in (".pak", ".ucas", ".utoc")
     ]
+
+
+def _save_descriptor_cache(item: "_QueueItem", dest: "Path", current_game_id: str) -> None:
+    """Build a typed ContentDescriptor from a queue item and write .apf_cache."""
+    from .....shared.data.pipeline_state import ContentSerializer
+    from .....shared.data.content_base import GitHubRepo, RegistrySource, ReleaseSource, ModComponents, DocInfo
+    from .....shared.data.content_types import (
+        APModDescriptor, FrameworkModDescriptor, ThirdPartyModDescriptor,
+        TemplateDescriptor, GithubReleaseBinary,
+    )
+    try:
+        mod = item.mod
+        if item.category == "other":
+            _install_type = getattr(mod, "install_type", "ue4ss")
+            _reg_owner = getattr(mod, "registry_owner", "")
+            game_id = "" if (_install_type == "framework_binary" or not _reg_owner) else current_game_id
+            source = ReleaseSource(
+                repo=GitHubRepo(owner=getattr(mod, "owner", ""), repo=getattr(mod, "repo", "")),
+                tag=getattr(mod, "tag", ""),
+                published_at=getattr(mod, "published_at", ""),
+                changelog=getattr(mod, "changelog", ""),
+                is_prerelease=getattr(mod, "prerelease", False),
+            )
+            descriptor = GithubReleaseBinary(
+                name=getattr(mod, "name", ""),
+                version=getattr(mod, "tag", ""),
+                game_id=game_id,
+                install_type=_install_type,
+                source=source,
+            )
+        elif item.category == "template":
+            game_id = getattr(mod, "game_id", "") or current_game_id
+            source = RegistrySource(
+                repo=GitHubRepo(owner=getattr(mod, "owner", ""), repo=getattr(mod, "repo", "")),
+                folder=getattr(mod, "path", ""),
+            )
+            descriptor = TemplateDescriptor(
+                name=(getattr(mod, "path", "") or "").split("/")[-1],
+                game_id=game_id,
+                template_path=getattr(mod, "path", ""),
+                source=source,
+            )
+        else:
+            _mod_id = getattr(mod, "mod_id", "")
+            _id_parts = _mod_id.split(".")
+            game_id = (
+                _id_parts[1] if len(_id_parts) >= 2 and _id_parts[1]
+                else getattr(mod, "game_id", "") or current_game_id
+            )
+            source = RegistrySource(
+                repo=GitHubRepo(owner=getattr(mod, "owner", ""), repo=getattr(mod, "repo", "")),
+                registry_url=getattr(getattr(mod, "registry", None), "url", ""),
+                folder=getattr(mod, "folder", ""),
+            )
+            components = ModComponents.from_lists(
+                getattr(mod, "components", ["lua"]),
+                getattr(mod, "bp_pak_files", []),
+            )
+            docs = DocInfo(readme_url=getattr(mod, "readme_url", ""))
+            if _mod_id:
+                from .....utils.registry.resolver import _is_framework_mod_id
+                cls = FrameworkModDescriptor if _is_framework_mod_id(_mod_id) else APModDescriptor
+                descriptor = cls(
+                    name=getattr(mod, "name", ""),
+                    version=getattr(mod, "version", ""),
+                    game_id=game_id,
+                    folder_name=(getattr(mod, "folder", "") or "").split("/")[-1],
+                    description=getattr(mod, "description", ""),
+                    mod_id=_mod_id,
+                    source=source, components=components, docs=docs,
+                )
+            else:
+                descriptor = ThirdPartyModDescriptor(
+                    name=getattr(mod, "name", ""),
+                    version=getattr(mod, "version", ""),
+                    game_id=game_id,
+                    folder_name=(getattr(mod, "folder", "") or "").split("/")[-1],
+                    description=getattr(mod, "description", ""),
+                    source=source, components=components, docs=docs,
+                )
+        ContentSerializer().save_cache(dest, descriptor)
+    except Exception:
+        pass
 
 
 def _download_github_folder(

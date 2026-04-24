@@ -208,15 +208,24 @@ class DeployService:
         gid = game_id or (self._profile.game_id if self._profile else "")
         if gid and metadata:
             from ..shared.data.install_state import InstallStateManager
-            InstallStateManager(gid).add({
-                "mod_id":                metadata.get("mod_id", ""),
-                "folder_name":           folder_name,
-                "source_repo":           metadata.get("source_repo", ""),
-                "source_folder":         metadata.get("source_folder", folder_name),
-                "version":               metadata.get("version", ""),
-                "components":            components,
-                "bp_pak_files_deployed": bp_pak_files,
-            })
+            from ..shared.data.pipeline_state import InstallRecord
+            record = InstallRecord(
+                content_type=metadata.get("content_type", "ap_mod"),
+                name=metadata.get("name", folder_name),
+                version=metadata.get("version", ""),
+                game_id=gid,
+                folder_name=folder_name,
+                description=metadata.get("description", ""),
+                author=metadata.get("author", ""),
+                mod_id=metadata.get("mod_id", ""),
+                source_registry_url=metadata.get("source_registry_url", ""),
+                source_repo=metadata.get("source_repo", ""),
+                source_folder=metadata.get("source_folder", folder_name),
+                components=components,
+                bp_pak_files_deployed=bp_pak_files,
+                capabilities_includes=metadata.get("capabilities_includes", []),
+            )
+            InstallStateManager(gid).add_record(record)
 
     def deploy_other(
         self,
