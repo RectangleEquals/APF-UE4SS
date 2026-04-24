@@ -1,14 +1,14 @@
 """
-RepoViewerPanel — service for the repo_viewer dialog contribution.
+RegistryViewer — opens a pywebview SPA window for registry content selection.
 
-Opens a pywebview SPA window showing a dependency tree of a multi-content repo:
+Shows a dependency tree of a multi-content repo:
   - Mods (with score breakdown)
   - Templates (with vocab file list)
   - Documentation (renders inline)
   - Submodule repos (collapsible, same structure)
   - External sources (Nexus, CurseForge, Thunderstore — docs-only)
 
-Users select what to add, then click "Add Selected".
+Users select what to add/keep, then click confirm.
 Result is passed back via on_confirm(selected: list[DiscoveredMod]).
 
 Uses the html_viewer output_file mechanism for cross-process result handoff.
@@ -36,13 +36,15 @@ if TYPE_CHECKING:
     from .....core.plugin_host import PluginHost
     from .resolver import DiscoveredMod, FolderTreeNode
 
+from .....core.utils import get_plugin_asset
+
 _EXTERNAL_URL_PATTERNS = {
     "nexus":       "nexusmods.com",
     "curseforge":  "curseforge.com",
     "thunderstore": "thunderstore.io",
 }
 
-_SPA_PATH = Path(__file__).parent.parent.parent.parent / "assets" / "registry" / "viewer_spa.html"
+_SPA_PATH = get_plugin_asset(__file__, "assets", "registry", "viewer_spa.html")
 
 
 def _detect_external_type(url: str) -> str:
@@ -486,11 +488,57 @@ def _inject_ue4ss_nodes(nodes: list[dict], mods: list, game_id: str) -> None:
     _walk(nodes)
 
 
-class RepoViewerPanel:
+def _apply_initial_selection(nodes: list[dict], initial_selected_content: Optional[list]) -> None:
+    """Pre-check nodes based on a stored selected_content list.
+
+    If initial_selected_content is None, leaves node checked states as-is
+    (computed during tree build based on conflict/game_id logic).
+    If it is a list (including empty), overrides checked state for all
+    selectable nodes based on membership.
     """
-    Service for the repo_viewer dialog.
-    Registered as "repo_viewer" by __init__.py.
-    """
+    if initial_selected_content is None:
+        return
+    sc_set = set(initial_selected_content)
+
+    def _walk(node_list: list[dict]) -> None:
+        for node in node_list:
+            if node.get("selectable"):
+                ntype = node.get("type")
+                if ntype == "mod":
+                    node["checked"] = node.get("mod_id", "") in sc_set
+                elif ntype == "non_ap_mod":
+                    node["checked"] = node.get("folder", "") in sc_set
+                elif ntype == "template":
+                    node["checked"] = node.get("path", "") in sc_set
+                elif ntype == "ue4ss_option":
+                    owner = node.get("owner", "")
+                    repo = node.get("repo", "")
+                    tag = node.get("tag", "")
+                    key = f"ue4ss:{owner}/{repo}:{tag}"
+                    node["checked"] = key in sc_set
+            if node.get("children"):
+                _walk(node["children"])
+
+    _walk(nodes)
+
+
+def _collect_initially_checked_ids(nodes: list[dict]) -> list[str]:
+    """Collect IDs of all selectable nodes that are checked after initial selection is applied."""
+    ids: list[str] = []
+
+    def _walk(node_list: list[dict]) -> None:
+        for n in node_list:
+            if n.get("selectable") and n.get("checked"):
+                ids.append(n["id"])
+            if n.get("children"):
+                _walk(n["children"])
+
+    _walk(nodes)
+    return ids
+
+
+class RegistryViewer:
+    """Opens the registry content selection SPA window."""
 
     def __init__(self, host: "PluginHost") -> None:
         self._host = host
@@ -502,6 +550,7 @@ class RepoViewerPanel:
         traversal_result: Optional[list] = None,
         folder_tree: Optional["FolderTreeNode"] = None,
         existing_mod_ids: Optional[set] = None,
+        initial_selected_content: Optional[list] = None,
         on_confirm: Optional[Callable[[list], None]] = None,
         on_cancel: Optional[Callable[[], None]] = None,
     ) -> None:
@@ -559,15 +608,22 @@ class RepoViewerPanel:
                 for tpath in mod.templates_paths:
                     id_to_mod[f"tpl:{mod.owner}/{mod.repo}:{tpath}"] = mod
 
+        # Apply pre-selection and collect initial checked IDs for delta display
+        _apply_initial_selection(nodes, initial_selected_content)
+        is_edit_mode = initial_selected_content is not None
+        initial_checked_ids = _collect_initially_checked_ids(nodes) if is_edit_mode else []
+
         # Build SPA HTML
         tree_json = json.dumps(nodes, ensure_ascii=False).replace("</", "<\\/")
         game_id_json = json.dumps(game_id, ensure_ascii=False)
         repo_url_json = json.dumps(repo_url, ensure_ascii=False)
+        is_edit_mode_json = json.dumps(is_edit_mode)
+        initial_set_json = json.dumps(initial_checked_ids, ensure_ascii=False)
 
         try:
             spa_template = _SPA_PATH.read_text(encoding="utf-8")
         except Exception as exc:
-            self._host.log(f"[repo_viewer] Could not read SPA template: {exc}")
+            self._host.log(f"[registry_viewer] Could not read SPA template: {exc}")
             if on_cancel:
                 on_cancel()
             return
@@ -578,6 +634,10 @@ class RepoViewerPanel:
             "/*__GAME_ID__*/", game_id_json
         ).replace(
             "/*__REPO_URL__*/", repo_url_json
+        ).replace(
+            "/*__IS_EDIT_MODE__*/", is_edit_mode_json
+        ).replace(
+            "/*__INITIAL_SELECTION_SET__*/", initial_set_json
         )
 
         # Temp file for result handoff

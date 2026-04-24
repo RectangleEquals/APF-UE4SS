@@ -23,6 +23,7 @@ from ..shared.data.content_types import (
     TemplateDescriptor, GithubReleaseBinary, ReleaseSource,
 )
 from ..shared.data.content_filter import ContentFilter
+from ..utils.registry.viewer import RegistryViewer
 
 if TYPE_CHECKING:
     from ....core.config import GameProfile
@@ -289,12 +290,11 @@ class RegistryService:
                 self._invalidate_mods_cache()
                 _ui(lambda: on_done(True, f"Registry added — {summary} found."))
 
-            if content_count > 1 and self._host.has_service("repo_viewer"):
+            if content_count > 1:
                 game_id_for_viewer = current_game_id or derived_game_id
                 _eids = existing_mod_ids
                 _esc = self._get_existing_sc(url)
-                _ui(lambda: self._host.show_dialog(
-                    "repo_viewer",
+                _ui(lambda: RegistryViewer(self._host).show(
                     repo_url=url,
                     game_id=game_id_for_viewer,
                     traversal_result=mods,
@@ -405,15 +405,10 @@ class RegistryService:
                 self._invalidate_mods_cache()
                 _ui(lambda: on_done(True, f"Registry added — {summary} found."))
 
-            if not self._host.has_service("repo_viewer"):
-                _finalize(mods)
-                return
-
             _ft = folder_tree
             _eids = existing_mod_ids
             _esc = self._get_existing_sc(url)
-            _ui(lambda: self._host.show_dialog(
-                "repo_viewer",
+            _ui(lambda: RegistryViewer(self._host).show(
                 repo_url=url,
                 game_id=derived_game_id or game_id,
                 traversal_result=mods,

@@ -168,9 +168,11 @@ html, body { height: 100%; overflow: hidden; background: #0d1117; color: #e6edf3
 
 <script>
 // ── Injected data ─────────────────────────────────────────────────────────────
-const TREE_DATA = /*__TREE_JSON__*/;
-const GAME_ID   = /*__GAME_ID__*/;
-const REPO_URL  = /*__REPO_URL__*/;
+const TREE_DATA             = /*__TREE_JSON__*/;
+const GAME_ID               = /*__GAME_ID__*/;
+const REPO_URL              = /*__REPO_URL__*/;
+const IS_EDIT_MODE          = /*__IS_EDIT_MODE__*/;
+const INITIAL_SELECTION_SET = new Set(/*__INITIAL_SELECTION_SET__*/);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let _selected_node = null;
@@ -769,7 +771,26 @@ function updateSelectionCount() {
   const count = document.querySelectorAll(".check:checked").length;
   document.getElementById("selection-count").textContent =
     count > 0 ? `${count} item(s) selected` : "Nothing selected";
-  document.getElementById("add-btn").disabled = count === 0;
+
+  const btn = document.getElementById("add-btn");
+  if (!IS_EDIT_MODE) {
+    btn.disabled = count === 0;
+    btn.textContent = "Add Selected";
+    return;
+  }
+  const current = new Set(getSelectedIds());
+  const added   = [...current].filter(id => !INITIAL_SELECTION_SET.has(id));
+  const removed = [...INITIAL_SELECTION_SET].filter(id => !current.has(id));
+  btn.disabled = false;
+  if (added.length === 0 && removed.length === 0) {
+    btn.textContent = "No Changes";
+  } else if (added.length > 0 && removed.length > 0) {
+    btn.textContent = `Save (Add ${added.length}, Remove ${removed.length})`;
+  } else if (added.length > 0) {
+    btn.textContent = `Save (Add ${added.length})`;
+  } else {
+    btn.textContent = `Save (Remove ${removed.length})`;
+  }
 }
 
 function getSelectedIds() {
@@ -779,7 +800,7 @@ function getSelectedIds() {
 // ── Actions ───────────────────────────────────────────────────────────────────
 function doConfirm() {
   const selected = getSelectedIds();
-  if (selected.length === 0) return;
+  if (selected.length === 0 && !IS_EDIT_MODE) return;
   pywebview.api.confirm(JSON.stringify({ action: "confirm", selected }));
 }
 
