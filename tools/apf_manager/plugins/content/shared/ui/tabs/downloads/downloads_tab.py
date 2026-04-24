@@ -32,6 +32,8 @@ from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
 from .......gui.widgets.tip_icon_button import TipIconButton
+from .....shared.ui.constants import COL_CPP, COL_BP, COL_DIM
+from .....shared.ui.section_header import make_section_header
 
 if TYPE_CHECKING:
     from .......core.ue4ss import UE4SSResult
@@ -42,9 +44,6 @@ _CACHE_DIR = Path.home() / ".apf_manager" / "cache"
 _BG_SECTION   = (0.10, 0.12, 0.15, 1)
 _BG_ITEM      = (0.13, 0.13, 0.13, 1)
 _BG_UPDATES   = (0.08, 0.16, 0.18, 1)
-_COL_DIM      = (0.5, 0.5, 0.5, 1)
-_COL_CPP      = (0.4, 0.7, 1.0, 1)
-_COL_BP       = (1.0, 0.6, 0.2, 1)
 _COL_TEAL     = (0.2, 0.8, 0.8, 1)
 _COL_FW       = (0.2, 0.7, 0.9, 1)
 
@@ -565,7 +564,7 @@ class DownloadsTab(MDBoxLayout):
                 text="Requires UE4SS installation",
                 size_hint=(None, 1), width=dp(180),
                 font_style="Label", role="small",
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         section.add_widget(detail_row)
         self._content.add_widget(section)
@@ -617,51 +616,19 @@ class DownloadsTab(MDBoxLayout):
                         subtitle: str = "",
                         accent_color: tuple = (0.3, 0.5, 0.9, 1),
                         collapsed: bool = False) -> MDBoxLayout:
-        """Collapsible section header with left accent bar. Click to toggle."""
-        chevron_icon = "chevron-right" if collapsed else "chevron-down"
-        outer = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(36),
-            md_bg_color=(0.07, 0.09, 0.12, 1),
+        return make_section_header(
+            title=title, icon=icon, count=count,
+            accent_color=accent_color, subtitle=subtitle, collapsed=collapsed,
+            on_toggle=self._toggle_section,
         )
-        # Left accent bar
-        outer.add_widget(MDBoxLayout(
-            size_hint=(None, 1), width=dp(3),
-            md_bg_color=accent_color,
-        ))
-        inner = MDBoxLayout(
-            orientation="horizontal", size_hint=(1, 1),
-            padding=[dp(8), 0], spacing=dp(8),
-        )
-        inner.add_widget(MDIcon(
-            icon=icon, size_hint=(None, 1), width=dp(22),
-            theme_icon_color="Custom", icon_color=(0.85, 0.88, 0.95, 1),
-        ))
-        label = f"{title}  ({count})" if count else title
-        if subtitle:
-            label += f"  — {subtitle}"
-        inner.add_widget(MDLabel(
-            text=label, font_style="Title", role="small",
-            size_hint_x=1, halign="left",
-            theme_text_color="Custom", text_color=(0.85, 0.88, 0.95, 1),
-        ))
-        inner.add_widget(MDIcon(
-            icon=chevron_icon, size_hint=(None, 1), width=dp(20),
-            theme_icon_color="Custom", icon_color=(0.5, 0.52, 0.6, 1),
-        ))
-        outer.add_widget(inner)
 
-        def _on_touch(widget, touch):
-            if widget.collide_point(*touch.pos) and touch.button == "left":
-                key = title
-                if key in self._collapsed_sections:
-                    self._collapsed_sections.discard(key)
-                else:
-                    self._collapsed_sections.add(key)
-                from kivy.clock import Clock
-                Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
-                return True
-        outer.bind(on_touch_down=_on_touch)
-        return outer
+    def _toggle_section(self, title: str) -> None:
+        if title in self._collapsed_sections:
+            self._collapsed_sections.discard(title)
+        else:
+            self._collapsed_sections.add(title)
+        from kivy.clock import Clock
+        Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
 
     def _cached_toolbar(self) -> MDBoxLayout:
         """Select All / Select None | Install Selected | Remove Selected toolbar."""
@@ -728,12 +695,12 @@ class DownloadsTab(MDBoxLayout):
         if "cpp" in item.components:
             top.add_widget(MDIcon(
                 icon="code-braces", size_hint=(None, 1), width=dp(18),
-                theme_icon_color="Custom", icon_color=_COL_CPP,
+                theme_icon_color="Custom", icon_color=COL_CPP,
             ))
         if "blueprint" in item.components:
             top.add_widget(MDIcon(
                 icon="blueprint", size_hint=(None, 1), width=dp(18),
-                theme_icon_color="Custom", icon_color=_COL_BP,
+                theme_icon_color="Custom", icon_color=COL_BP,
             ))
         top.add_widget(MDLabel(
             text=item.display_name, font_style="Body",
@@ -753,7 +720,7 @@ class DownloadsTab(MDBoxLayout):
             size_hint=(None, 1), width=dp(90),
             halign="right", valign="middle",
             theme_text_color="Custom",
-            text_color=status_colors.get(item.status, _COL_DIM),
+            text_color=status_colors.get(item.status, COL_DIM),
         ))
         if item.status in ("queued", "downloading"):
             top.add_widget(MDButton(
@@ -817,12 +784,12 @@ class DownloadsTab(MDBoxLayout):
         if "cpp" in ci.components:
             name_row.add_widget(MDIcon(
                 icon="code-braces", size_hint=(None, 1), width=dp(18),
-                theme_icon_color="Custom", icon_color=_COL_CPP,
+                theme_icon_color="Custom", icon_color=COL_CPP,
             ))
         if "blueprint" in ci.components:
             name_row.add_widget(MDIcon(
                 icon="blueprint", size_hint=(None, 1), width=dp(18),
-                theme_icon_color="Custom", icon_color=_COL_BP,
+                theme_icon_color="Custom", icon_color=COL_BP,
             ))
         info.add_widget(name_row)
 
@@ -838,7 +805,7 @@ class DownloadsTab(MDBoxLayout):
             text="  ·  ".join(sub_parts),
             font_style="Label", role="small",
             size_hint_y=None, height=dp(18),
-            theme_text_color="Custom", text_color=_COL_DIM,
+            theme_text_color="Custom", text_color=COL_DIM,
         ))
         header.add_widget(info)
 
@@ -873,14 +840,14 @@ class DownloadsTab(MDBoxLayout):
             panel.add_widget(MDLabel(
                 text=f"Source: {ci.owner}/{ci.repo}",
                 font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         # Version
         if ci.version:
             panel.add_widget(MDLabel(
                 text=f"Version: v{ci.version}",
                 font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         # Components
         comp_labels = {"lua": "Lua", "cpp": "C++", "blueprint": "Blueprint"}
@@ -892,7 +859,7 @@ class DownloadsTab(MDBoxLayout):
             comp_row.add_widget(MDLabel(
                 text="Components:",
                 font_style="Label", role="small", size_hint=(None, 1), width=dp(80),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
             for ct in comp_texts:
                 comp_row.add_widget(MDLabel(
@@ -907,7 +874,7 @@ class DownloadsTab(MDBoxLayout):
             panel.add_widget(MDLabel(
                 text=f"Cache size: {size:.1f} MB",
                 font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         # Category
         cat_display = {"template": "Template", "mod": "Mod", "other": "Other"}.get(
@@ -916,7 +883,7 @@ class DownloadsTab(MDBoxLayout):
         panel.add_widget(MDLabel(
             text=f"Category: {cat_display}",
             font_style="Label", role="small", size_hint_y=None, height=dp(16),
-            theme_text_color="Custom", text_color=_COL_DIM,
+            theme_text_color="Custom", text_color=COL_DIM,
         ))
         # Changelog button for other-category items (UE4SS / framework releases)
         from .....shared.data.content_types import GithubReleaseBinary

@@ -25,6 +25,8 @@ from kivymd.uix.label import MDIcon, MDLabel
 
 from .......gui.widgets.tip_icon_button import TipIconButton
 from .....services.mod_service import _FRAMEWORK_MOD_RE
+from .....shared.ui.constants import COL_CPP, COL_BP, COL_DIM, COL_WARN, COL_STATUS_OK, COL_STATUS_MISS
+from .....shared.ui.badges import badge_icon, badge_text, component_status_chip
 
 if TYPE_CHECKING:
     from .......core.config import GameProfile
@@ -36,14 +38,8 @@ _BG_ROW_AP        = (0.13, 0.14, 0.15, 1)
 _BG_ROW_ORPHAN    = (0.18, 0.13, 0.08, 1)
 _BG_ROW_NONAP     = (0.11, 0.11, 0.11, 1)
 _BG_ROW_BP_ORPHAN = (0.16, 0.12, 0.07, 1)
-_COL_WARN         = (0.9, 0.6, 0.1, 1)
-_COL_CPP          = (0.4, 0.7, 1.0, 1)
-_COL_BP           = (1.0, 0.6, 0.2, 1)
-_COL_DIM          = (0.5, 0.5, 0.5, 1)
 _COL_REGISTRY     = (0.3, 0.8, 0.6, 1)
 _COL_NONAP        = (0.6, 0.6, 0.6, 1)
-_COL_STATUS_OK    = (0.3, 0.8, 0.4, 1)
-_COL_STATUS_MISS  = (0.8, 0.3, 0.3, 1)
 
 
 class InstalledTab(MDBoxLayout):
@@ -220,7 +216,7 @@ class InstalledTab(MDBoxLayout):
         )
         section.add_widget(self._status_row(
             icon="check-circle-outline" if ue4ss_ok else "close-circle-outline",
-            icon_color=_COL_STATUS_OK if ue4ss_ok else _COL_STATUS_MISS,
+            icon_color=COL_STATUS_OK if ue4ss_ok else COL_STATUS_MISS,
             label="UE4SS",
             detail=ue4ss_detail,
             update_tag=(ue4ss_update_info.latest_stable.tag_name
@@ -236,7 +232,7 @@ class InstalledTab(MDBoxLayout):
         fw_bins_ok = bool(fw_dll and fw_dll.exists())
         section.add_widget(self._status_row(
             icon="check-circle-outline" if fw_bins_ok else "close-circle-outline",
-            icon_color=_COL_STATUS_OK if fw_bins_ok else _COL_STATUS_MISS,
+            icon_color=COL_STATUS_OK if fw_bins_ok else COL_STATUS_MISS,
             label="Framework",
             detail="Installed" if fw_bins_ok else "Not installed — get it from the Content tab",
             update_tag=(fw_update_info.latest_stable.tag_name
@@ -266,7 +262,7 @@ class InstalledTab(MDBoxLayout):
         row.add_widget(MDLabel(
             text=detail, font_style="Label", role="small",
             size_hint=(1, 1), halign="left", valign="middle",
-            theme_text_color="Custom", text_color=_COL_DIM,
+            theme_text_color="Custom", text_color=COL_DIM,
         ))
         outer.add_widget(row)
         if update_tag:
@@ -381,10 +377,10 @@ class InstalledTab(MDBoxLayout):
 
         # Source badge
         if is_orphaned:
-            top.add_widget(self._badge_icon("folder-account", _COL_WARN, "Manually installed"))
+            top.add_widget(badge_icon("folder-account", COL_WARN, "Manually installed"))
         else:
             registry_name = self._get_registry_name(mod)
-            top.add_widget(self._badge_text(registry_name or "Managed", _COL_REGISTRY))
+            top.add_widget(badge_text(registry_name or "Managed", _COL_REGISTRY))
 
         # Name
         top.add_widget(MDLabel(
@@ -396,12 +392,12 @@ class InstalledTab(MDBoxLayout):
         if "cpp" in components:
             top.add_widget(MDIcon(
                 icon="code-braces", size_hint=(None, 1), width=dp(20),
-                theme_icon_color="Custom", icon_color=_COL_CPP,
+                theme_icon_color="Custom", icon_color=COL_CPP,
             ))
         if "blueprint" in components:
             top.add_widget(MDIcon(
                 icon="blueprint", size_hint=(None, 1), width=dp(20),
-                theme_icon_color="Custom", icon_color=_COL_BP,
+                theme_icon_color="Custom", icon_color=COL_BP,
             ))
 
         # Version
@@ -410,7 +406,7 @@ class InstalledTab(MDBoxLayout):
                 text=f"v{mod.version}", font_style="Label", role="small",
                 size_hint=(None, 1), width=dp(60),
                 halign="right", valign="middle",
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
 
         # Expand chevron
@@ -433,7 +429,7 @@ class InstalledTab(MDBoxLayout):
             container.add_widget(MDLabel(
                 text=mod.mod_id, font_style="Label", role="small",
                 size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
                 padding=[dp(0), 0],
             ))
         if is_orphaned:
@@ -441,7 +437,7 @@ class InstalledTab(MDBoxLayout):
                 text="Not tracked by APF Manager",
                 font_style="Label", role="small",
                 size_hint_y=None, height=dp(14),
-                theme_text_color="Custom", text_color=(_COL_WARN[0], _COL_WARN[1], _COL_WARN[2], 0.75),
+                theme_text_color="Custom", text_color=(COL_WARN[0], COL_WARN[1], COL_WARN[2], 0.75),
                 padding=[dp(0), 0],
             ))
 
@@ -454,7 +450,7 @@ class InstalledTab(MDBoxLayout):
             )
             for comp in components:
                 ok = status.get(comp, False)
-                status_row.add_widget(self._component_status_chip(comp, ok))
+                status_row.add_widget(component_status_chip(comp, ok))
             container.add_widget(status_row)
 
         # Expanded detail panel
@@ -496,7 +492,7 @@ class InstalledTab(MDBoxLayout):
                 panel.add_widget(MDLabel(
                     text="  ·  ".join(parts),
                     font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                    theme_text_color="Custom", text_color=_COL_DIM,
+                    theme_text_color="Custom", text_color=COL_DIM,
                 ))
 
         # Component status (full row for each component)
@@ -508,7 +504,7 @@ class InstalledTab(MDBoxLayout):
             )
             for comp in components:
                 ok = status.get(comp, False)
-                comp_row.add_widget(self._component_status_chip(comp, ok))
+                comp_row.add_widget(component_status_chip(comp, ok))
             panel.add_widget(comp_row)
 
         # Install path
@@ -521,7 +517,7 @@ class InstalledTab(MDBoxLayout):
             panel.add_widget(MDLabel(
                 text=path_str, font_style="Label", role="small",
                 size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         return panel
 
@@ -542,7 +538,7 @@ class InstalledTab(MDBoxLayout):
             orientation="horizontal", size_hint_y=None, height=dp(44),
             md_bg_color=_BG_ROW_NONAP, padding=[dp(8), dp(4)], spacing=dp(8),
         )
-        row.add_widget(self._badge_text("Non-AP", _COL_NONAP))
+        row.add_widget(badge_text("Non-AP", _COL_NONAP))
         row.add_widget(MDLabel(
             text=mod.display_name, font_style="Body",
             size_hint=(1, 1), halign="left", valign="middle",
@@ -580,7 +576,7 @@ class InstalledTab(MDBoxLayout):
             )
             row.add_widget(MDIcon(
                 icon="folder-account", size_hint=(None, 1), width=dp(20),
-                theme_icon_color="Custom", icon_color=_COL_WARN,
+                theme_icon_color="Custom", icon_color=COL_WARN,
             ))
             row.add_widget(MDLabel(
                 text=f"Manually installed BP file: {f.name}",
@@ -623,49 +619,6 @@ class InstalledTab(MDBoxLayout):
                 for p in pak_files
             )
         return result
-
-    def _component_status_chip(self, component: str, ok: bool) -> MDBoxLayout:
-        chip = MDBoxLayout(
-            orientation="horizontal", size_hint=(None, 1),
-            width=dp(80), spacing=dp(4),
-        )
-        chip.add_widget(MDIcon(
-            icon="check-circle-outline" if ok else "close-circle-outline",
-            size_hint=(None, 1), width=dp(16),
-            theme_icon_color="Custom",
-            icon_color=_COL_STATUS_OK if ok else _COL_STATUS_MISS,
-        ))
-        labels = {"lua": "Lua", "cpp": "C++", "blueprint": "BP"}
-        chip.add_widget(MDLabel(
-            text=labels.get(component, component),
-            font_style="Label", role="small",
-            size_hint=(1, 1), halign="left", valign="middle",
-            theme_text_color="Custom",
-            text_color=_COL_STATUS_OK if ok else _COL_STATUS_MISS,
-        ))
-        return chip
-
-    # -----------------------------------------------------------------------
-    # Badges
-    # -----------------------------------------------------------------------
-
-    @staticmethod
-    def _badge_icon(icon: str, color, tooltip: str = "") -> MDBoxLayout:
-        box = MDBoxLayout(size_hint=(None, 1), width=dp(20))
-        box.add_widget(MDIcon(
-            icon=icon, size_hint=(None, 1), width=dp(16),
-            theme_icon_color="Custom", icon_color=color,
-        ))
-        return box
-
-    @staticmethod
-    def _badge_text(text: str, color) -> MDLabel:
-        return MDLabel(
-            text=f"[{text}]", font_style="Label", role="small",
-            size_hint=(None, 1), width=dp(90),
-            halign="left", valign="middle",
-            theme_text_color="Custom", text_color=color,
-        )
 
     # -----------------------------------------------------------------------
     # Helpers

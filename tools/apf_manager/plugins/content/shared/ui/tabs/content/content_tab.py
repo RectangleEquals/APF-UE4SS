@@ -15,11 +15,9 @@ from __future__ import annotations
 
 from typing import Optional, Callable
 
-from kivy.animation import Animation
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
-from kivymd.uix.behaviors import HoverBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
@@ -27,61 +25,14 @@ from kivymd.uix.selectioncontrol import MDCheckbox
 
 from .......gui.widgets.tip_icon_button import TipIconButton
 from .....services.mod_service import _FRAMEWORK_MOD_RE
+from .....shared.ui.constants import COL_CPP, COL_BP, COL_DIM, COL_WARN
+from .....shared.ui.hover_row import HoverRow
+from .....shared.ui.section_header import make_section_header
 
 
-_BG_SECTION   = (0.07, 0.09, 0.12, 1)
 _BG_ROW_EVEN  = (0.13, 0.13, 0.13, 1)
 _BG_ROW_ODD   = (0.11, 0.11, 0.11, 1)
 _BG_BANNER    = (0.20, 0.14, 0.06, 1)
-_COL_WARN     = (0.9, 0.6, 0.1, 1)
-_COL_CPP      = (0.4, 0.7, 1.0, 1)
-_COL_BP       = (1.0, 0.6, 0.2, 1)
-_COL_SECTION  = (0.85, 0.85, 0.95, 1)
-_COL_DIM      = (0.5, 0.5, 0.5, 1)
-
-
-_HOVER_DURATION_IN  = 0.08
-_HOVER_DURATION_OUT = 0.30
-_TARGET_ALPHA       = 0.07
-
-
-class _HoverRow(HoverBehavior, MDBoxLayout):
-    """MDBoxLayout with animated hover feedback — used for expandable github_release rows."""
-
-    _hovering = False
-
-    def on_enter(self):
-        if self._hovering:
-            return
-        self._hovering = True
-        from kivy.core.window import Window
-        Window.set_system_cursor("hand")
-        current_alpha = (self.md_bg_color or [0, 0, 0, 0])[3]
-        remaining = _TARGET_ALPHA - current_alpha
-        if remaining <= 0:
-            return
-        duration = max(_HOVER_DURATION_IN * (remaining / _TARGET_ALPHA), 0.01)
-        Animation(md_bg_color=(1, 1, 1, _TARGET_ALPHA), duration=duration).start(self)
-
-    def on_leave(self):
-        if not self._hovering:
-            return
-        self._hovering = False
-        from kivy.core.window import Window
-        Window.set_system_cursor("arrow")
-        current_alpha = (self.md_bg_color or [0, 0, 0, 0])[3]
-        if current_alpha <= 0:
-            return
-        duration = max(_HOVER_DURATION_OUT * (current_alpha / _TARGET_ALPHA), 0.01)
-        Animation(md_bg_color=(0, 0, 0, 0), duration=duration).start(self)
-
-    def on_parent(self, widget, parent):
-        if parent is None:
-            self._hovering = False
-            from kivy.core.window import Window
-            Window.set_system_cursor("arrow")
-            Animation.cancel_all(self, "md_bg_color")
-            self.md_bg_color = (0, 0, 0, 0)
 
 
 class ContentTab(MDBoxLayout):
@@ -398,47 +349,18 @@ class ContentTab(MDBoxLayout):
     def _section_header(self, title: str, icon: str, count: int,
                         collapsed: bool = False) -> MDBoxLayout:
         accent = self._ACCENT_COLORS.get(title, (0.5, 0.5, 0.7, 1))
-        outer = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(36),
-            md_bg_color=_BG_SECTION,
+        return make_section_header(
+            title=title, icon=icon, count=count,
+            accent_color=accent, collapsed=collapsed,
+            on_toggle=self._toggle_section,
         )
-        outer.add_widget(MDBoxLayout(
-            size_hint=(None, 1), width=dp(3),
-            md_bg_color=accent,
-        ))
-        inner = MDBoxLayout(
-            orientation="horizontal", size_hint=(1, 1),
-            padding=[dp(8), 0], spacing=dp(8),
-        )
-        inner.add_widget(MDIcon(
-            icon=icon, size_hint=(None, 1), width=dp(22),
-            theme_icon_color="Custom", icon_color=_COL_SECTION,
-        ))
-        inner.add_widget(MDLabel(
-            text=f"{title}  ({count})", font_style="Title", role="small",
-            size_hint_x=1, halign="left",
-            theme_text_color="Custom", text_color=_COL_SECTION,
-        ))
-        chevron = MDIcon(
-            icon="chevron-right" if collapsed else "chevron-down",
-            size_hint=(None, 1), width=dp(22),
-            theme_icon_color="Custom", icon_color=_COL_DIM,
-        )
-        inner.add_widget(chevron)
-        outer.add_widget(inner)
-        # Make entire header row clickable to toggle collapse
-        outer.bind(on_touch_down=lambda w, t: self._on_section_toggle(title, w, t))
-        return outer
 
-    def _on_section_toggle(self, title: str, widget, touch) -> bool:
-        if not widget.collide_point(*touch.pos):
-            return False
+    def _toggle_section(self, title: str) -> None:
         if title in self._collapsed:
             self._collapsed.discard(title)
         else:
             self._collapsed.add(title)
         self._do_refresh()
-        return True
 
     def _conflict_banner(self, conflict_paths: list) -> MDBoxLayout:
         names = ", ".join(p.name if hasattr(p, "name") else str(p) for p in conflict_paths)
@@ -464,14 +386,14 @@ class ContentTab(MDBoxLayout):
         )
         row.add_widget(MDIcon(
             icon="alert", size_hint=(None, 1), width=dp(24),
-            theme_icon_color="Custom", icon_color=_COL_WARN,
+            theme_icon_color="Custom", icon_color=COL_WARN,
         ))
         row.add_widget(MDLabel(
             text=(
                 "Framework mod not installed — Templates and Mods cannot be deployed. "
                 "Install it via the Other section or Registries tab."
             ),
-            theme_text_color="Custom", text_color=_COL_WARN,
+            theme_text_color="Custom", text_color=COL_WARN,
             font_style="Body", role="small",
         ))
         return row
@@ -483,11 +405,11 @@ class ContentTab(MDBoxLayout):
         )
         row.add_widget(MDIcon(
             icon="alert", size_hint=(None, 1), width=dp(24),
-            theme_icon_color="Custom", icon_color=_COL_WARN,
+            theme_icon_color="Custom", icon_color=COL_WARN,
         ))
         row.add_widget(MDLabel(
             text="No AP Framework mod found in this registry",
-            theme_text_color="Custom", text_color=_COL_WARN,
+            theme_text_color="Custom", text_color=COL_WARN,
         ))
         return row
 
@@ -515,7 +437,7 @@ class ContentTab(MDBoxLayout):
         if has_conflict:
             header.add_widget(MDIcon(
                 icon="alert-circle", size_hint=(None, 1), width=dp(20),
-                theme_icon_color="Custom", icon_color=_COL_WARN,
+                theme_icon_color="Custom", icon_color=COL_WARN,
             ))
 
         path = getattr(tmpl, "path", "")
@@ -530,7 +452,7 @@ class ContentTab(MDBoxLayout):
             info.add_widget(MDLabel(
                 text=registry_lbl, font_style="Label", role="small",
                 size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         # Clicking anywhere on the info area also toggles expand
         info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
@@ -566,7 +488,7 @@ class ContentTab(MDBoxLayout):
             panel.add_widget(MDLabel(
                 text=f"Source: {owner}/{repo}",
                 font_style="Label", role="small", size_hint_y=None, height=dp(18),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
 
         # Files provided
@@ -589,7 +511,7 @@ class ContentTab(MDBoxLayout):
             row.add_widget(MDLabel(
                 text=fp, font_style="Label", role="small",
                 size_hint=(1, 1), halign="left",
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
             panel.add_widget(row)
         if len(file_paths) > 8:
@@ -597,7 +519,7 @@ class ContentTab(MDBoxLayout):
                 text=f"… and {len(file_paths) - 8} more files",
                 font_style="Label", role="small",
                 size_hint_y=None, height=dp(14),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
 
         # Install target
@@ -605,13 +527,13 @@ class ContentTab(MDBoxLayout):
             panel.add_widget(MDLabel(
                 text=f"Target: {templates_dir}",
                 font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         elif game_name:
             panel.add_widget(MDLabel(
                 text="Target: Framework mod not installed",
                 font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_WARN,
+                theme_text_color="Custom", text_color=COL_WARN,
             ))
 
         # Dependent mods (mods whose capabilities.include overlaps this template's path)
@@ -623,7 +545,7 @@ class ContentTab(MDBoxLayout):
             panel.add_widget(MDLabel(
                 text="Used by: " + ", ".join(getattr(m, "name", m.mod_id) for m in deps[:4]),
                 font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         return panel
 
@@ -667,7 +589,7 @@ class ContentTab(MDBoxLayout):
             text=f"{len(pkg_mods)} components  ·  {pkg_id}",
             font_style="Label", role="small",
             size_hint_y=None, height=dp(18),
-            theme_text_color="Custom", text_color=_COL_DIM,
+            theme_text_color="Custom", text_color=COL_DIM,
         ))
         info.bind(on_touch_down=lambda w, t: self._toggle_pkg_collapse(key)
                   if w.collide_point(*t.pos) else None)
@@ -731,14 +653,14 @@ class ContentTab(MDBoxLayout):
                 icon="code-braces",
                 size_hint=(None, None), size=(dp(20), dp(20)),
                 pos_hint={"center_y": 0.5},
-                theme_icon_color="Custom", icon_color=_COL_CPP,
+                theme_icon_color="Custom", icon_color=COL_CPP,
             ))
         if "blueprint" in components:
             name_row.add_widget(MDIcon(
                 icon="blueprint",
                 size_hint=(None, None), size=(dp(20), dp(20)),
                 pos_hint={"center_y": 0.5},
-                theme_icon_color="Custom", icon_color=_COL_BP,
+                theme_icon_color="Custom", icon_color=COL_BP,
             ))
         info.add_widget(name_row)
 
@@ -754,7 +676,7 @@ class ContentTab(MDBoxLayout):
             info.add_widget(MDLabel(
                 text=sub, font_style="Label", role="small",
                 size_hint_y=None, height=dp(18),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         # Clicking anywhere on the info area also toggles expand
         info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
@@ -799,14 +721,14 @@ class ContentTab(MDBoxLayout):
                      "Archipelago randomization on its own.",
                 font_style="Label", role="small",
                 size_hint_y=None, height=dp(32),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         else:
             panel.add_widget(MDLabel(
                 text="No description",
                 font_style="Label", role="small",
                 size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
 
         # mod_id
@@ -828,7 +750,7 @@ class ContentTab(MDBoxLayout):
             dep_row.add_widget(MDLabel(
                 text="Deps:", font_style="Label", role="small",
                 size_hint=(None, 1), width=dp(32),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
             for dep in depends[:5]:
                 dep_id = dep.split(" ")[0] if isinstance(dep, str) else str(dep)
@@ -837,7 +759,7 @@ class ContentTab(MDBoxLayout):
                     text=dep_id, font_style="Label", role="small",
                     size_hint=(None, 1), width=dp(max(80, len(dep_id) * 7)),
                     theme_text_color="Custom",
-                    text_color=(0.9, 0.3, 0.3, 1) if missing else _COL_DIM,
+                    text_color=(0.9, 0.3, 0.3, 1) if missing else COL_DIM,
                 ))
             panel.add_widget(dep_row)
 
@@ -866,13 +788,13 @@ class ContentTab(MDBoxLayout):
                 inc_row.add_widget(MDIcon(
                     icon="circle-small", size_hint=(None, 1), width=dp(14),
                     theme_icon_color="Custom",
-                    icon_color=(0.3, 0.8, 0.4, 1) if present else _COL_WARN,
+                    icon_color=(0.3, 0.8, 0.4, 1) if present else COL_WARN,
                 ))
                 inc_row.add_widget(MDLabel(
                     text=inc, font_style="Label", role="small",
                     size_hint=(1, 1), halign="left",
                     theme_text_color="Custom",
-                    text_color=_COL_DIM if present else _COL_WARN,
+                    text_color=COL_DIM if present else COL_WARN,
                 ))
                 panel.add_widget(inc_row)
 
@@ -893,7 +815,7 @@ class ContentTab(MDBoxLayout):
             reg_row.add_widget(MDLabel(
                 text=f"{owner}/{repo}", font_style="Label", role="small",
                 size_hint=(1, 1), halign="left",
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
             panel.add_widget(reg_row)
         return panel
@@ -942,7 +864,7 @@ class ContentTab(MDBoxLayout):
         )
 
         if opt_type == "github_release":
-            header = _HoverRow(
+            header = HoverRow(
                 orientation="horizontal", size_hint_y=None, height=dp(52),
                 padding=[dp(8), dp(4)], spacing=dp(8),
             )
@@ -982,7 +904,7 @@ class ContentTab(MDBoxLayout):
             info.add_widget(MDLabel(
                 text=note, font_style="Label", role="small",
                 size_hint_y=None, height=dp(18),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
         if getattr(item, "has_duplicate_source", False):
             info.add_widget(MDLabel(
@@ -1072,7 +994,7 @@ class ContentTab(MDBoxLayout):
             r.add_widget(MDLabel(
                 text=key_text, font_style="Label", role="small",
                 size_hint=(None, 1), width=dp(96),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
             r.add_widget(MDLabel(
                 text=val_text, font_style="Label", role="small",
@@ -1095,7 +1017,7 @@ class ContentTab(MDBoxLayout):
                 text="This option requires manual installation. Refer to the UE4SS documentation for this game.",
                 font_style="Label", role="small",
                 size_hint_y=None, height=dp(36),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             ))
 
         # --- Asset sub-rows ---
@@ -1105,7 +1027,7 @@ class ContentTab(MDBoxLayout):
             assets_lbl = MDLabel(
                 text="Assets", font_style="Label", role="small",
                 size_hint_y=None, height=dp(18),
-                theme_text_color="Custom", text_color=_COL_DIM,
+                theme_text_color="Custom", text_color=COL_DIM,
             )
             panel.add_widget(assets_lbl)
 
@@ -1144,7 +1066,7 @@ class ContentTab(MDBoxLayout):
                     size_lbl = MDLabel(
                         text=_fmt_bytes(sz), font_style="Label", role="small",
                         size_hint=(None, 1), width=dp(72),
-                        halign="right", theme_text_color="Custom", text_color=_COL_DIM,
+                        halign="right", theme_text_color="Custom", text_color=COL_DIM,
                     )
                     asset_row.add_widget(size_lbl)
                 panel.add_widget(asset_row)
