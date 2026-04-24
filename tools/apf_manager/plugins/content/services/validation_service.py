@@ -12,7 +12,7 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .mod_service import ModInfo
-    from ...core.ue4ss import UE4SSResult
+    from ....core.ue4ss import UE4SSResult
 
 
 @dataclass
@@ -54,7 +54,7 @@ class ValidationService:
         mod_by_folder = {m.folder_name: m for m in mods}
 
         # 2. Framework mod present
-        from .registry_resolver import _is_framework_mod_id
+        from ..utils.registry.resolver import _is_framework_mod_id
         fw_mods = [m for m in ap_mods if _is_framework_mod_id(m.mod_id)]
         if not fw_mods:
             results.append(ValidationResult(
@@ -204,7 +204,7 @@ class ValidationService:
         results: list[ValidationResult] = []
         installed_mod_ids = installed_mod_ids or set()
 
-        from .registry_resolver import _is_framework_mod_id
+        from ..utils.registry.resolver import _is_framework_mod_id
 
         # Partition staged items by type — "other" items (UE4SS / framework binaries)
         # skip ALL mod-level validation rules.
@@ -297,7 +297,7 @@ class ValidationService:
         if detection:
             mods_svc = self._host.get_service("mods")
             if mods_svc:
-                from .registry_resolver import _is_framework_mod_id
+                from ..utils.registry.resolver import _is_framework_mod_id
                 for m in mods_svc.get_ap_mods():
                     if m.mod_id and _is_framework_mod_id(m.mod_id):
                         parts = m.mod_id.split(".")

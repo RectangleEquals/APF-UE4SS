@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...core.config import GameProfile
-    from ...core.ue4ss import UE4SSResult
-    from .mods_txt import ModsTextManager
+    from ....core.config import GameProfile
+    from ....core.ue4ss import UE4SSResult
+    from ..utils.mods_txt import ModsTextManager
     from .mod_service import ModInfo, ModService
 
 
@@ -56,7 +56,7 @@ class DeployService:
 
     def _reload_mods_txt(self) -> None:
         if self._detection and self._detection.mods_txt:
-            from .mods_txt import ModsTextManager
+            from ..utils.mods_txt import ModsTextManager
             self._mods_txt = ModsTextManager(self._detection.mods_txt)
             self._mods_txt.load()
         else:
@@ -170,7 +170,7 @@ class DeployService:
                     pass
 
         if self._profile:
-            from .install_state import InstallStateManager
+            from ..shared.data.install_state import InstallStateManager
             InstallStateManager(self._profile.game_id).remove(mod_info.folder_name)
 
     def deploy_mod(
@@ -207,7 +207,7 @@ class DeployService:
                         shutil.copy2(str(src_pak), str(lm_dir / pak))
         gid = game_id or (self._profile.game_id if self._profile else "")
         if gid and metadata:
-            from .install_state import InstallStateManager
+            from ..shared.data.install_state import InstallStateManager
             InstallStateManager(gid).add({
                 "mod_id":                metadata.get("mod_id", ""),
                 "folder_name":           folder_name,

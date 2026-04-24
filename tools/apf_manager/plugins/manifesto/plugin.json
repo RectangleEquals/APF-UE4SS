@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Visual manifest editor (dev only) — coming soon.",
   "mode": "dev",
-  "requires": ["apf.builtin.mods"],
+  "requires": ["apf.builtin.content"],
   "suggests": [],
   "contributions": [
     {"type": "hub_panel", "label": "Manifesto", "icon": "pencil-ruler", "priority": 90}

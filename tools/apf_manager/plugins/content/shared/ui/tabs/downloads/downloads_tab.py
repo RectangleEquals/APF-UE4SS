@@ -29,10 +29,10 @@ from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
-from ....gui.widgets.tip_icon_button import TipIconButton
+from .......gui.widgets.tip_icon_button import TipIconButton
 
 if TYPE_CHECKING:
-    from ....core.ue4ss import UE4SSResult
+    from .......core.ue4ss import UE4SSResult
 
 
 _CACHE_DIR = Path.home() / ".apf_manager" / "cache"
@@ -1024,7 +1024,7 @@ class DownloadsTab(MDBoxLayout):
                 "install_type": getattr(item.mod, "install_type", ""),
             }))
 
-            from ....core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+            from .......core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
             token = _BUNDLED_TOKEN_PATH.read_text().strip() \
                 if _BUNDLED_TOKEN_PATH.exists() else ""
 
@@ -1051,7 +1051,7 @@ class DownloadsTab(MDBoxLayout):
                         # Backwards compat: no assets list — use legacy single url field
                         direct_url = getattr(opt, "url", "")
                         if direct_url:
-                            from ..registry_service import _OtherAsset as _OA
+                            from .....services.registry_service import _OtherAsset as _OA
                             _fname = direct_url.split("/")[-1].split("?")[0] or f"{getattr(opt,'tag','release')}.zip"
                             selected_assets = [_OA(name=_fname, url=direct_url)]
                     self._host.log(f"[downloads] selected_assets count={len(selected_assets)}")
@@ -1283,7 +1283,7 @@ class DownloadsTab(MDBoxLayout):
         if ue4ss_installed:
             profile = self._host.get_game_context()
             if profile:
-                from ....core.ue4ss import UE4SSDetector
+                from .......core.ue4ss import UE4SSDetector
                 new_detection = UE4SSDetector.detect(profile.game_root)
                 self._detection = new_detection
                 self._host.set_game_context(profile, new_detection)

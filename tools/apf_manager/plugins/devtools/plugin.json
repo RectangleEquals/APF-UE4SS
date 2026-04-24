@@ -7,7 +7,7 @@
   "repo_owner": "RectangleEquals",
   "repo_name": "APF-UE4SS",
   "requires": [],
-  "suggests": ["apf.builtin.mods"],
+  "suggests": ["apf.builtin.content"],
   "contributions": [
     {"type": "hub_panel", "label": "Dev Tools", "icon": "wrench-cog", "priority": 99}
   ]

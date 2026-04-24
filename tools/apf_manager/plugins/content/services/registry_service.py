@@ -18,10 +18,10 @@ from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...core.config import GameProfile
-    from ...core.plugin_host import PluginHost
-    from .registry_resolver import DiscoveredMod
-    from .registry_cache import RegistryCache
+    from ....core.config import GameProfile
+    from ....core.plugin_host import PluginHost
+    from ..utils.registry.resolver import DiscoveredMod
+    from ..utils.registry.cache import RegistryCache
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ class RegistryService:
         If game_id is given, returns only registries associated with that game
         (plus any older entries that have no game_id stored).
         """
-        from .registry_resolver import parse_github_url
+        from ..utils.registry.resolver import parse_github_url
         entries = []
         for r in self._host.config.get_user_registries(game_id):
             parsed = parse_github_url(r["url"])
@@ -225,7 +225,7 @@ class RegistryService:
         Validate and add a registry URL.
         Runs traversal on a background thread; calls on_done(success, msg) on main thread.
         """
-        from .registry_resolver import parse_github_url
+        from ..utils.registry.resolver import parse_github_url
         parsed = parse_github_url(url)
         if not parsed:
             on_done(False, "Invalid GitHub URL — expected https://github.com/owner/repo")
@@ -293,7 +293,7 @@ class RegistryService:
 
             def _finalize(selected_mods, raw_selected_ids=None):
                 """Called by Repo Viewer on_confirm (main thread) or directly."""
-                from .registry_resolver import _is_framework_mod_id
+                from ..utils.registry.resolver import _is_framework_mod_id
                 ap_count     = sum(1 for m in selected_mods if m.mod_id)
                 non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
                 parts = [f"{ap_count} AP mod(s)"] if ap_count else []
@@ -348,7 +348,7 @@ class RegistryService:
         Like add_registry(), but always opens the Repo Viewer (unless blacklisted).
         Passes the full folder tree to the viewer so the sidebar shows real structure.
         """
-        from .registry_resolver import parse_github_url, FolderTreeNode
+        from ..utils.registry.resolver import parse_github_url, FolderTreeNode
         parsed = parse_github_url(url)
         if not parsed:
             on_done(False, "Invalid GitHub URL — expected https://github.com/owner/repo")
@@ -423,7 +423,7 @@ class RegistryService:
                 folder_tree = None
 
             def _finalize(selected_mods, raw_selected_ids=None):
-                from .registry_resolver import _is_framework_mod_id
+                from ..utils.registry.resolver import _is_framework_mod_id
                 ap_count     = sum(1 for m in selected_mods if m.mod_id)
                 non_ap_count = sum(1 for m in selected_mods if not m.mod_id)
                 parts = [f"{ap_count} AP mod(s)"] if ap_count else []
@@ -629,7 +629,7 @@ class RegistryService:
         are gated only by their own ue4ss_option: keys — independent of whether the
         framework mod itself is in selected_content.
         """
-        from .registry_resolver import _is_framework_mod_id
+        from ..utils.registry.resolver import _is_framework_mod_id
         resolver = self._get_resolver()
         cache = self._get_cache()
         results = []
@@ -668,7 +668,7 @@ class RegistryService:
     def get_framework_candidates(self, game_id: str) -> list[FrameworkModCandidate]:
         """Return scored framework mod candidates from all registered registries."""
         mods = self.get_mods(game_id)
-        from .registry_resolver import _is_framework_mod_id
+        from ..utils.registry.resolver import _is_framework_mod_id
         fw_mods = [m for m in mods if _is_framework_mod_id(m.mod_id)]
         if not fw_mods:
             return []
@@ -698,7 +698,7 @@ class RegistryService:
         Returns None when no game-specific UE4SS info is found.
         Callers that need a bootstrap path should use UpdatesService.get_ue4ss_releases_for_content().
         """
-        from .registry_resolver import _is_framework_mod_id
+        from ..utils.registry.resolver import _is_framework_mod_id
         for entry in self.get_mods(game_id):
             if entry.ue4ss_info and _is_framework_mod_id(entry.mod_id):
                 info = entry.ue4ss_info
@@ -886,13 +886,13 @@ class RegistryService:
 
     def _get_cache(self) -> "RegistryCache":
         if self._cache is None:
-            from .registry_cache import RegistryCache
+            from ..utils.registry.cache import RegistryCache
             self._cache = RegistryCache()
         return self._cache
 
     def _get_resolver(self):
         if self._resolver is None:
-            from .registry_resolver import RegistryResolver
+            from ..utils.registry.resolver import RegistryResolver
             self._resolver = RegistryResolver(on_status=self._on_status)
         return self._resolver
 
@@ -977,7 +977,7 @@ class RegistryService:
           1. Installed framework mod's mod_id (e.g. 'archipelago.palworld.framework' → 'palworld')
           2. Game profile display name, normalised
         """
-        from .registry_resolver import _is_framework_mod_id
+        from ..utils.registry.resolver import _is_framework_mod_id
         mods_svc = self._host.get_service("mods")
         if mods_svc:
             for mod in mods_svc.get_ap_mods():
@@ -990,8 +990,8 @@ class RegistryService:
         return None
 
     def _make_api(self, owner: str, repo: str):
-        from ...core.remote.github_api import GitHubAPI
-        from .registry_resolver import _BUNDLED_PAT
+        from ....core.remote.github_api import GitHubAPI
+        from ..utils.registry.resolver import _BUNDLED_PAT
         token_path = _BUNDLED_PAT if _BUNDLED_PAT.exists() else None
         return GitHubAPI(
             repo_owner=owner,
@@ -1007,7 +1007,7 @@ class RegistryService:
 
 def _to_discovered(entry: RegistryModEntry) -> "DiscoveredMod":
     """Convert a RegistryModEntry back to a DiscoveredMod for scoring."""
-    from .registry_resolver import DiscoveredMod
+    from ..utils.registry.resolver import DiscoveredMod
     return DiscoveredMod(
         owner=entry.owner,
         repo=entry.repo,

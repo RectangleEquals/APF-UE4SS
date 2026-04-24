@@ -23,13 +23,13 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 
-from ....gui.widgets.tip_icon_button import TipIconButton
-from ..mod_service import _FRAMEWORK_MOD_RE
+from .......gui.widgets.tip_icon_button import TipIconButton
+from .....services.mod_service import _FRAMEWORK_MOD_RE
 
 if TYPE_CHECKING:
-    from ....core.config import GameProfile
-    from ....core.ue4ss import UE4SSResult
-    from ..mod_service import ModInfo
+    from .......core.config import GameProfile
+    from .......core.ue4ss import UE4SSResult
+    from .....services.mod_service import ModInfo
 
 
 _BG_ROW_AP        = (0.13, 0.14, 0.15, 1)
@@ -482,7 +482,7 @@ class InstalledTab(MDBoxLayout):
         game_id = self._get_game_id()
         record = None
         if game_id:
-            from ..install_state import InstallStateManager
+            from .....shared.data.install_state import InstallStateManager
             record = InstallStateManager(game_id).find(mod.folder_name)
         if record:
             ver = record.get("version", "")

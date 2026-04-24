@@ -1,0 +1,12 @@
+{
+  "id": "apf.builtin.content",
+  "name": "Content",
+  "version": "1.0.0",
+  "description": "Manages AP Framework content pipeline: registry browsing, downloads, installation, and load order.",
+  "mode": "both",
+  "requires": [],
+  "suggests": [],
+  "contributions": [
+    {"type": "hub_panel", "label": "Content", "icon": "package-variant", "priority": 10}
+  ]
+}

@@ -29,7 +29,7 @@ from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 from kivymd.uix.textfield import MDTextField
 
 if TYPE_CHECKING:
-    from ...registry_service import RegistryService
+    from ....services.registry_service import RegistryService
 
 
 class RegistriesTab(MDBoxLayout):
@@ -355,7 +355,7 @@ class RegistriesTab(MDBoxLayout):
             return
 
         # Blacklist check — never open viewer for blacklisted repos
-        from ...mods.registry_resolver import parse_github_url
+        from ....utils.registry.resolver import parse_github_url
         parsed = parse_github_url(url)
         if parsed:
             owner, repo = parsed
@@ -591,7 +591,7 @@ class RegistriesTab(MDBoxLayout):
         if not svc:
             return
         # Blacklist check — never open viewer for blacklisted repos
-        from ...mods.registry_resolver import parse_github_url
+        from ....utils.registry.resolver import parse_github_url
         parsed = parse_github_url(url)
         if parsed:
             owner, repo = parsed

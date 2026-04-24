@@ -1,5 +1,5 @@
 """
-ModsPanel — 5-tab hub panel for apf.builtin.mods.
+ContentPipelinePanel — 5-tab hub panel for apf.builtin.content.
 
 Tabs (in order):
   1 — Registries   database-search
@@ -26,11 +26,11 @@ from kivymd.uix.tab import MDTabsPrimary, MDTabsCarousel, MDTabsItem, MDTabsItem
 
 from ...gui.widgets.plugin_panel import PluginPanel
 
-from .tabs.registries_tab import RegistriesTab
-from .tabs.content_tab import ContentTab
-from .tabs.downloads_tab import DownloadsTab
-from .tabs.install_tab import InstalledTab
-from .tabs.load_order_tab import LoadOrderTab
+from .shared.ui.tabs.registries_tab import RegistriesTab
+from .shared.ui.tabs.content.content_tab import ContentTab
+from .shared.ui.tabs.downloads.downloads_tab import DownloadsTab
+from .shared.ui.tabs.install.install_tab import InstalledTab
+from .shared.ui.tabs.load_order_tab import LoadOrderTab
 
 if TYPE_CHECKING:
     from ...core.config import GameProfile
@@ -117,7 +117,7 @@ class _BadgeIcon(MDTabsItemIcon):
             self._draw_badge(bx2, by2, bs, self._secondary_color, str(min(self._secondary_count, 99)))
 
 
-class ModsPanel(PluginPanel):
+class ContentPipelinePanel(PluginPanel):
     """5-tab Mods hub panel."""
 
     def __init__(self, host, **kwargs):

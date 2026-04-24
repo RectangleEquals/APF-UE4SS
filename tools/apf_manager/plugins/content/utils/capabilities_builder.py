@@ -3,7 +3,7 @@ CapabilitiesBuilder — Python equivalent of the C++ APModRegistry + APCapabilit
 
 Standalone — no Kivy, no plugin host dependency. Importable directly by CI:
     import sys; sys.path.insert(0, "tools/apf_manager")
-    from plugins.mods.capabilities_builder import CapabilitiesBuilder
+    from plugins.content.utils.capabilities_builder import CapabilitiesBuilder
 
 In-app: ModService.build_capabilities() is the convenience wrapper.
 RegistryService passes templates_dirs for remote manifests.
@@ -28,14 +28,14 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .mod_service import ModInfo
+    from ..services.mod_service import ModInfo
 
 
 # ---------------------------------------------------------------------------
 # Semver helpers — imported from core/semver.py
 # ---------------------------------------------------------------------------
 
-from ...core.semver import _SemVer
+from ....core.semver import _SemVer
 
 _DEP_RE = re.compile(
     r"^(?P<mod_id>\S+?)(?:\s+\((?P<op>>=|<=|>|<|==|!=|~=)\s*(?P<ver>[^\)]+)\))?$"

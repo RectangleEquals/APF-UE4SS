@@ -25,8 +25,8 @@ from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
 
-from ....gui.widgets.tip_icon_button import TipIconButton
-from ..mod_service import _FRAMEWORK_MOD_RE
+from .......gui.widgets.tip_icon_button import TipIconButton
+from .....services.mod_service import _FRAMEWORK_MOD_RE
 
 
 _BG_SECTION   = (0.07, 0.09, 0.12, 1)
@@ -285,7 +285,7 @@ class ContentTab(MDBoxLayout):
 
         def _bg():
             try:
-                from ..registry_service import _OtherEntry, _compute_other_entry_hash
+                from .....services.registry_service import _OtherEntry, _compute_other_entry_hash
                 registry_svc = self._host.get_service("registry")
                 updates_svc = (self._host.get_service("updates")
                                if self._host.has_service("updates") else None)

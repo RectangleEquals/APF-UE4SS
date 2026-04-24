@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 # Bundled PAT — use centralized path from github_api.py
-from ...core.remote.github_api import _BUNDLED_TOKEN_PATH as _BUNDLED_PAT
+from .....core.remote.github_api import _BUNDLED_TOKEN_PATH as _BUNDLED_PAT
 
 # Blacklist is fetched from this repo's own source tree (never cached)
 _BLACKLIST_OWNER = "RectangleEquals"
@@ -152,7 +152,7 @@ class RegistryResolver:
         Depth limit: 3. Cycle detection via visited set (normalised owner/repo).
         Results are cached per repo for TTL_TRAVERSAL seconds.
         """
-        from .registry_cache import TTL_TRAVERSAL
+        from .cache import TTL_TRAVERSAL
 
         if depth > 3:
             return []
@@ -824,7 +824,7 @@ class RegistryResolver:
         Search GitHub for repos tagged apf-ue4ss-registry-{game_id}.
         Cached for 1 hour.
         """
-        from .registry_cache import TTL_SEARCH
+        from .cache import TTL_SEARCH
         cache_key = f"search_{game_id}.json"
         cached = cache.get(cache_key, TTL_SEARCH)
         if cached:
@@ -896,7 +896,7 @@ class RegistryResolver:
     # -----------------------------------------------------------------------
 
     def _make_api(self, owner: str, repo: str):
-        from ...core.remote.github_api import GitHubAPI
+        from .....core.remote.github_api import GitHubAPI
         token_path = _BUNDLED_PAT if _BUNDLED_PAT.exists() else None
         return GitHubAPI(
             repo_owner=owner,

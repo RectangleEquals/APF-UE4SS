@@ -157,7 +157,7 @@ class UpdatesService:
         Returns up to 3 latest stable releases tagged framework/vX.Y.Z.
         """
         try:
-            from ..mods.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
+            from ..content.services.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
             api = self._make_apf_api()
             releases = api.list_releases(tag_prefix="framework/")
             entries = []
@@ -214,7 +214,7 @@ class UpdatesService:
         entries even if no registry is configured (bootstrap path).
         """
         try:
-            from ..mods.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
+            from ..content.services.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
             api = self._make_ue4ss_api(owner, repo)
             typed_releases = api.releases.fetch_all()
 
@@ -525,7 +525,7 @@ class UpdatesService:
         if not game_id:
             return "unknown"
         try:
-            from ..mods.install_state import InstallStateManager
+            from ..content.shared.data.install_state import InstallStateManager
             state = InstallStateManager(game_id)
             for entry in state.get_all():
                 if entry.get("install_type") == "ue4ss":
@@ -540,7 +540,7 @@ class UpdatesService:
             return "unknown"
         mods_svc = self._host.get_service("mods")
         try:
-            from ..mods.registry_resolver import _is_framework_mod_id
+            from ..content.utils.registry.resolver import _is_framework_mod_id
             for mod in mods_svc.get_ap_mods():
                 if mod.mod_id and _is_framework_mod_id(mod.mod_id):
                     return mod.version or "unknown"

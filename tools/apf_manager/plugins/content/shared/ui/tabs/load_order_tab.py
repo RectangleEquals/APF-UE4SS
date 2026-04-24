@@ -24,14 +24,14 @@ from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.button import MDIconButton
 
-from ....gui.widgets.tip_icon_button import TipIconButton
-from ..mod_service import _SCAN_EXCLUDE, _FRAMEWORK_MOD_RE
+from ......gui.widgets.tip_icon_button import TipIconButton
+from ....services.mod_service import _SCAN_EXCLUDE, _FRAMEWORK_MOD_RE
 
 if TYPE_CHECKING:
-    from ...mods.mod_service import ModInfo
-    from ..mods_txt import ModsTextManager
-    from ....core.config import GameProfile
-    from ....core.ue4ss import UE4SSResult
+    from ....services.mod_service import ModInfo
+    from ....utils.mods_txt import ModsTextManager
+    from ......core.config import GameProfile
+    from ......core.ue4ss import UE4SSResult
 
 
 def _mod_dep_status(mod, mod_by_id: dict, detection) -> str:
@@ -114,7 +114,7 @@ class _ModRow(MDBoxLayout):
         self._enabled = enabled
         self.is_keybinds = is_keybinds
 
-        from ....gui.theme import STATUS_ICONS
+        from ......gui.theme import STATUS_ICONS
 
         if is_keybinds:
             self.md_bg_color = _ROW_BG_KEYBINDS
@@ -458,7 +458,7 @@ class LoadOrderTab(MDBoxLayout):
         # Keybinds row — always at absolute bottom when present
         if self._mods_txt and self._mods_txt.has_footer:
             from pathlib import Path
-            from ...mods.mod_service import ModInfo
+            from ....services.mod_service import ModInfo
             keybinds_mod = ModInfo(folder_name="Keybinds", folder_path=Path("."))
             kb_row = _ModRow(
                 mod=keybinds_mod,

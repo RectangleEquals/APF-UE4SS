@@ -5,7 +5,7 @@
   "description": "Run validation checks and package logs for bug reports.",
   "mode": "both",
   "requires": [],
-  "suggests": ["apf.builtin.mods"],
+  "suggests": ["apf.builtin.content"],
   "contributions": [
     {"type": "hub_panel", "label": "Diagnostics", "icon": "stethoscope", "priority": 40}
   ]

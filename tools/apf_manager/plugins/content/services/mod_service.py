@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...core.plugin_host import PluginHost
-    from ...core.config import GameProfile
+    from ....core.plugin_host import PluginHost
+    from ....core.config import GameProfile
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ class ModService:
         `game` should be the actual game name (e.g. "Palworld") used as the
         Templates/<game>/ subdirectory name. Falls back to profile game_id.
         """
-        from .capabilities_builder import CapabilitiesBuilder
+        from ..utils.capabilities_builder import CapabilitiesBuilder
         if mods is None:
             mods = self.get_ap_mods()
         game_name = game or (self._game_id or "")
@@ -265,7 +265,7 @@ class ModService:
         install_state = None
         if game_id:
             try:
-                from .install_state import InstallStateManager
+                from ..shared.data.install_state import InstallStateManager
                 install_state = InstallStateManager(game_id)
             except Exception:
                 pass

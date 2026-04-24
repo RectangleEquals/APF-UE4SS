@@ -1,13 +1,13 @@
 """
-Mod Management plugin — registers the 'mods', 'registry', and 'deploy' services,
-and contributes the Mods hub_panel (priority 10).
+Content pipeline plugin — registers the 'mods', 'registry', 'deploy', and 'validation'
+services, and contributes the Content hub_panel (priority 10).
 """
 
-from .mod_service import ModService, ModInfo
-from .registry_service import RegistryService
-from .deploy_service import DeployService
-from .validation_service import ValidationService
-from .mods_panel import ModsPanel
+from .services.mod_service import ModService, ModInfo
+from .services.registry_service import RegistryService
+from .services.deploy_service import DeployService
+from .services.validation_service import ValidationService
+from .panel import ContentPipelinePanel
 from ...core.plugin_host import PluginContribution
 
 
@@ -29,11 +29,11 @@ def setup(host):
     host.register_service("validation", validation_service)
 
     # Hub panel
-    host.register_contribution("apf.builtin.mods", PluginContribution(
+    host.register_contribution("apf.builtin.content", PluginContribution(
         type="hub_panel",
-        plugin_id="apf.builtin.mods",
-        label="Mods",
+        plugin_id="apf.builtin.content",
+        label="Content",
         icon="package-variant",
         priority=10,
-        panel_class=ModsPanel,
+        panel_class=ContentPipelinePanel,
     ))
