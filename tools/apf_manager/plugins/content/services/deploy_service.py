@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from ....core.ue4ss import UE4SSResult
     from ..utils.mods_txt import ModsTextManager
     from .mod_service import ModInfo, ModService
+    from ..shared.data.content_base import ContentDescriptor
+    from ..shared.data.pipeline_state import InstallRecord
 
 
 def _classify_zip(zf) -> str:
@@ -141,7 +143,217 @@ class DeployService:
             self._reload_mods_txt()
 
     # -----------------------------------------------------------------------
-    # Deploy / undeploy
+    # Typed deploy / undeploy (Phase F)
+    # -----------------------------------------------------------------------
+
+    def deploy_content(
+        self,
+        cache_path: "Path",
+        content: "ContentDescriptor",
+        detection: "Optional[UE4SSResult]",
+        game_id: str = "",
+    ) -> "InstallRecord":
+        """Content-aware dispatch. Routes by content type, saves InstallRecord for mods."""
+        from ..shared.data.content_types import ModDescriptor, TemplateDescriptor, BinaryDescriptor
+        from ..shared.data.pipeline_state import InstallRecord
+        from ..shared.data.install_state import InstallStateManager
+
+        gid = game_id or content.game_id or (self._profile.game_id if self._profile else "")
+        record = InstallRecord.from_content(content, gid)
+
+        if isinstance(content, TemplateDescriptor):
+            self._deploy_template_content(cache_path, content)
+        elif isinstance(content, BinaryDescriptor):
+            self._deploy_binary_content(cache_path, content, detection)
+        elif isinstance(content, ModDescriptor):
+            self._deploy_mod_content(cache_path, content, detection)
+        else:
+            raise TypeError(f"Unsupported content type: {content.content_type!r}")
+
+        if gid and isinstance(content, ModDescriptor):
+            InstallStateManager(gid).add_record(record)
+        return record
+
+    def _deploy_mod_content(
+        self,
+        cache_path: "Path",
+        content: "ModDescriptor",
+        detection: "Optional[UE4SSResult]",
+    ) -> None:
+        if not detection or not detection.mods_dir:
+            raise RuntimeError("UE4SS mods directory not detected")
+        components = content.components.types if content.components else ["lua"]
+        bp_pak_files = content.components.bp_pak_files if content.components else []
+        folder_name = content.folder_name
+
+        if any(c in components for c in ("lua", "cpp")):
+            dest = detection.mods_dir / folder_name
+            if dest.exists():
+                shutil.rmtree(str(dest))
+            shutil.copytree(str(cache_path), str(dest),
+                            ignore=shutil.ignore_patterns("enabled.txt"))
+            with self._lock:
+                if self._mods_txt:
+                    self._mods_txt.ensure_entry(folder_name, enabled=True)
+                    self._mods_txt.save()
+
+        if "blueprint" in components and bp_pak_files:
+            lm_dir = detection.logicmods_dir
+            if lm_dir:
+                lm_dir.mkdir(parents=True, exist_ok=True)
+                lm_src = cache_path / "LogicMods"
+                for pak in bp_pak_files:
+                    src_pak = lm_src / pak
+                    if src_pak.exists():
+                        shutil.copy2(str(src_pak), str(lm_dir / pak))
+
+    def _deploy_template_content(self, cache_path: "Path", content: "TemplateDescriptor") -> None:
+        game_name = content.game_id or content.name or ""
+        target = self.get_templates_dir(game_name)
+        if not target:
+            raise RuntimeError("Cannot deploy template: framework mod not found or in conflict state")
+        target.mkdir(parents=True, exist_ok=True)
+        for src in cache_path.rglob("*"):
+            if src.is_dir():
+                continue
+            rel = src.relative_to(cache_path)
+            dst = target / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src), str(dst))
+
+    def _deploy_binary_content(
+        self,
+        cache_path: "Path",
+        content: "BinaryDescriptor",
+        detection: "Optional[UE4SSResult]",
+    ) -> None:
+        platform_dir = getattr(detection, "platform_dir", None)
+        if not detection or platform_dir is None or not platform_dir.parts:
+            raise RuntimeError("Game platform directory not detected")
+        import zipfile
+        dest_dir = platform_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        zips = sorted(cache_path.glob("*.zip"))
+        if zips:
+            for zip_path in zips:
+                if zip_path.stem.lower() == "zmapgenbp":
+                    mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
+                    mapgen_dir.mkdir(parents=True, exist_ok=True)
+                    with zipfile.ZipFile(zip_path, "r") as zf:
+                        zf.extractall(str(mapgen_dir))
+                    continue
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    kind = _classify_zip(zf)
+                    if kind == "blueprint_pak":
+                        lm_dir = getattr(detection, "logicmods_dir", None)
+                        if lm_dir and lm_dir.parts:
+                            lm_dir.mkdir(parents=True, exist_ok=True)
+                            for info in zf.infolist():
+                                if info.filename.lower().endswith(".pak"):
+                                    zf.extract(info, str(lm_dir))
+                        else:
+                            zf.extractall(str(dest_dir))
+                    elif kind == "unknown":
+                        self._host.log(
+                            f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
+                            "manual installation required"
+                        )
+                    else:
+                        zf.extractall(str(dest_dir))
+        else:
+            for f in cache_path.iterdir():
+                if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
+                    shutil.copy2(str(f), str(dest_dir / f.name))
+
+    def undeploy_content(
+        self,
+        record: "InstallRecord",
+        detection: "Optional[UE4SSResult]",
+    ) -> None:
+        """Content-aware uninstall. Routes by content_type from InstallRecord."""
+        if record.content_type in ("ap_mod", "third_party_mod", "framework_mod"):
+            self._undeploy_mod_record(record, detection)
+        elif record.content_type == "template":
+            self._undeploy_template_record(record)
+        elif record.content_type in ("github_release_binary", "external_url_binary", "manual_binary"):
+            self._undeploy_binary_record(record, detection)
+
+        if self._profile:
+            from ..shared.data.install_state import InstallStateManager
+            key = record.folder_name or record.name
+            if key:
+                InstallStateManager(self._profile.game_id).remove(key)
+
+    def _undeploy_mod_record(
+        self,
+        record: "InstallRecord",
+        detection: "Optional[UE4SSResult]",
+    ) -> None:
+        if not detection:
+            return
+        components = record.components or ["lua"]
+        if any(c in components for c in ("lua", "cpp")):
+            if detection.mods_dir:
+                folder_path = detection.mods_dir / record.folder_name
+                shutil.rmtree(str(folder_path), ignore_errors=True)
+            with self._lock:
+                if self._mods_txt:
+                    self._mods_txt.remove_entry(record.folder_name)
+                    self._mods_txt.save()
+        if "blueprint" in components and detection.logicmods_dir:
+            for pak in (record.bp_pak_files_deployed or []):
+                try:
+                    (detection.logicmods_dir / pak).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    def _undeploy_template_record(self, record: "InstallRecord") -> None:
+        target = self.get_templates_dir(record.game_id or record.name)
+        if not target or not target.exists():
+            return
+        shutil.rmtree(str(target), ignore_errors=True)
+
+    def _undeploy_binary_record(
+        self,
+        record: "InstallRecord",
+        detection: "Optional[UE4SSResult]",
+    ) -> None:
+        self._host.log(
+            f"[deploy] Uninstall of binary '{record.name}' (type={record.install_type}) "
+            "requires manual removal — automatic binary uninstall is not supported."
+        )
+
+    def get_uninstall_impact(self, record: "InstallRecord") -> dict:
+        """Return {affected_mods: list[InstallRecord], template_dirs_removed: list[str]}."""
+        from ..shared.data.install_state import InstallStateManager
+        from ..shared.data.pipeline_state import InstallRecord as _IR
+        if not self._profile:
+            return {"affected_mods": [], "template_dirs_removed": []}
+
+        all_records = [_IR.from_dict(d) for d in InstallStateManager(self._profile.game_id).get_all()]
+        affected: list = []
+        template_dirs: list[str] = []
+
+        if record.content_type == "framework_mod":
+            for r in all_records:
+                if r.folder_name != record.folder_name and r.capabilities_includes:
+                    affected.append(r)
+            mods_svc = self._host.get_service("mods")
+            if mods_svc:
+                fw_dir = mods_svc.get_framework_mod_dir()
+                if fw_dir:
+                    templates_root = fw_dir / "Templates"
+                    if templates_root.is_dir():
+                        template_dirs = [str(templates_root)]
+        elif record.mod_id:
+            for r in all_records:
+                if r.folder_name != record.folder_name and record.mod_id in " ".join(r.capabilities_includes):
+                    affected.append(r)
+
+        return {"affected_mods": affected, "template_dirs_removed": template_dirs}
+
+    # -----------------------------------------------------------------------
+    # Deploy / undeploy (legacy — kept for callers not yet migrated to Phase F)
     # -----------------------------------------------------------------------
 
     def undeploy_mod(self, mod_info: "ModInfo", detection: Optional["UE4SSResult"]) -> None:

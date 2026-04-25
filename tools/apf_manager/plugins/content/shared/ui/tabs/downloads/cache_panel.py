@@ -211,39 +211,14 @@ class CachePanelMixin:
                             "framework mod required"
                         )
                         continue
-                    game_name = ci.game_name or game_id
-                    deploy_svc.deploy_template(ci.cache_path, game_name)
-                    self._host.log(f"[downloads] Installed template {ci.display_name}")
-
-                elif ci.category == "other":
-                    deploy_svc.deploy_other(ci.cache_path, ci.install_type, self._detection)
-                    self._host.log(f"[downloads] Installed other '{ci.display_name}'")
-
-                else:
+                elif ci.category == "mod":
                     if not self._ue4ss_detected:
                         self._host.log(
                             f"[downloads] Skipped mod '{ci.display_name}': UE4SS required"
                         )
                         continue
-                    from .....shared.data.content_types import APModDescriptor as _AP
-                    metadata = {
-                        "content_type":  ci.content.content_type,
-                        "name":          ci.display_name,
-                        "mod_id":        ci.content.mod_id if isinstance(ci.content, _AP) else "",
-                        "folder_name":   ci.folder_name,
-                        "source_repo":   f"{ci.owner}/{ci.repo}",
-                        "source_folder": ci.folder_name,
-                        "version":       ci.version,
-                        "description":   getattr(ci.content, "description", ""),
-                        "author":        getattr(ci.content, "author", ""),
-                    }
-                    deploy_svc.deploy_mod(
-                        ci.cache_path, ci.folder_name,
-                        ci.components, ci.bp_pak_files,
-                        self._detection, game_id, metadata,
-                    )
-                    self._host.log(f"[downloads] Installed mod {ci.display_name}")
-
+                deploy_svc.deploy_content(ci.cache_path, ci.content, self._detection, game_id)
+                self._host.log(f"[downloads] Installed {ci.display_name}")
             except Exception as exc:
                 self._host.log(f"[downloads] Install failed for {ci.display_name}: {exc}")
 
