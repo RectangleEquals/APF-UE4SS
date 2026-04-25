@@ -25,8 +25,7 @@ from kivymd.uix.selectioncontrol import MDCheckbox
 
 from .......gui.widgets.tip_icon_button import TipIconButton
 from .....services.mod_service import _FRAMEWORK_MOD_RE
-from .....shared.ui.constants import COL_CPP, COL_BP, COL_DIM, COL_WARN
-from .....shared.ui.hover_row import HoverRow
+from .....shared.ui.constants import COL_DIM, COL_WARN
 from .....shared.ui.section_header import make_section_header
 from .templates_section import TemplatesSectionMixin
 from .mods_section import ModsSectionMixin
@@ -358,18 +357,20 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         self._on_check(key, checked)
 
     def _check_all(self, checked: bool) -> None:
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB
         for mod in self._all_mods:
-            folder = getattr(mod, "folder", getattr(mod, "mod_id", ""))
+            folder = getattr(mod, "folder_name", getattr(mod, "folder", getattr(mod, "mod_id", "")))
             key = f"mod:{folder}"
             self._checked.add(key) if checked else self._checked.discard(key)
         for i, tmpl in enumerate(self._all_templates):
-            key = f"tmpl:{getattr(tmpl, 'path', str(i))}"
+            key = f"tmpl:{getattr(tmpl, 'template_path', getattr(tmpl, 'path', str(i)))}"
             self._checked.add(key) if checked else self._checked.discard(key)
         for i, item in enumerate(self._all_other):
-            if getattr(item, "type", "manual") == "github_release":
-                _hash = getattr(item, "content_hash", "")
+            if isinstance(item, _GRB):
+                _hash = item.tags.content_hash if item.tags else ""
+                _src = item.source
                 key = (f"other:{_hash}" if _hash else
-                       f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
+                       f"other:{_src.repo.owner if _src else ''}+{_src.repo.repo if _src else ''}/{_src.tag if _src else item.name}")
                 self._checked.add(key) if checked else self._checked.discard(key)
         self._sync_queue_btn()
         self._do_refresh()
@@ -430,7 +431,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
                                           checked_other, allow_proceed=True)
                 return
 
-        self._do_queue(checked_mods, checked_templates, checked_other)
+        self._show_install_plan(checked_mods, checked_templates, checked_other)
 
     def _show_validation_dlg(self, errors, warnings, mods, templates,
                               other=None, allow_proceed: bool = False) -> None:
@@ -453,7 +454,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
             btns.append(MDButton(
                 MDButtonText(text="Queue Anyway"), style="filled",
                 on_release=lambda *_, m=mods, t=templates, o=_other: (
-                    dlg.dismiss(), self._do_queue(m, t, o)
+                    dlg.dismiss(), self._show_install_plan(m, t, o)
                 ),
             ))
 
@@ -463,6 +464,13 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
             MDDialogButtonContainer(*btns),
         )
         dlg.open()
+
+    def _show_install_plan(self, mods: list, templates: list, other: list) -> None:
+        from .....shared.ui.install_plan_dialog import InstallPlanDialog
+        InstallPlanDialog(
+            items=mods + templates + other,
+            on_confirm=lambda: self._do_queue(mods, templates, other),
+        ).open()
 
     def _do_queue(self, mods: list, templates: Optional[list] = None,
                   other: Optional[list] = None) -> None:

@@ -9,8 +9,7 @@ from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
 
-from .....shared.ui.constants import COL_CPP, COL_BP, COL_DIM, COL_WARN
-from .....shared.ui.hover_row import HoverRow
+from .....shared.ui.constants import COL_DIM, COL_WARN
 
 
 _BG_ROW_EVEN = (0.13, 0.13, 0.13, 1)
@@ -83,201 +82,31 @@ class ModsSectionMixin:
         Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
     def _mod_row(self, mod, index: int, indent: bool = False) -> MDBoxLayout:
+        from .....shared.ui.content_row import ContentRowWidget
+        from .....shared.ui.content_detail import ContentDetailPanel
         folder = getattr(mod, "folder_name", getattr(mod, "folder", getattr(mod, "mod_id", str(index))))
         key = f"mod:{folder}"
-        _comp_raw = getattr(mod, "components", None)
-        components = _comp_raw.types if hasattr(_comp_raw, "types") else (_comp_raw if isinstance(_comp_raw, list) else ["lua"])
-        bg = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
         expanded = key in self._expanded
-
-        container = MDBoxLayout(
-            orientation="vertical", size_hint_y=None, adaptive_height=True,
-            md_bg_color=bg,
-        )
-
-        left_pad = dp(24) if indent else dp(8)
-        header = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(52),
-            padding=[left_pad, dp(4), dp(8), dp(4)], spacing=dp(8),
-        )
-
-        cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
-                        pos_hint={"center_y": 0.5})
-        cb.active = key in self._checked
-        cb.bind(active=lambda inst, val, k=key, m=mod: self._on_mod_check(k, val, m))
-        header.add_widget(cb)
-
-        info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
-
-        name_row = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(24), spacing=dp(4),
-        )
-        display = getattr(mod, "name", folder)
-        name_row.add_widget(MDLabel(
-            text=display, font_style="Body", size_hint=(1, 1),
-            halign="left", valign="middle",
-        ))
-        if "cpp" in components:
-            name_row.add_widget(MDIcon(
-                icon="code-braces",
-                size_hint=(None, None), size=(dp(20), dp(20)),
-                pos_hint={"center_y": 0.5},
-                theme_icon_color="Custom", icon_color=COL_CPP,
-            ))
-        if "blueprint" in components:
-            name_row.add_widget(MDIcon(
-                icon="blueprint",
-                size_hint=(None, None), size=(dp(20), dp(20)),
-                pos_hint={"center_y": 0.5},
-                theme_icon_color="Custom", icon_color=COL_BP,
-            ))
-        info.add_widget(name_row)
-
-        mod_id = getattr(mod, "mod_id", "")
-        desc   = getattr(mod, "description", "")
-        if mod_id:
-            sub = mod_id
-        elif desc:
-            sub = desc
-        else:
-            sub = "Non-AP Mod"
-        if sub:
-            info.add_widget(MDLabel(
-                text=sub, font_style="Label", role="small",
-                size_hint_y=None, height=dp(18),
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-        info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
-                  if w.collide_point(*t.pos) else None)
-        header.add_widget(info)
-
-        chevron_icon = "chevron-up" if expanded else "chevron-down"
-        header.add_widget(MDIconButton(
-            icon=chevron_icon,
-            size_hint=(None, None), size=(dp(32), dp(32)),
-            pos_hint={"center_y": 0.5},
-            on_release=lambda *_, k=key: self._toggle_expand(k),
-        ))
-        container.add_widget(header)
-
-        if expanded:
-            container.add_widget(self._mod_detail(mod))
-        return container
-
-    def _mod_detail(self, mod) -> MDBoxLayout:
-        panel = MDBoxLayout(
-            orientation="vertical", size_hint_y=None, adaptive_height=True,
-            md_bg_color=(0.09, 0.10, 0.12, 1),
-            padding=[dp(16), dp(6), dp(8), dp(8)], spacing=dp(4),
-        )
-        mod_id = getattr(mod, "mod_id", "")
-        desc   = getattr(mod, "description", "")
-        owner  = getattr(mod, "owner", "")
-        repo   = getattr(mod, "repo", "")
-
-        if desc:
-            panel.add_widget(MDLabel(
-                text=desc, font_style="Label", role="small",
-                size_hint_y=None, height=dp(16),
-                theme_text_color="Secondary",
-            ))
-        elif not mod_id:
-            panel.add_widget(MDLabel(
-                text="This is a regular UE4SS mod that does not directly contribute toward "
-                     "Archipelago randomization on its own.",
-                font_style="Label", role="small",
-                size_hint_y=None, height=dp(32),
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-        else:
-            panel.add_widget(MDLabel(
-                text="No description",
-                font_style="Label", role="small",
-                size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-
-        if mod_id:
-            panel.add_widget(MDLabel(
-                text=mod_id, font_style="Label", role="small",
-                size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=(0.5, 0.7, 0.9, 1),
-            ))
-
         known_ids = {getattr(m, "mod_id", "") for m in self._all_mods}
-        depends = getattr(mod, "depends", []) or []
-        if depends:
-            dep_row = MDBoxLayout(
-                orientation="horizontal", size_hint_y=None, height=dp(16),
-                spacing=dp(4),
-            )
-            dep_row.add_widget(MDLabel(
-                text="Deps:", font_style="Label", role="small",
-                size_hint=(None, 1), width=dp(32),
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-            for dep in depends[:5]:
-                dep_id = dep.split(" ")[0] if isinstance(dep, str) else str(dep)
-                missing = dep_id not in known_ids
-                dep_row.add_widget(MDLabel(
-                    text=dep_id, font_style="Label", role="small",
-                    size_hint=(None, 1), width=dp(max(80, len(dep_id) * 7)),
-                    theme_text_color="Custom",
-                    text_color=(0.9, 0.3, 0.3, 1) if missing else COL_DIM,
-                ))
-            panel.add_widget(dep_row)
 
-        incompatible = getattr(mod, "incompatible", []) or []
-        if incompatible:
-            panel.add_widget(MDLabel(
-                text="Incompatible: " + ", ".join(str(i) for i in incompatible[:4]),
-                font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=(0.8, 0.5, 0.2, 1),
-            ))
-
-        includes = getattr(mod, "capabilities_includes", []) or []
-        if includes:
-            fw_dir = self._fw_dir
-            for inc in includes[:4]:
-                present = False
-                if fw_dir:
-                    from pathlib import Path
-                    present = (Path(fw_dir) / inc).exists()
-                inc_row = MDBoxLayout(
-                    orientation="horizontal", size_hint_y=None, height=dp(16), spacing=dp(4),
-                )
-                inc_row.add_widget(MDIcon(
-                    icon="circle-small", size_hint=(None, 1), width=dp(14),
-                    theme_icon_color="Custom",
-                    icon_color=(0.3, 0.8, 0.4, 1) if present else COL_WARN,
-                ))
-                inc_row.add_widget(MDLabel(
-                    text=inc, font_style="Label", role="small",
-                    size_hint=(1, 1), halign="left",
-                    theme_text_color="Custom",
-                    text_color=COL_DIM if present else COL_WARN,
-                ))
-                panel.add_widget(inc_row)
-
-        if getattr(mod, "is_submodule_content", False):
-            panel.add_widget(MDLabel(
-                text=f"from submodule: {owner}/{repo}",
-                font_style="Label", role="small",
-                size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=(0.6, 0.7, 0.9, 1),
-            ))
-
-        if owner and repo:
-            reg_row = MDBoxLayout(
-                orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8),
-            )
-            reg_row.add_widget(MDLabel(
-                text=f"{owner}/{repo}", font_style="Label", role="small",
-                size_hint=(1, 1), halign="left",
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-            panel.add_widget(reg_row)
-        return panel
+        outer = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
+        row_widget = ContentRowWidget(
+            content=mod, row_index=index,
+            checked=key in self._checked, expanded=expanded,
+            on_check=lambda val, k=key: self._on_check(k, val),
+            on_expand=lambda *_: self._toggle_expand(key),
+        )
+        if indent:
+            inner = MDBoxLayout(orientation="horizontal", size_hint_y=None, adaptive_height=True)
+            inner.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(16),
+                                         md_bg_color=row_widget.md_bg_color))
+            inner.add_widget(row_widget)
+            outer.add_widget(inner)
+        else:
+            outer.add_widget(row_widget)
+        if expanded:
+            outer.add_widget(ContentDetailPanel(content=mod, known_mod_ids=known_ids))
+        return outer
 
     def _open_other_docs(self, docs_path: str, owner: str, repo: str,
                           registry_owner: str = "", registry_repo: str = "") -> None:
@@ -292,142 +121,28 @@ class ModsSectionMixin:
             docs_svc.open_url(raw_url, title=title, show_sidebar=True, show_mode_toggle=False)
 
     def _other_row(self, item, index: int) -> MDBoxLayout:
+        from .....shared.ui.content_row import ContentRowWidget
         from .....shared.data.content_types import GithubReleaseBinary as _GRB
         if isinstance(item, _GRB):
-            _src  = item.source
-            opt_type = "github_release"
-            tag      = _src.tag if _src else ""
-            owner    = _src.repo.owner if _src else ""
-            repo_    = _src.repo.repo if _src else ""
-            _hash    = item.tags.content_hash if item.tags else ""
+            _hash = item.tags.content_hash if item.tags else ""
+            _src = item.source
+            key = (f"other:{_hash}" if _hash else
+                   f"other:{_src.repo.owner if _src else ''}+{_src.repo.repo if _src else ''}/{_src.tag if _src else item.name}")
         else:
-            opt_type = getattr(item, "type", "manual")
-            tag      = getattr(item, "tag", "")
-            owner    = getattr(item, "owner", "")
-            repo_    = getattr(item, "repo", "")
-            _hash    = getattr(item, "content_hash", "")
-        if _hash:
-            key = f"other:{_hash}"
-        else:
-            key = f"other:{owner}+{repo_}/{tag or getattr(item, 'name', str(index))}"
-        bg       = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
+            key = f"other:{getattr(item, 'name', str(index))}"
         expanded = key in self._expanded
 
-        container = MDBoxLayout(
-            orientation="vertical", size_hint_y=None, adaptive_height=True,
-            md_bg_color=bg,
-        )
-
-        if opt_type == "github_release":
-            header = HoverRow(
-                orientation="horizontal", size_hint_y=None, height=dp(52),
-                padding=[dp(8), dp(4)], spacing=dp(8),
-            )
-        else:
-            header = MDBoxLayout(
-                orientation="horizontal", size_hint_y=None, height=dp(52),
-                padding=[dp(8), dp(4)], spacing=dp(8),
-            )
-
-        if opt_type == "github_release":
-            cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
-                            pos_hint={"center_y": 0.5})
-            cb.active = key in self._checked
-            cb.bind(active=lambda inst, val, k=key: self._on_check(k, val))
-            header.add_widget(cb)
-        else:
-            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(24)))
-
-        header.add_widget(MDIcon(
-            icon="package-variant", size_hint=(None, 1), width=dp(22),
-            theme_icon_color="Custom", icon_color=(0.8, 0.55, 0.1, 1),
+        outer = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
+        outer.add_widget(ContentRowWidget(
+            content=item, row_index=index,
+            checked=key in self._checked,
+            expanded=expanded,
+            on_check=lambda val, k=key: self._on_check(k, val),
+            on_expand=lambda *_: self._toggle_expand(key),
         ))
-
-        info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
-        name_lbl = getattr(item, "name", "Unknown")
-        info.add_widget(MDLabel(
-            text=name_lbl, font_style="Body",
-            size_hint_y=None, height=dp(24),
-        ))
-        from .....shared.data.content_types import GithubReleaseBinary as _GRB
-        if isinstance(item, _GRB):
-            _src = item.source
-            if item.install_type == "framework_binary":
-                note = f"framework binaries  \u00b7  {_src.repo.full_name if _src else ''}"
-            elif _src and _src.is_prerelease:
-                note = f"experimental  \u00b7  {_src.repo.full_name}"
-            else:
-                note = f"stable  \u00b7  {_src.repo.full_name if _src else ''}"
-            _assets = item.assets or []
-        else:
-            note = getattr(item, "note", "")
-            _assets = getattr(item, "assets", []) or []
-        _n_sel = sum(1 for a in _assets if getattr(a, "selected", False))
-        if _assets and 0 < _n_sel < len(_assets):
-            note = f"{note}   ({_n_sel}/{len(_assets)} assets)" if note else f"({_n_sel}/{len(_assets)} assets selected)"
-        if note:
-            info.add_widget(MDLabel(
-                text=note, font_style="Label", role="small",
-                size_hint_y=None, height=dp(18),
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-        from .....shared.data.content_types import GithubReleaseBinary as _GRB
-        _has_dup = (item.tags.has_duplicate_source if isinstance(item, _GRB) and item.tags
-                    else getattr(item, "has_duplicate_source", False))
-        if _has_dup:
-            info.add_widget(MDLabel(
-                text="duplicate source",
-                font_style="Label", role="small",
-                size_hint_y=None, height=dp(14),
-                theme_text_color="Custom", text_color=(1.0, 0.75, 0.0, 1),
-            ))
-        if opt_type != "manual":
-            info.bind(on_touch_down=lambda w, t: self._toggle_expand(key)
-                      if w.collide_point(*t.pos) else None)
-        header.add_widget(info)
-
-        _docs_path = "" if isinstance(item, _GRB) else getattr(item, "docs", "")
-        if _docs_path:
-            _docs_owner = getattr(item, "owner", "")
-            _docs_repo  = getattr(item, "repo",  "")
-            _reg_owner  = getattr(item, "registry_owner", "")
-            _reg_repo   = getattr(item, "registry_repo",  "")
-            header.add_widget(MDIconButton(
-                icon="file-document-outline",
-                size_hint=(None, None), size=(dp(32), dp(32)),
-                pos_hint={"center_y": 0.5},
-                on_release=lambda *_, dpath=_docs_path, do=_docs_owner, dr=_docs_repo, ro=_reg_owner, rr=_reg_repo: (
-                    self._open_other_docs(dpath, do, dr, ro, rr)
-                ),
-            ))
-        else:
-            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(32)))
-
-        if opt_type == "external_url":
-            import webbrowser
-            url = getattr(item, "url", "")
-            header.add_widget(MDButton(
-                MDButtonText(text="Open"),
-                style="outlined", size_hint=(None, None), size=(dp(72), dp(32)),
-                pos_hint={"center_y": 0.5},
-                on_release=lambda *_, u=url: webbrowser.open(u) if u else None,
-            ))
-        elif opt_type == "github_release":
-            chevron_icon = "chevron-up" if expanded else "chevron-down"
-            header.add_widget(MDIconButton(
-                icon=chevron_icon,
-                size_hint=(None, None), size=(dp(32), dp(32)),
-                pos_hint={"center_y": 0.5},
-                on_release=lambda *_, k=key: self._toggle_expand(k),
-            ))
-        else:
-            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(40)))
-
-        container.add_widget(header)
-
         if expanded:
-            container.add_widget(self._other_detail(item, outer_key=key))
-        return container
+            outer.add_widget(self._other_detail(item, outer_key=key))
+        return outer
 
     def _other_detail(self, item, outer_key: str = "") -> MDBoxLayout:
         panel = MDBoxLayout(
