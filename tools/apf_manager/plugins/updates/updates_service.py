@@ -27,9 +27,17 @@ from pathlib import Path
 from typing import Optional, Callable
 
 from ...core.remote.github_release_manager import RepoRelease
+from ..content.shared import GithubReleaseBinary, ContentAsset, ReleaseSource, GitHubRepo, ContentTags
 
 
 _WORLDS_DIR      = Path.home() / ".apf_manager" / "worlds"
+
+
+def _hash_other(owner: str, repo: str, tag: str, install_type: str) -> str:
+    """Compute a short SHA-256 content hash matching _compute_other_entry_hash logic."""
+    import hashlib
+    fingerprint = "|".join([owner, repo, tag, install_type, "", "", "github_release"])
+    return hashlib.sha256(fingerprint.encode()).hexdigest()[:20]
 _CHECK_INTERVAL  = 3600   # 1-hour in-memory TTL for update checks
 
 # How many stable UE4SS releases to surface in the Content tab Other section
@@ -152,12 +160,11 @@ class UpdatesService:
 
     def get_framework_releases_for_content(self) -> list:
         """
-        Return _OtherEntry objects for available framework binary releases.
+        Return GithubReleaseBinary objects for available framework binary releases.
         Called by ContentTab to populate the Other section.
         Returns up to 3 latest stable releases tagged framework/vX.Y.Z.
         """
         try:
-            from ..content.services.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
             api = self._make_apf_api()
             releases = api.list_releases(tag_prefix="framework/")
             entries = []
@@ -169,12 +176,11 @@ class UpdatesService:
                 ver = (full_tag[len("framework/"):]
                        if full_tag.startswith("framework/") else full_tag)
                 body = (release.get("body") or "")
-                # Build full assets list, filtering out installer and apworld
                 _assets = [
-                    _OtherAsset(
+                    ContentAsset(
                         name=a.get("name", ""),
                         url=a.get("browser_download_url", ""),
-                        size=a.get("size", 0),
+                        size_bytes=a.get("size", 0),
                         selected=False,
                     )
                     for a in release.get("assets", [])
@@ -183,21 +189,23 @@ class UpdatesService:
                         a.get("name", "").endswith(".apworld")
                     )
                 ]
-                _entry = _OtherEntry(
-                    name         = f"APF Framework \u2022 {ver}",
-                    note         = "framework binaries  \u00b7  RectangleEquals/APF-UE4SS",
-                    type         = "github_release",
-                    owner        = "RectangleEquals",
-                    repo         = "APF-UE4SS",
-                    tag          = full_tag,
-                    url          = asset.get("browser_download_url", "") if asset else "",
-                    install_type = "framework_binary",
-                    published_at = release.get("published_at", ""),
-                    asset_name   = asset.get("name", "") if asset else "",
-                    changelog    = body[:2000],
-                    assets       = _assets,
+                _hash = _hash_other("RectangleEquals", "APF-UE4SS", full_tag, "framework_binary")
+                source = ReleaseSource(
+                    repo=GitHubRepo(owner="RectangleEquals", repo="APF-UE4SS"),
+                    tag=full_tag,
+                    published_at=release.get("published_at", ""),
+                    changelog=body[:2000],
+                    is_prerelease=False,
                 )
-                _entry.content_hash = _compute_other_entry_hash(_entry)
+                _entry = GithubReleaseBinary(
+                    name=f"APF Framework \u2022 {ver}",
+                    version=ver,
+                    game_id="",
+                    install_type="framework_binary",
+                    assets=_assets,
+                    source=source,
+                    tags=ContentTags(content_hash=_hash),
+                )
                 entries.append(_entry)
             return entries
         except Exception:
@@ -206,7 +214,7 @@ class UpdatesService:
     def get_ue4ss_releases_for_content(self, owner: str = "UE4SS-RE",
                                         repo: str = "RE-UE4SS") -> list:
         """
-        Return _OtherEntry objects for UE4SS releases from owner/repo.
+        Return GithubReleaseBinary objects for UE4SS releases from owner/repo.
         Returns up to _UE4SS_STABLE_COUNT latest stable releases + latest
         experimental (pre-release) if one exists.
 
@@ -214,7 +222,6 @@ class UpdatesService:
         entries even if no registry is configured (bootstrap path).
         """
         try:
-            from ..content.services.registry_service import _OtherEntry, _OtherAsset, _compute_other_entry_hash
             api = self._make_ue4ss_api(owner, repo)
             typed_releases = api.releases.fetch_all()
 
@@ -223,66 +230,62 @@ class UpdatesService:
 
             entries = []
             for r in stable[:_UE4SS_STABLE_COUNT]:
-                asset = next(
-                    (a for a in r.assets if a.name.endswith(".zip")), None
-                )
                 _assets = [
-                    _OtherAsset(
+                    ContentAsset(
                         name=a.name,
                         url=a.browser_download_url,
-                        size=getattr(a, "size", 0),
+                        size_bytes=getattr(a, "size", 0),
                         selected=False,
                     )
                     for a in r.assets
                 ]
-                _entry = _OtherEntry(
-                    name         = f"{repo} \u2022 {r.tag_name}",
-                    note         = f"stable  \u00b7  {owner}/{repo}",
-                    type         = "github_release",
-                    owner        = owner,
-                    repo         = repo,
-                    tag          = r.tag_name,
-                    url          = asset.browser_download_url if asset else "",
-                    install_type = "ue4ss",
-                    published_at = r.published_at.isoformat() if r.published_at else "",
-                    asset_name   = asset.name if asset else "",
-                    changelog    = (r.body or "")[:2000],
-                    assets       = _assets,
-                    prerelease   = False,
+                _hash = _hash_other(owner, repo, r.tag_name, "ue4ss")
+                source = ReleaseSource(
+                    repo=GitHubRepo(owner=owner, repo=repo),
+                    tag=r.tag_name,
+                    published_at=r.published_at.isoformat() if r.published_at else "",
+                    changelog=(r.body or "")[:2000],
+                    is_prerelease=False,
                 )
-                _entry.content_hash = _compute_other_entry_hash(_entry)
+                _entry = GithubReleaseBinary(
+                    name=f"{repo} \u2022 {r.tag_name}",
+                    version=r.tag_name.lstrip("v"),
+                    game_id="",
+                    install_type="ue4ss",
+                    assets=_assets,
+                    source=source,
+                    tags=ContentTags(content_hash=_hash),
+                )
                 entries.append(_entry)
 
             if experimental:
                 r = experimental[0]
-                asset = next(
-                    (a for a in r.assets if a.name.endswith(".zip")), None
-                )
                 _assets = [
-                    _OtherAsset(
+                    ContentAsset(
                         name=a.name,
                         url=a.browser_download_url,
-                        size=getattr(a, "size", 0),
+                        size_bytes=getattr(a, "size", 0),
                         selected=False,
                     )
                     for a in r.assets
                 ]
-                _entry = _OtherEntry(
-                    name         = f"{repo} \u2022 {r.tag_name}",
-                    note         = f"experimental  \u00b7  {owner}/{repo}",
-                    type         = "github_release",
-                    owner        = owner,
-                    repo         = repo,
-                    tag          = r.tag_name,
-                    url          = asset.browser_download_url if asset else "",
-                    install_type = "ue4ss",
-                    published_at = r.published_at.isoformat() if r.published_at else "",
-                    asset_name   = asset.name if asset else "",
-                    changelog    = (r.body or "")[:2000],
-                    assets       = _assets,
-                    prerelease   = True,
+                _hash = _hash_other(owner, repo, r.tag_name, "ue4ss")
+                source = ReleaseSource(
+                    repo=GitHubRepo(owner=owner, repo=repo),
+                    tag=r.tag_name,
+                    published_at=r.published_at.isoformat() if r.published_at else "",
+                    changelog=(r.body or "")[:2000],
+                    is_prerelease=True,
                 )
-                _entry.content_hash = _compute_other_entry_hash(_entry)
+                _entry = GithubReleaseBinary(
+                    name=f"{repo} \u2022 {r.tag_name}",
+                    version=r.tag_name.lstrip("v"),
+                    game_id="",
+                    install_type="ue4ss",
+                    assets=_assets,
+                    source=source,
+                    tags=ContentTags(content_hash=_hash),
+                )
                 entries.append(_entry)
             return entries
         except Exception:
@@ -525,7 +528,7 @@ class UpdatesService:
         if not game_id:
             return "unknown"
         try:
-            from ..content.shared.data.install_state import InstallStateManager
+            from ..content.shared import InstallStateManager
             state = InstallStateManager(game_id)
             for entry in state.get_all():
                 if entry.get("install_type") == "ue4ss":

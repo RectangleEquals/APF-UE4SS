@@ -104,17 +104,29 @@ class QueuePanelMixin:
 
     def _download_item_bg(self, item: "_QueueItem") -> None:
         try:
-            owner  = getattr(item.mod, "owner", "")
-            repo   = getattr(item.mod, "repo",  "")
-            folder = getattr(item.mod, "folder", getattr(item.mod, "mod_id", ""))
+            from .....shared.data.content_types import GithubReleaseBinary as _GRB
+
+            _mod = item.mod
+            if isinstance(_mod, _GRB) and _mod.source:
+                owner = _mod.source.repo.owner
+                repo  = _mod.source.repo.repo
+            else:
+                owner = getattr(_mod, "owner", "")
+                repo  = getattr(_mod, "repo",  "")
+            folder = getattr(_mod, "folder", getattr(_mod, "mod_id", ""))
 
             if item.category == "template":
-                path = getattr(item.mod, "path", folder)
+                path = getattr(_mod, "path", folder)
                 dest = _CACHE_DIR / f"{owner}+{repo}" / path
             elif item.category == "other":
-                ue4ss_owner = getattr(item.mod, "owner", "")
-                ue4ss_repo  = getattr(item.mod, "repo", "")
-                tag         = getattr(item.mod, "tag", "unknown")
+                if isinstance(_mod, _GRB) and _mod.source:
+                    ue4ss_owner = _mod.source.repo.owner
+                    ue4ss_repo  = _mod.source.repo.repo
+                    tag         = _mod.source.tag or "unknown"
+                else:
+                    ue4ss_owner = getattr(_mod, "owner", "")
+                    ue4ss_repo  = getattr(_mod, "repo", "")
+                    tag         = getattr(_mod, "tag", "unknown")
                 dest = _CACHE_DIR / "_other" / f"{ue4ss_owner}+{ue4ss_repo}" / tag
             else:
                 dest = _CACHE_DIR / f"{owner}+{repo}" / folder
@@ -130,27 +142,36 @@ class QueuePanelMixin:
             if item.category == "other":
                 import zipfile as _zipfile
                 opt = item.mod
-                opt_type = getattr(opt, "type", "manual")
+                if isinstance(opt, _GRB):
+                    opt_type     = "github_release"
+                    _opt_owner   = opt.source.repo.owner if opt.source else ""
+                    _opt_repo    = opt.source.repo.repo if opt.source else ""
+                    _opt_tag     = opt.source.tag if opt.source else ""
+                else:
+                    opt_type   = getattr(opt, "type", "manual")
+                    _opt_owner = getattr(opt, "owner", "")
+                    _opt_repo  = getattr(opt, "repo", "")
+                    _opt_tag   = getattr(opt, "tag", "")
                 self._host.log(
                     f"[downloads] other-download: opt_type={opt_type!r} "
-                    f"owner={getattr(opt,'owner','')!r} repo={getattr(opt,'repo','')!r} "
-                    f"tag={getattr(opt,'tag','')!r} name={getattr(opt,'name','')!r}"
+                    f"owner={_opt_owner!r} repo={_opt_repo!r} "
+                    f"tag={_opt_tag!r} name={getattr(opt,'name','')!r}"
                 )
                 if opt_type == "github_release":
                     api = GitHubAPI(
-                        repo_owner=getattr(opt, "owner", ""),
-                        repo_name=getattr(opt, "repo", ""),
+                        repo_owner=_opt_owner,
+                        repo_name=_opt_repo,
                         token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
                         on_status=lambda lvl, msg: None,
                     )
-                    _raw_assets = getattr(opt, "assets", []) or []
+                    _raw_assets = opt.assets if isinstance(opt, _GRB) else (getattr(opt, "assets", []) or [])
                     selected_assets = [a for a in _raw_assets if getattr(a, "selected", False)]
                     if not selected_assets:
-                        direct_url = getattr(opt, "url", "")
+                        direct_url = "" if isinstance(opt, _GRB) else getattr(opt, "url", "")
                         if direct_url:
-                            from .....services.registry_service import _OtherAsset as _OA
-                            _fname = direct_url.split("/")[-1].split("?")[0] or f"{getattr(opt,'tag','release')}.zip"
-                            selected_assets = [_OA(name=_fname, url=direct_url)]
+                            from .....shared.data.content_base import ContentAsset as _CA
+                            _fname = direct_url.split("/")[-1].split("?")[0] or f"{_opt_tag or 'release'}.zip"
+                            selected_assets = [_CA(name=_fname, url=direct_url)]
                     self._host.log(f"[downloads] selected_assets count={len(selected_assets)}")
                     if not selected_assets:
                         raise RuntimeError("No assets selected for download")
@@ -236,6 +257,9 @@ def _save_descriptor_cache(item, dest: Path, current_game_id: str) -> None:
     try:
         mod = item.mod
         if item.category == "other":
+            if isinstance(mod, GithubReleaseBinary):
+                ContentSerializer().save_cache(dest, mod)
+                return
             _install_type = getattr(mod, "install_type", "ue4ss")
             _reg_owner = getattr(mod, "registry_owner", "")
             game_id = "" if (_install_type == "framework_binary" or not _reg_owner) else current_game_id

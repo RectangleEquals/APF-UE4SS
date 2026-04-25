@@ -289,11 +289,20 @@ class ModsSectionMixin:
             docs_svc.open_url(raw_url, title=title, show_sidebar=True, show_mode_toggle=False)
 
     def _other_row(self, item, index: int) -> MDBoxLayout:
-        opt_type = getattr(item, "type", "manual")
-        tag      = getattr(item, "tag", "")
-        owner    = getattr(item, "owner", "")
-        repo_    = getattr(item, "repo", "")
-        _hash    = getattr(item, "content_hash", "")
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB
+        if isinstance(item, _GRB):
+            _src  = item.source
+            opt_type = "github_release"
+            tag      = _src.tag if _src else ""
+            owner    = _src.repo.owner if _src else ""
+            repo_    = _src.repo.repo if _src else ""
+            _hash    = item.tags.content_hash if item.tags else ""
+        else:
+            opt_type = getattr(item, "type", "manual")
+            tag      = getattr(item, "tag", "")
+            owner    = getattr(item, "owner", "")
+            repo_    = getattr(item, "repo", "")
+            _hash    = getattr(item, "content_hash", "")
         if _hash:
             key = f"other:{_hash}"
         else:
@@ -337,8 +346,19 @@ class ModsSectionMixin:
             text=name_lbl, font_style="Body",
             size_hint_y=None, height=dp(24),
         ))
-        note = getattr(item, "note", "")
-        _assets = getattr(item, "assets", []) or []
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB
+        if isinstance(item, _GRB):
+            _src = item.source
+            if item.install_type == "framework_binary":
+                note = f"framework binaries  \u00b7  {_src.repo.full_name if _src else ''}"
+            elif _src and _src.is_prerelease:
+                note = f"experimental  \u00b7  {_src.repo.full_name}"
+            else:
+                note = f"stable  \u00b7  {_src.repo.full_name if _src else ''}"
+            _assets = item.assets or []
+        else:
+            note = getattr(item, "note", "")
+            _assets = getattr(item, "assets", []) or []
         _n_sel = sum(1 for a in _assets if getattr(a, "selected", False))
         if _assets and 0 < _n_sel < len(_assets):
             note = f"{note}   ({_n_sel}/{len(_assets)} assets)" if note else f"({_n_sel}/{len(_assets)} assets selected)"
@@ -348,7 +368,10 @@ class ModsSectionMixin:
                 size_hint_y=None, height=dp(18),
                 theme_text_color="Custom", text_color=COL_DIM,
             ))
-        if getattr(item, "has_duplicate_source", False):
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB
+        _has_dup = (item.tags.has_duplicate_source if isinstance(item, _GRB) and item.tags
+                    else getattr(item, "has_duplicate_source", False))
+        if _has_dup:
             info.add_widget(MDLabel(
                 text="duplicate source",
                 font_style="Label", role="small",
@@ -360,7 +383,7 @@ class ModsSectionMixin:
                       if w.collide_point(*t.pos) else None)
         header.add_widget(info)
 
-        _docs_path = getattr(item, "docs", "")
+        _docs_path = "" if isinstance(item, _GRB) else getattr(item, "docs", "")
         if _docs_path:
             _docs_owner = getattr(item, "owner", "")
             _docs_repo  = getattr(item, "repo",  "")
@@ -410,22 +433,37 @@ class ModsSectionMixin:
             padding=[dp(16), dp(6), dp(8), dp(8)], spacing=dp(4),
         )
 
-        install_type = getattr(item, "install_type", "ue4ss")
-        opt_type     = getattr(item, "type", "manual")
-        owner        = getattr(item, "owner", "")
-        repo_        = getattr(item, "repo", "")
-        tag          = getattr(item, "tag", "")
-        published_at = getattr(item, "published_at", "")
-        asset_name   = getattr(item, "asset_name", "")
-        changelog    = getattr(item, "changelog", "")
-        assets       = getattr(item, "assets", []) or []
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB
+        if isinstance(item, _GRB):
+            _src     = item.source
+            install_type = item.install_type
+            opt_type     = "github_release"
+            owner        = _src.repo.owner if _src else ""
+            repo_        = _src.repo.repo if _src else ""
+            tag          = _src.tag if _src else ""
+            published_at = _src.published_at if _src else ""
+            changelog    = _src.changelog if _src else ""
+            prerelease   = _src.is_prerelease if _src else False
+            assets       = item.assets or []
+            asset_name   = assets[0].name if assets else ""
+        else:
+            install_type = getattr(item, "install_type", "ue4ss")
+            opt_type     = getattr(item, "type", "manual")
+            owner        = getattr(item, "owner", "")
+            repo_        = getattr(item, "repo", "")
+            tag          = getattr(item, "tag", "")
+            published_at = getattr(item, "published_at", "")
+            asset_name   = getattr(item, "asset_name", "")
+            changelog    = getattr(item, "changelog", "")
+            prerelease   = getattr(item, "prerelease", False)
+            assets       = getattr(item, "assets", []) or []
 
         if install_type == "framework_binary":
             type_label = "Framework Binaries"
         elif opt_type == "manual":
             type_label = "Manual Installation"
         else:
-            type_label = "UE4SS experimental" if getattr(item, "prerelease", False) else "UE4SS stable"
+            type_label = "UE4SS experimental" if prerelease else "UE4SS stable"
 
         def _detail_row(key_text: str, val_text: str) -> MDBoxLayout:
             r = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8))
@@ -495,7 +533,7 @@ class ModsSectionMixin:
                     text=asset.name, font_style="Label", role="small",
                     size_hint=(1, 1),
                 ))
-                sz = getattr(asset, "size", 0) or 0
+                sz = getattr(asset, "size_bytes", None) or getattr(asset, "size", 0) or 0
                 if sz:
                     asset_row.add_widget(MDLabel(
                         text=_fmt_bytes(sz), font_style="Label", role="small",

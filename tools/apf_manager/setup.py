@@ -25,7 +25,7 @@ Output: build/APFManager/
         html_viewer/
         library/
         manifesto/
-        mods/
+        content/
         packager/
         sessions/
     custom_plugins/       (empty — user drops .apfplugin files here)
