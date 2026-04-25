@@ -505,17 +505,17 @@ def _apply_initial_selection(nodes: list[dict], initial_selected_content: Option
             if node.get("selectable"):
                 ntype = node.get("type")
                 if ntype == "mod":
-                    node["checked"] = node.get("mod_id", "") in sc_set
+                    mid = node.get("mod_id", "")
+                    node["checked"] = (f"mod:{mid}" in sc_set or f"framework_mod:{mid}" in sc_set)
                 elif ntype == "non_ap_mod":
-                    node["checked"] = node.get("folder", "") in sc_set
+                    node["checked"] = f"mod:{node.get('folder', '')}" in sc_set
                 elif ntype == "template":
-                    node["checked"] = node.get("path", "") in sc_set
+                    node["checked"] = f"template:{node.get('path', '')}" in sc_set
                 elif ntype == "ue4ss_option":
                     owner = node.get("owner", "")
-                    repo = node.get("repo", "")
-                    tag = node.get("tag", "")
-                    key = f"ue4ss:{owner}/{repo}:{tag}"
-                    node["checked"] = key in sc_set
+                    repo  = node.get("repo", "")
+                    tag   = node.get("tag", "")
+                    node["checked"] = f"ue4ss_option:{owner}/{repo}:{tag}" in sc_set
             if node.get("children"):
                 _walk(node["children"])
 

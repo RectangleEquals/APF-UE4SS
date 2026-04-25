@@ -13,14 +13,14 @@ import base64
 import json
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
 from ..shared.data.content_base import GitHubRepo, RegistrySource, ModComponents, DocInfo, ContentTags
 from ..shared.data.content_types import (
     RegistryDescriptor, APModDescriptor, FrameworkModDescriptor, ThirdPartyModDescriptor,
-    TemplateDescriptor, GithubReleaseBinary, ReleaseSource,
+    TemplateDescriptor, GithubReleaseBinary, ExternalUrlBinary, ManualBinary, ReleaseSource,
+    BinaryDescriptor,
 )
 from ..shared.data.content_filter import ContentFilter
 from ..utils.registry.viewer import RegistryViewer
@@ -30,35 +30,6 @@ if TYPE_CHECKING:
     from ....core.plugin_host import PluginHost
     from ..utils.registry.resolver import DiscoveredMod
     from ..utils.registry.cache import RegistryCache
-
-
-@dataclass
-class RegistryModEntry:
-    mod_id: str
-    name: str
-    owner: str
-    repo: str
-    folder: str
-    description: str = ""
-    readme_url: str = ""
-    registry: Optional[RegistryDescriptor] = None
-    ue4ss_info: Optional[dict] = None
-    templates_paths: list = field(default_factory=list)
-    components: list = field(default_factory=lambda: ["lua"])
-    bp_pak_files: list = field(default_factory=list)
-    bp_is_combined: bool = False
-    source_package_id: str = ""   # "{owner}/{repo}" slug for grouping related content
-    is_submodule_content: bool = False
-
-
-@dataclass
-class TemplateEntry:
-    owner: str
-    repo: str
-    game_id: str
-    path: str
-    has_conflict: bool = False
-    conflict_repos: list = field(default_factory=list)
 
 
 @dataclass
@@ -74,7 +45,7 @@ class DocEntry:
 
 @dataclass
 class FrameworkModCandidate:
-    entry: RegistryModEntry
+    entry: object
     score: int
     score_breakdown: dict
     in_chain: bool = True
@@ -85,53 +56,6 @@ class FrameworkModCandidate:
 class UE4SSInfo:
     options: list
     docs: Optional[str] = None
-
-
-@dataclass
-class _OtherAsset:
-    """A single downloadable asset within a GitHub release."""
-    name: str               # filename (e.g. "UE4SS_v3.0.1.zip")
-    url: str                # browser_download_url
-    size: int = 0           # bytes; 0 = unknown
-    selected: bool = False  # default: user must opt-in per asset
-
-
-@dataclass
-class _OtherEntry:
-    """Represents a bootstrap content item from ue4ss.json options or a GitHub release."""
-    name: str
-    note: str
-    type: str        # "github_release" | "external_url" | "manual"
-    owner: str       # For github_release: UE4SS repo owner (may be a fork)
-    repo: str        # For github_release: UE4SS repo name
-    tag: str         # For github_release: exact release tag
-    url: str         # For external_url / backwards-compat primary asset URL
-    install_type: str = "ue4ss"   # "ue4ss" | "framework_binary"
-    published_at: str = ""        # ISO date string from release
-    asset_name: str = ""          # primary asset filename (backwards compat)
-    changelog: str = ""           # first 2000 chars of release body
-    assets: list = field(default_factory=list)  # list[_OtherAsset] — full asset list
-    docs: str = ""               # relative path to documentation file in repo
-    registry_owner: str = ""     # owner of registry repo that provided this option
-    registry_repo:  str = ""     # repo of registry repo that provided this option
-    prerelease: bool = False     # True if this is a pre-release/experimental
-    content_hash: str = ""       # SHA-256 fingerprint for collision-proof expand keys
-    has_duplicate_source: bool = False  # True when another entry targets the same endpoint
-
-
-def _compute_other_entry_hash(entry: "_OtherEntry") -> str:
-    """Compute a short SHA-256 content hash for stable expand/collapse key generation."""
-    import hashlib
-    fingerprint = "|".join([
-        entry.owner or "",
-        entry.repo or "",
-        entry.tag or "",
-        entry.install_type or "",
-        entry.registry_owner or "",
-        entry.registry_repo or "",
-        entry.type or "",
-    ])
-    return hashlib.sha256(fingerprint.encode()).hexdigest()[:20]
 
 
 @dataclass
@@ -163,7 +87,7 @@ class RegistryService:
         self._resolver = None
 
         # In-memory state (invalidated on game change)
-        self._mods_cache: list[RegistryModEntry] = []
+        self._mods_cache: list = []
         self._mods_cache_game_id: str = ""
         self._staged: list[str] = []   # staged mod_ids
 
@@ -275,7 +199,10 @@ class RegistryService:
             # DUP = already in Content tab from a different source.
             # Use get_mods() which reflects actual selected_content state.
             current_game_id = self._get_game_id() or ""
-            existing_mod_ids: set = {m.mod_id for m in self.get_mods(current_game_id) if m.mod_id}
+            existing_mod_ids: set = {
+                getattr(m, "mod_id", "") for m in self.get_mods(current_game_id)
+                if getattr(m, "mod_id", "")
+            }
 
             def _finalize(selected_mods, raw_selected_ids=None):
                 ap_count     = sum(1 for m in selected_mods if m.mod_id)
@@ -381,7 +308,10 @@ class RegistryService:
 
             # DUP = already in Content tab from a different source.
             # Use get_mods() which reflects actual selected_content state.
-            existing_mod_ids: set = {m.mod_id for m in self.get_mods(current_game_id) if m.mod_id}
+            existing_mod_ids: set = {
+                getattr(m, "mod_id", "") for m in self.get_mods(current_game_id)
+                if getattr(m, "mod_id", "")
+            }
 
             # Build folder tree
             try:
@@ -464,7 +394,7 @@ class RegistryService:
     # Mod / template discovery
     # -----------------------------------------------------------------------
 
-    def get_mods(self, game_id: str) -> list[RegistryModEntry]:
+    def get_mods(self, game_id: str) -> list:
         """Return all mods from all registered registries, filtered by game_id."""
         with self._lock:
             if self._mods_cache and self._mods_cache_game_id == game_id:
@@ -477,10 +407,10 @@ class RegistryService:
             self._mods_cache_game_id = game_id
         return mods
 
-    def _load_mods(self, game_id: str) -> list[RegistryModEntry]:
+    def _load_mods(self, game_id: str) -> list:
         resolver = self._get_resolver()
         cache = self._get_cache()
-        results: list[RegistryModEntry] = []
+        results = []
 
         for entry in self.get_user_registries():
             try:
@@ -508,32 +438,16 @@ class RegistryService:
                         continue
                     if not ContentFilter.includes_non_ap_mod(sc, mod.folder):
                         continue
-                results.append(RegistryModEntry(
-                    mod_id=mod.mod_id,
-                    name=mod.manifest.get("name") or mod.folder.split("/")[-1],
-                    owner=mod.owner,
-                    repo=mod.repo,
-                    folder=mod.folder,
-                    description=mod.manifest.get("description", ""),
-                    readme_url=mod.readme_url,
-                    registry=entry,
-                    ue4ss_info=mod.ue4ss_info,
-                    templates_paths=mod.templates_paths,
-                    components=mod.components,
-                    bp_pak_files=mod.bp_pak_files,
-                    bp_is_combined=getattr(mod, "bp_is_combined", False),
-                    source_package_id=getattr(mod, "source_package_id", f"{mod.owner}/{mod.repo}"),
-                    is_submodule_content=getattr(mod, "is_submodule_content", False),
-                ))
+                results.append(self._to_content_descriptor(mod, entry))
 
         return results
 
-    def get_templates(self, game_id: str) -> list[TemplateEntry]:
-        """Return template entries aggregated across all registries for game_id."""
+    def get_templates(self, game_id: str) -> list:
+        """Return TemplateDescriptor list aggregated across all registries for game_id."""
         resolver = self._get_resolver()
         cache = self._get_cache()
-        # path → ["{owner}/{repo}", ...]
-        seen: dict[str, list[str]] = {}
+        # path → [(repos: list[str], entry: RegistryDescriptor)]
+        seen: dict[str, tuple[list[str], RegistryDescriptor]] = {}
 
         for entry in self.get_user_registries():
             try:
@@ -549,26 +463,19 @@ class RegistryService:
                     if not ContentFilter.includes_template(entry.selected_content, tpath):
                         continue
                     repo_key = f"{mod.owner}/{mod.repo}"
-                    existing = seen.setdefault(tpath, [])
-                    if repo_key not in existing:
-                        existing.append(repo_key)
+                    if tpath not in seen:
+                        seen[tpath] = ([], entry)
+                    existing_repos, _ = seen[tpath]
+                    if repo_key not in existing_repos:
+                        existing_repos.append(repo_key)
 
-        results: list[TemplateEntry] = []
-        for tpath, repos in seen.items():
-            game_dir = tpath.split("/")[-1] if "/" in tpath else tpath
-            first_owner, first_repo = repos[0].split("/", 1)
-            results.append(TemplateEntry(
-                owner=first_owner,
-                repo=first_repo,
-                game_id=game_dir,
-                path=tpath,
-                has_conflict=len(repos) > 1,
-                conflict_repos=repos,
-            ))
+        results = []
+        for tpath, (repos, reg_entry) in seen.items():
+            results.append(_to_template_descriptor(tpath, repos, reg_entry))
         return results
 
     def get_other_content(self, game_id: str) -> list:
-        """Return _OtherEntry list for UE4SS options from ue4ss.json in game registries.
+        """Return typed BinaryDescriptor list for UE4SS options from ue4ss.json in game registries.
 
         Traverses registries directly (not through get_mods) so that UE4SS options
         are gated only by their own ue4ss_option: keys — independent of whether the
@@ -590,49 +497,47 @@ class RegistryService:
                     continue
                 for opt in mod.ue4ss_info.get("options", []):
                     raw_repo = opt.get("repo", "")
-                    owner, repo = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
                     tag = opt.get("tag", "")
                     if not ContentFilter.includes_ue4ss(entry.selected_content, raw_repo, tag):
                         continue
-                    results.append(_OtherEntry(
-                        name           = opt.get("note", "UE4SS"),
-                        note           = opt.get("note", ""),
-                        type           = opt.get("type", "manual"),
-                        owner          = owner,
-                        repo           = repo,
-                        tag            = tag,
-                        url            = opt.get("url", ""),
-                        install_type   = "ue4ss",
-                        docs           = opt.get("docs", ""),
-                        registry_owner = entry.repo.owner,
-                        registry_repo  = entry.repo.repo,
-                    ))
+                    results.append(_to_binary_descriptor(opt, entry))
         return results
 
     def get_framework_candidates(self, game_id: str) -> list[FrameworkModCandidate]:
         """Return scored framework mod candidates from all registered registries."""
-        mods = self.get_mods(game_id)
         from ..utils.registry.resolver import _is_framework_mod_id
-        fw_mods = [m for m in mods if _is_framework_mod_id(m.mod_id)]
-        if not fw_mods:
+        resolver = self._get_resolver()
+        cache = self._get_cache()
+
+        fw_pairs: list[tuple] = []  # (DiscoveredMod, RegistryDescriptor)
+        for entry in self.get_user_registries():
+            try:
+                discovered = resolver.traverse(entry.url, cache)
+            except Exception:
+                continue
+            for mod in discovered:
+                if _is_framework_mod_id(getattr(mod, "mod_id", "")):
+                    fw_pairs.append((mod, entry))
+
+        if not fw_pairs:
             return []
 
-        resolver = self._get_resolver()
         scored = resolver.score_framework_candidates(
-            [_to_discovered(m) for m in fw_mods],
-            game_id,
+            [mod for mod, _ in fw_pairs], game_id,
         )
-        id_to_entry = {m.mod_id: m for m in fw_mods}
+        disc_by_id = {mod.mod_id: (mod, entry) for mod, entry in fw_pairs}
         return [
             FrameworkModCandidate(
-                entry=id_to_entry[disc.mod_id],
+                entry=self._to_content_descriptor(
+                    disc_by_id[disc.mod_id][0], disc_by_id[disc.mod_id][1]
+                ),
                 score=score,
                 score_breakdown=bd,
                 in_chain=True,
                 ue4ss_info=disc.ue4ss_info,
             )
             for score, bd, disc in scored
-            if disc.mod_id in id_to_entry
+            if disc.mod_id in disc_by_id
         ]
 
     def get_ue4ss_info(self, game_id: str) -> Optional[UE4SSInfo]:
@@ -643,13 +548,22 @@ class RegistryService:
         Callers that need a bootstrap path should use UpdatesService.get_ue4ss_releases_for_content().
         """
         from ..utils.registry.resolver import _is_framework_mod_id
-        for entry in self.get_mods(game_id):
-            if entry.ue4ss_info and _is_framework_mod_id(entry.mod_id):
-                info = entry.ue4ss_info
-                return UE4SSInfo(
-                    options=info.get("options", []),
-                    docs=info.get("docs"),
-                )
+        resolver = self._get_resolver()
+        cache = self._get_cache()
+        for entry in self.get_user_registries():
+            if game_id and entry.game_id and entry.game_id.lower() != game_id.lower():
+                continue
+            try:
+                discovered = resolver.traverse(entry.url, cache)
+            except Exception:
+                continue
+            for mod in discovered:
+                if mod.ue4ss_info and _is_framework_mod_id(getattr(mod, "mod_id", "")):
+                    info = mod.ue4ss_info
+                    return UE4SSInfo(
+                        options=info.get("options", []),
+                        docs=info.get("docs"),
+                    )
         return None
 
     # -----------------------------------------------------------------------
@@ -665,7 +579,7 @@ class RegistryService:
         with self._lock:
             self._staged = [s for s in self._staged if s != mod_id]
 
-    def get_staged(self) -> list[RegistryModEntry]:
+    def get_staged(self) -> list:
         game_id = self._get_game_id() or ""
         all_mods = self.get_mods(game_id)
         id_to_mod = {m.mod_id: m for m in all_mods}
@@ -725,15 +639,20 @@ class RegistryService:
     # Docs
     # -----------------------------------------------------------------------
 
-    def get_mod_docs(self, entry: RegistryModEntry) -> list[DocEntry]:
+    def get_mod_docs(self, entry) -> list[DocEntry]:
         docs = []
-        if entry.readme_url:
+        readme_url = entry.docs.readme_url if getattr(entry, "docs", None) else ""
+        if readme_url:
+            source = getattr(entry, "source", None)
+            owner = source.repo.owner if source else ""
+            repo = source.repo.repo if source else ""
+            folder = source.folder if source else ""
             docs.append(DocEntry(
-                owner=entry.owner,
-                repo=entry.repo,
+                owner=owner,
+                repo=repo,
                 ref="HEAD",
-                path=f"{entry.folder}/README.md",
-                raw_url=entry.readme_url,
+                path=f"{folder}/README.md",
+                raw_url=readme_url,
                 title=f"{entry.name} — README",
                 doc_type="mod",
             ))
@@ -1034,25 +953,51 @@ def _build_sc_from_viewer_result(selected_mods, raw_selected_ids) -> Optional[li
     return sc
 
 
-def _to_discovered(entry: RegistryModEntry) -> "DiscoveredMod":
-    """Convert a RegistryModEntry back to a DiscoveredMod for scoring."""
-    from ..utils.registry.resolver import DiscoveredMod
-    return DiscoveredMod(
-        owner=entry.owner,
-        repo=entry.repo,
-        folder=entry.folder,
-        manifest={
-            "mod_id": entry.mod_id,
-            "name": entry.name,
-            "description": entry.description,
-        },
-        mod_id=entry.mod_id,
-        readme_url=entry.readme_url,
-        ue4ss_info=entry.ue4ss_info,
-        templates_paths=entry.templates_paths,
-        components=entry.components,
-        bp_pak_files=entry.bp_pak_files,
+def _to_template_descriptor(
+    tpath: str, repos: list, entry: RegistryDescriptor
+) -> TemplateDescriptor:
+    """Build a TemplateDescriptor from a template path, contributing repo list, and registry entry."""
+    first_repo = GitHubRepo.from_full_name(repos[0]) if repos else entry.repo
+    conflict_sources = [GitHubRepo.from_full_name(r) for r in repos[1:]]
+    game_dir = tpath.split("/")[-1] if "/" in tpath else tpath
+    return TemplateDescriptor(
+        name=game_dir,
+        game_id=game_dir,
+        template_path=tpath,
+        source=RegistrySource(repo=first_repo, registry_url=entry.url, folder=tpath),
+        tags=ContentTags(has_conflict=len(repos) > 1),
+        conflict_sources=conflict_sources,
     )
+
+
+def _to_binary_descriptor(opt: dict, entry: RegistryDescriptor) -> BinaryDescriptor:
+    """Build a typed BinaryDescriptor from a ue4ss.json option dict and its registry entry."""
+    import hashlib
+    otype = opt.get("type", "manual")
+    raw_repo = opt.get("repo", "")
+    tag = opt.get("tag", "")
+    owner, repo_name = raw_repo.split("/", 1) if "/" in raw_repo else ("", raw_repo)
+    name = opt.get("note", "UE4SS")
+    install_type = opt.get("install_type", "ue4ss")
+
+    if otype == "github_release":
+        fp = "|".join([owner, repo_name, tag, install_type, entry.repo.full_name, "github_release"])
+        content_hash = hashlib.sha256(fp.encode()).hexdigest()[:20]
+        return GithubReleaseBinary(
+            name=name,
+            install_type=install_type,
+            source=ReleaseSource(
+                repo=GitHubRepo(owner=owner, repo=repo_name),
+                tag=tag,
+                is_prerelease=opt.get("prerelease", False),
+            ),
+            registry_source=RegistrySource(repo=entry.repo, registry_url=entry.url, folder=""),
+            tags=ContentTags(content_hash=content_hash),
+        )
+    elif otype == "external_url":
+        return ExternalUrlBinary(name=name, install_type=install_type, url=opt.get("url", ""), note=name)
+    else:
+        return ManualBinary(name=name, install_type=install_type, note=name)
 
 
 def _ui(fn: Callable) -> None:

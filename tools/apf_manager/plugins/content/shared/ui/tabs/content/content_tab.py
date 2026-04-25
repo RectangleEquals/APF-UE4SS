@@ -189,7 +189,10 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
                 from collections import defaultdict as _dd
                 pkg_groups: dict = _dd(list)
                 for mod in mods:
-                    pkg_id = getattr(mod, "source_package_id", "") or f"{mod.owner}/{mod.repo}"
+                    _src = getattr(mod, "source", None)
+                    pkg_id = (getattr(mod, "source_package_id", "")
+                              or (_src.source_package_id if _src else "")
+                              or f"{getattr(mod,'owner','')+'/'+getattr(mod,'repo','')}")
                     pkg_groups[pkg_id].append(mod)
 
                 row_idx = 0
@@ -231,7 +234,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
         def _bg():
             try:
-                from .....services.registry_service import _OtherEntry, _compute_other_entry_hash
+                from .....shared.data.content_types import GithubReleaseBinary as _GRB, ManualBinary as _MB
                 registry_svc = self._host.get_service("registry")
                 updates_svc = (self._host.get_service("updates")
                                if self._host.has_service("updates") else None)
@@ -245,59 +248,30 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
                 sep = " \u2022 "
                 enriched_custom = []
                 for entry in registry_ue4ss:
-                    if entry.type == "github_release" and entry.owner and entry.repo and entry.tag:
+                    if isinstance(entry, _GRB) and entry.source and entry.source.repo.owner and entry.source.repo.repo and entry.source.tag:
                         fork_releases = (
-                            updates_svc.get_ue4ss_releases_for_content(entry.owner, entry.repo)
+                            updates_svc.get_ue4ss_releases_for_content(
+                                entry.source.repo.owner, entry.source.repo.repo
+                            )
                             if updates_svc else []
                         ) or []
-                        matched = next((r for r in fork_releases if r.tag == entry.tag), None)
-                        if matched:
-                            reg_pfx = (f"{entry.registry_owner}/{entry.registry_repo}"
-                                       if entry.registry_owner else "")
-                            fork_pfx = f"{entry.owner}/{entry.repo}"
-                            subtitle = f"{reg_pfx}{sep}{fork_pfx}" if reg_pfx else fork_pfx
-                            new_entry = _OtherEntry(
-                                name           = f"{entry.repo}{sep}{entry.note}",
-                                note           = subtitle,
-                                type           = entry.type,
-                                owner          = entry.owner,
-                                repo           = entry.repo,
-                                tag            = entry.tag,
-                                url            = matched.url,
-                                install_type   = entry.install_type,
-                                published_at   = matched.published_at,
-                                asset_name     = matched.asset_name,
-                                changelog      = matched.changelog,
-                                assets         = matched.assets,
-                                docs           = entry.docs,
-                                registry_owner = entry.registry_owner,
-                                registry_repo  = entry.registry_repo,
-                                prerelease     = matched.prerelease,
-                            )
-                            new_entry.content_hash = _compute_other_entry_hash(new_entry)
-                            enriched_custom.append(new_entry)
-                        else:
-                            entry.content_hash = _compute_other_entry_hash(entry)
-                            enriched_custom.append(entry)
-                    elif entry.type == "manual":
-                        reg_pfx = (f"{entry.registry_owner}/{entry.registry_repo}"
-                                   if entry.registry_owner else "")
-                        subtitle = f"{reg_pfx}{sep}MANUAL" if reg_pfx else "MANUAL"
-                        new_entry = _OtherEntry(
-                            name           = f"UE4SS{sep}{entry.note}",
-                            note           = subtitle,
-                            type           = entry.type,
-                            owner          = entry.owner,
-                            repo           = entry.repo,
-                            tag            = entry.tag,
-                            url            = entry.url,
-                            install_type   = entry.install_type,
-                            docs           = entry.docs,
-                            registry_owner = entry.registry_owner,
-                            registry_repo  = entry.registry_repo,
+                        matched = next(
+                            (r for r in fork_releases
+                             if isinstance(r, _GRB) and r.source and r.source.tag == entry.source.tag),
+                            None
                         )
-                        new_entry.content_hash = _compute_other_entry_hash(new_entry)
-                        enriched_custom.append(new_entry)
+                        if matched:
+                            # Enrich in place: copy release data from matched GithubReleaseBinary
+                            entry.name = f"{entry.source.repo.repo}{sep}{entry.name}"
+                            if entry.source and matched.source:
+                                entry.source.published_at = matched.source.published_at
+                                entry.source.changelog = matched.source.changelog
+                                entry.source.is_prerelease = matched.source.is_prerelease
+                            entry.assets = list(matched.assets)
+                        enriched_custom.append(entry)
+                    elif isinstance(entry, _MB):
+                        entry.name = f"UE4SS{sep}{entry.note}" if entry.note else entry.name
+                        enriched_custom.append(entry)
                     else:
                         enriched_custom.append(entry)
 
@@ -404,24 +378,32 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         self._btn_queue.disabled = not bool(self._checked)
 
     def _on_queue_pressed(self) -> None:
+        from ....shared.data.content_types import GithubReleaseBinary as _GRB
         checked_mods = [
             m for m in self._all_mods
-            if f"mod:{getattr(m, 'folder', getattr(m, 'mod_id', ''))}" in self._checked
+            if f"mod:{getattr(m, 'folder_name', getattr(m, 'folder', getattr(m, 'mod_id', '')))}" in self._checked
         ]
         checked_templates = [
             t for i, t in enumerate(self._all_templates)
-            if f"tmpl:{getattr(t, 'path', str(i))}" in self._checked
+            if f"tmpl:{getattr(t, 'template_path', getattr(t, 'path', str(i)))}" in self._checked
         ]
         checked_other = []
         for i, item in enumerate(self._all_other):
-            if getattr(item, "type", "manual") != "github_release":
-                continue
-            _hash = getattr(item, "content_hash", "")
-            _key = (f"other:{_hash}" if _hash else
-                    f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
+            if isinstance(item, _GRB):
+                _hash = item.tags.content_hash if item.tags else ""
+                _src = item.source
+                _key = (f"other:{_hash}" if _hash else
+                        f"other:{_src.repo.owner if _src else ''}+{_src.repo.repo if _src else ''}/{_src.tag if _src else item.name}")
+            else:
+                if getattr(item, "type", "manual") != "github_release":
+                    continue
+                _hash = getattr(item, "content_hash", "")
+                _key = (f"other:{_hash}" if _hash else
+                        f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
             if _key not in self._checked:
                 continue
-            if not any(getattr(a, "selected", False) for a in (getattr(item, "assets", []) or [{"selected": True}])):
+            _assets = item.assets if isinstance(item, _GRB) else (getattr(item, "assets", []) or [])
+            if _assets and not any(getattr(a, "selected", False) for a in _assets):
                 continue
             checked_other.append(item)
 
@@ -495,16 +477,23 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         )
         if self._on_queue:
             self._on_queue(items)
+        from ....shared.data.content_types import GithubReleaseBinary as _GRB
         for mod in mods:
-            folder = getattr(mod, "folder", getattr(mod, "mod_id", ""))
+            folder = getattr(mod, "folder_name", getattr(mod, "folder", getattr(mod, "mod_id", "")))
             self._checked.discard(f"mod:{folder}")
         for i, tmpl in enumerate(templates):
-            path = getattr(tmpl, "path", str(i))
-            self._checked.discard(f"tmpl:{path}")
+            tpath = getattr(tmpl, "template_path", getattr(tmpl, "path", str(i)))
+            self._checked.discard(f"tmpl:{tpath}")
         for i, item in enumerate(other):
-            _hash = getattr(item, "content_hash", "")
-            key = (f"other:{_hash}" if _hash else
-                   f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
+            if isinstance(item, _GRB):
+                _hash = item.tags.content_hash if item.tags else ""
+                _src = item.source
+                key = (f"other:{_hash}" if _hash else
+                       f"other:{_src.repo.owner if _src else ''}+{_src.repo.repo if _src else ''}/{_src.tag if _src else item.name}")
+            else:
+                _hash = getattr(item, "content_hash", "")
+                key = (f"other:{_hash}" if _hash else
+                       f"other:{getattr(item,'owner','')}+{getattr(item,'repo','')}/{getattr(item,'tag','') or getattr(item,'name',str(i))}")
             self._checked.discard(key)
         self._sync_queue_btn()
         self._do_refresh()
@@ -519,17 +508,25 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
 def _dedup_other_items(items: list) -> list:
     """Deduplicate Other items by endpoint (owner:repo:tag:install_type). First occurrence wins."""
+    from .....shared.data.content_types import GithubReleaseBinary as _GRB
     seen_endpoints: dict = {}
     result = []
     for item in items:
-        ep = "{}:{}:{}:{}".format(
-            getattr(item, "owner", ""),
-            getattr(item, "repo", ""),
-            getattr(item, "tag", ""),
-            getattr(item, "install_type", ""),
-        )
+        if isinstance(item, _GRB) and item.source:
+            _o = item.source.repo.owner
+            _r = item.source.repo.repo
+            _t = item.source.tag
+        else:
+            _o = getattr(item, "owner", "")
+            _r = getattr(item, "repo",  "")
+            _t = getattr(item, "tag",   "")
+        ep = f"{_o}:{_r}:{_t}:{getattr(item, 'install_type', '')}"
         if ep in seen_endpoints:
-            seen_endpoints[ep].has_duplicate_source = True
+            existing = seen_endpoints[ep]
+            if isinstance(existing, _GRB) and existing.tags:
+                existing.tags.has_duplicate_source = True
+            elif hasattr(existing, "has_duplicate_source"):
+                existing.has_duplicate_source = True
         else:
             seen_endpoints[ep] = item
             result.append(item)

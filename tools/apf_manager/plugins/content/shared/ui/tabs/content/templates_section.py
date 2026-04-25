@@ -71,7 +71,8 @@ class TemplatesSectionMixin:
         return row
 
     def _template_row(self, tmpl, index: int) -> MDBoxLayout:
-        key = f"tmpl:{getattr(tmpl, 'path', str(index))}"
+        tpath = getattr(tmpl, "template_path", getattr(tmpl, "path", str(index)))
+        key = f"tmpl:{tpath}"
         bg = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
         expanded = key in self._expanded
 
@@ -90,16 +91,20 @@ class TemplatesSectionMixin:
         cb.bind(active=lambda inst, val, k=key: self._on_check(k, val))
         header.add_widget(cb)
 
-        has_conflict = getattr(tmpl, "has_conflict", False)
+        _tags = getattr(tmpl, "tags", None)
+        has_conflict = (_tags.has_conflict if _tags is not None else getattr(tmpl, "has_conflict", False))
         if has_conflict:
             header.add_widget(MDIcon(
                 icon="alert-circle", size_hint=(None, 1), width=dp(20),
                 theme_icon_color="Custom", icon_color=COL_WARN,
             ))
 
-        path = getattr(tmpl, "path", "")
-        label = path.rsplit("/", 1)[-1] if path else "Template"
-        registry_lbl = f"{tmpl.owner}/{tmpl.repo}" if hasattr(tmpl, "owner") else ""
+        label = tpath.rsplit("/", 1)[-1] if tpath else "Template"
+        _src = getattr(tmpl, "source", None)
+        if _src is not None:
+            registry_lbl = _src.repo.full_name if _src.repo else ""
+        else:
+            registry_lbl = f"{tmpl.owner}/{tmpl.repo}" if hasattr(tmpl, "owner") else ""
 
         info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
         info.add_widget(MDLabel(

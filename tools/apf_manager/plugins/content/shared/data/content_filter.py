@@ -16,26 +16,25 @@ class ContentFilter:
     def includes_ap_mod(selected_content: Optional[list], mod_id: str) -> bool:
         if selected_content is None:
             return True
-        return mod_id in selected_content
+        return f"mod:{mod_id}" in selected_content or f"framework_mod:{mod_id}" in selected_content
 
     @staticmethod
     def includes_non_ap_mod(selected_content: Optional[list], folder_name: str) -> bool:
         if selected_content is None:
             return True
-        return folder_name in selected_content
+        return f"mod:{folder_name}" in selected_content
 
     @staticmethod
     def includes_template(selected_content: Optional[list], template_path: str) -> bool:
         if selected_content is None:
             return True
-        return template_path in selected_content
+        return f"template:{template_path}" in selected_content
 
     @staticmethod
     def includes_ue4ss(selected_content: Optional[list], repo_full_name: str, tag: str) -> bool:
         if selected_content is None:
             return True
-        key = f"ue4ss:{repo_full_name}:{tag}"
-        return key in selected_content
+        return f"ue4ss_option:{repo_full_name}:{tag}" in selected_content
 
     @staticmethod
     def to_viewer_set(selected_content: Optional[list]) -> Optional[set]:

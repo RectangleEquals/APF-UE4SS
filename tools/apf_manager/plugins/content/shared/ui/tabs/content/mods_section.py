@@ -31,13 +31,15 @@ class ModsSectionMixin:
             orientation="horizontal", size_hint_y=None, height=dp(44),
             padding=[dp(8), dp(4)], spacing=dp(8),
         )
-        all_checked = all(f"mod:{getattr(m,'folder',m.mod_id)}" in self._checked for m in pkg_mods)
+        def _mod_key(m):
+            return f"mod:{getattr(m,'folder_name',getattr(m,'folder',getattr(m,'mod_id','')))}"
+        all_checked = all(_mod_key(m) in self._checked for m in pkg_mods)
         cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
                         pos_hint={"center_y": 0.5})
         cb.active = all_checked
         def _on_pkg_check(inst, val, mods=pkg_mods):
             for m in mods:
-                k = f"mod:{getattr(m,'folder',m.mod_id)}"
+                k = _mod_key(m)
                 if val:
                     self._checked.add(k)
                 else:
@@ -81,9 +83,10 @@ class ModsSectionMixin:
         Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
     def _mod_row(self, mod, index: int, indent: bool = False) -> MDBoxLayout:
-        folder = getattr(mod, "folder", getattr(mod, "mod_id", str(index)))
+        folder = getattr(mod, "folder_name", getattr(mod, "folder", getattr(mod, "mod_id", str(index))))
         key = f"mod:{folder}"
-        components = getattr(mod, "components", ["lua"])
+        _comp_raw = getattr(mod, "components", None)
+        components = _comp_raw.types if hasattr(_comp_raw, "types") else (_comp_raw if isinstance(_comp_raw, list) else ["lua"])
         bg = _BG_ROW_EVEN if index % 2 == 0 else _BG_ROW_ODD
         expanded = key in self._expanded
 
