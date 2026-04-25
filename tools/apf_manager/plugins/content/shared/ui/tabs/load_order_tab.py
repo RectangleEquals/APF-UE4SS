@@ -34,16 +34,59 @@ if TYPE_CHECKING:
     from ......core.ue4ss import UE4SSResult
 
 
-def _mod_dep_status(mod, mod_by_id: dict, detection) -> str:
-    """Return 'error', 'warn', or 'ok' based on manifest dependency checks."""
-    for dep_str in mod.depends:
+def _get_dep_info(mod, mod_by_id: dict) -> tuple:
+    """Return (status, label) — status is 'error', 'warn', or 'ok'."""
+    missing, incompat = [], []
+    for dep_str in (getattr(mod, "depends", None) or []):
         dep_id = dep_str.split(" ")[0].strip()
         if dep_id not in mod_by_id:
-            return "error"
-    for incompat_id in mod.incompatible:
-        if incompat_id in mod_by_id:
-            return "error"
-    return "ok"
+            short = dep_id.split(".")[-1] if "." in dep_id else dep_id
+            missing.append(short)
+    for dep_str in (getattr(mod, "incompatible", None) or []):
+        dep_id = dep_str.split(" ")[0].strip()
+        if dep_id in mod_by_id:
+            short = dep_id.split(".")[-1] if "." in dep_id else dep_id
+            incompat.append(short)
+    if missing:
+        return "error", f"Missing: {', '.join(missing)}"
+    if incompat:
+        return "error", f"Conflicts: {', '.join(incompat)}"
+    return "ok", ""
+
+
+def _topo_sort_ap_mods(ap_mods: list, id_to_folder: dict) -> list:
+    """Topological sort: framework first, then other AP mods in dependency order."""
+    from ....services.mod_service import _FRAMEWORK_MOD_RE
+    fw   = [m for m in ap_mods if m.mod_id and _FRAMEWORK_MOD_RE.match(m.mod_id)]
+    rest = [m for m in ap_mods if m not in fw]
+
+    folder_deps: dict = {}
+    for m in rest:
+        deps: set = set()
+        for dep_str in (getattr(m, "depends", None) or []):
+            dep_id = dep_str.split(" ")[0].strip()
+            df = id_to_folder.get(dep_id)
+            if df:
+                deps.add(df)
+        folder_deps[m.folder_name] = deps
+
+    resolved: set = {m.folder_name for m in fw}
+    result   = list(fw)
+    remaining = list(rest)
+
+    for _ in range(len(rest) + 1):
+        if not remaining:
+            break
+        for mod in list(remaining):
+            if folder_deps[mod.folder_name].issubset(resolved):
+                result.append(mod)
+                resolved.add(mod.folder_name)
+                remaining.remove(mod)
+                break
+        else:
+            result.extend(remaining)
+            break
+    return result
 
 _ROW_BG_NORMAL   = (0.14, 0.14, 0.14, 1)
 _ROW_BG_WARN     = (0.22, 0.18, 0.08, 1)
@@ -100,6 +143,8 @@ class _ModRow(MDBoxLayout):
         on_move_up,
         on_move_down,
         is_keybinds: bool = False,
+        install_record=None,
+        dep_label: str = "",
         **kwargs,
     ):
         super().__init__(
@@ -209,7 +254,7 @@ class _ModRow(MDBoxLayout):
                 theme_icon_color="Custom", icon_color=(0.85, 0.60, 0.15, 1),
             ))
 
-        # Name + optional "Manual" sub-label stacked vertically
+        # Name + optional sub-labels stacked vertically
         name_col = MDBoxLayout(orientation="vertical", size_hint=(1, 1))
         name_col.add_widget(MDLabel(
             text=mod.display_name,
@@ -233,12 +278,27 @@ class _ModRow(MDBoxLayout):
                 theme_text_color="Custom",
                 text_color=(0.85, 0.60, 0.15, 0.75),
             ))
+        if dep_label:
+            dep_color = (1.0, 0.35, 0.35, 1) if status == "error" else (0.9, 0.65, 0.1, 1)
+            name_col.add_widget(MDLabel(
+                text=dep_label,
+                font_style="Label",
+                role="small",
+                size_hint=(1, None),
+                height=dp(14),
+                halign="left",
+                valign="middle",
+                theme_text_color="Custom",
+                text_color=dep_color,
+            ))
         name_box.add_widget(name_col)
         self.add_widget(name_box)
 
-        # Column 4: Version
+        # Column 4: Version (prefer InstallRecord, fall back to ModInfo)
+        version = (install_record.version if install_record and install_record.version
+                   else getattr(mod, "version", ""))
         self.add_widget(MDLabel(
-            text=f"v{mod.version}" if mod.version else "",
+            text=f"v{version}" if version else "",
             font_style="Label",
             role="small",
             size_hint=(None, 1),
@@ -315,6 +375,11 @@ class LoadOrderTab(MDBoxLayout):
         self._show_all_switch.bind(active=lambda inst, val: self._on_show_all(val))
         toolbar.add_widget(self._show_all_switch)
         toolbar.add_widget(TipIconButton(
+            icon="sort",
+            tooltip_text="Fix load order — sort by dependency constraints",
+            on_release=lambda *_: self._fix_order(),
+        ))
+        toolbar.add_widget(TipIconButton(
             icon="refresh",
             tooltip_text="Rescan mods",
             on_release=lambda *_: self._on_rescan(),
@@ -373,7 +438,7 @@ class LoadOrderTab(MDBoxLayout):
         mod_by_id = {m.mod_id: m for m in mods_svc.scan() if m.mod_id}
         return sum(
             1 for row in self._rows
-            if _mod_dep_status(row._mod, mod_by_id, self._detection) == "error"
+            if _get_dep_info(row._mod, mod_by_id)[0] == "error"
         )
 
     def _do_refresh(self) -> None:
@@ -436,8 +501,22 @@ class LoadOrderTab(MDBoxLayout):
 
         mod_by_id = {m.mod_id: m for m in all_mods if m.mod_id}
 
+        # Load install_map for version numbers
+        install_map: dict = {}
+        if self._profile:
+            game_id = (getattr(self._profile, "game_id", None)
+                       or getattr(self._profile, "name", ""))
+            if game_id:
+                from ....shared.data.install_state import InstallStateManager
+                from ....shared.data.pipeline_state import InstallRecord
+                install_map = {
+                    d.get("folder_name", ""): InstallRecord.from_dict(d)
+                    for d in InstallStateManager(game_id).get_all()
+                    if d.get("folder_name")
+                }
+
         for mod in visible:
-            status = _mod_dep_status(mod, mod_by_id, self._detection)
+            status, dep_label = _get_dep_info(mod, mod_by_id)
 
             enabled = True
             if self._mods_txt:
@@ -451,6 +530,8 @@ class LoadOrderTab(MDBoxLayout):
                 on_toggle=self._on_toggle,
                 on_move_up=self._on_move_up,
                 on_move_down=self._on_move_down,
+                install_record=install_map.get(mod.folder_name),
+                dep_label=dep_label,
             )
             self._rows.append(row)
             self._list_layout.add_widget(row)
@@ -486,6 +567,49 @@ class LoadOrderTab(MDBoxLayout):
         svc = self._deploy_svc
         if svc:
             svc.reload()
+        self._do_refresh()
+
+    def _fix_order(self) -> None:
+        """Sort AP mods in dependency order (framework first, then by dep graph)."""
+        svc = self._deploy_svc
+        if not svc or not self._rows:
+            return
+
+        ap_mods  = [r._mod for r in self._rows if r._mod.is_ap_mod]
+        non_ap   = [r._mod for r in self._rows if not r._mod.is_ap_mod]
+        id_to_folder = {m.mod_id: m.folder_name for m in ap_mods if m.mod_id}
+
+        sorted_ap = _topo_sort_ap_mods(ap_mods, id_to_folder)
+
+        # Rebuild displayed order: non-AP slots stay, AP slots filled in dep order
+        new_mods: list = []
+        ap_it = iter(sorted_ap)
+        for r in self._rows:
+            if r._mod.is_ap_mod:
+                try:
+                    new_mods.append(next(ap_it))
+                except StopIteration:
+                    break
+            else:
+                new_mods.append(r._mod)
+
+        displayed_set = {r._mod.folder_name for r in self._rows}
+        new_names = [m.folder_name for m in new_mods]
+        full_order = svc.get_load_order()
+        new_full: list[str] = []
+        di = 0
+        for name in full_order:
+            if name in displayed_set:
+                if di < len(new_names):
+                    new_full.append(new_names[di])
+                    di += 1
+            else:
+                new_full.append(name)
+        while di < len(new_names):
+            new_full.append(new_names[di])
+            di += 1
+
+        svc.reorder(new_full)
         self._do_refresh()
 
     def _on_toggle(self, mod: "ModInfo", enabled: bool) -> None:
