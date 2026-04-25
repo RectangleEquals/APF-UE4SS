@@ -327,17 +327,15 @@ class DeployService:
         """Return {affected_mods: list[InstallRecord], template_dirs_removed: list[str]}."""
         from ..shared.data.install_state import InstallStateManager
         from ..shared.data.pipeline_state import InstallRecord as _IR
+        from ..utils.dependency_resolver import resolve_uninstall_cascade
         if not self._profile:
             return {"affected_mods": [], "template_dirs_removed": []}
 
         all_records = [_IR.from_dict(d) for d in InstallStateManager(self._profile.game_id).get_all()]
-        affected: list = []
-        template_dirs: list[str] = []
+        affected = resolve_uninstall_cascade(record, all_records)
 
+        template_dirs: list[str] = []
         if record.content_type == "framework_mod":
-            for r in all_records:
-                if r.folder_name != record.folder_name and r.capabilities_includes:
-                    affected.append(r)
             mods_svc = self._host.get_service("mods")
             if mods_svc:
                 fw_dir = mods_svc.get_framework_mod_dir()
@@ -345,10 +343,6 @@ class DeployService:
                     templates_root = fw_dir / "Templates"
                     if templates_root.is_dir():
                         template_dirs = [str(templates_root)]
-        elif record.mod_id:
-            for r in all_records:
-                if r.folder_name != record.folder_name and record.mod_id in " ".join(r.capabilities_includes):
-                    affected.append(r)
 
         return {"affected_mods": affected, "template_dirs_removed": template_dirs}
 

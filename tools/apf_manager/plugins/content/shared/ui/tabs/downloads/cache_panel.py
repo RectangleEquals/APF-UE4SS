@@ -164,7 +164,40 @@ class CachePanelMixin:
             if warnings:
                 self._show_install_warn(errors, warnings, allow_proceed=True, items=items)
                 return
-        self._do_install(items)
+        self._do_install(self._sort_for_install(items))
+
+    def _sort_for_install(self, items: list) -> list:
+        """Sort cache items in dependency-correct install order via resolve_install_order."""
+        try:
+            from .....utils.dependency_resolver import resolve_install_order
+            from .....shared.data.pipeline_state import InstallRecord
+
+            staged = [ci.content for ci in items]
+            available: dict = {}
+            installed: dict = {}
+            registry_svc = self._host.get_service("registry")
+            if registry_svc and self._game_id:
+                for m in registry_svc.get_mods(self._game_id):
+                    mid = getattr(m, "mod_id", "")
+                    if mid:
+                        available[mid] = m
+            if self._game_id:
+                from .....shared.data.install_state import InstallStateManager
+                installed = {
+                    d.get("mod_id", ""): InstallRecord.from_dict(d)
+                    for d in InstallStateManager(self._game_id).get_all()
+                    if d.get("mod_id")
+                }
+            ordered_content, _, _ = resolve_install_order(staged, available, installed)
+            # Re-map ordered content back to _CacheItem objects
+            content_to_ci = {id(ci.content): ci for ci in items}
+            result = [content_to_ci[id(c)] for c in ordered_content if id(c) in content_to_ci]
+            # Append any items whose content wasn't in ordered_content (shouldn't happen)
+            seen = {id(ci) for ci in result}
+            result += [ci for ci in items if id(ci) not in seen]
+            return result
+        except Exception:
+            return items
 
     def _on_install_all(self) -> None:
         self._validate_and_install(self._cached)

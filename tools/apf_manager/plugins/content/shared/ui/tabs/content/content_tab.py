@@ -467,9 +467,46 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
     def _show_install_plan(self, mods: list, templates: list, other: list) -> None:
         from .....shared.ui.install_plan_dialog import InstallPlanDialog
+        from .....utils.dependency_resolver import resolve_install_order
+
+        # Build available and installed maps for dep resolution
+        available: dict = {}
+        installed: dict = {}
+        try:
+            registry_svc = self._host.get_service("registry")
+            if registry_svc:
+                for m in registry_svc.get_mods(self._game_id):
+                    mid = getattr(m, "mod_id", "")
+                    if mid:
+                        available[mid] = m
+            if self._game_id:
+                from .....shared.data.install_state import InstallStateManager
+                from .....shared.data.pipeline_state import InstallRecord
+                installed = {
+                    d.get("mod_id", ""): InstallRecord.from_dict(d)
+                    for d in InstallStateManager(self._game_id).get_all()
+                    if d.get("mod_id")
+                }
+        except Exception:
+            pass
+
+        staged = mods + templates + other
+        try:
+            ordered, missing, warnings = resolve_install_order(staged, available, installed)
+        except Exception:
+            ordered, missing, warnings = staged, [], []
+
+        # Split ordered back into (mods, templates, other) for _do_queue
+        from .....shared.data.content_types import TemplateDescriptor, BinaryDescriptor
+        o_mods      = [x for x in ordered if not isinstance(x, (TemplateDescriptor, BinaryDescriptor))]
+        o_templates = [x for x in ordered if isinstance(x, TemplateDescriptor)]
+        o_other     = [x for x in ordered if isinstance(x, BinaryDescriptor)]
+
         InstallPlanDialog(
-            items=mods + templates + other,
-            on_confirm=lambda: self._do_queue(mods, templates, other),
+            items=ordered,
+            missing=missing,
+            warnings=warnings,
+            on_confirm=lambda: self._do_queue(o_mods, o_templates, o_other),
         ).open()
 
     def _do_queue(self, mods: list, templates: Optional[list] = None,
