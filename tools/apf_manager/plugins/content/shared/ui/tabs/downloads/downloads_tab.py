@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
@@ -32,7 +32,7 @@ from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
 from .......gui.widgets.tip_icon_button import TipIconButton
-from .....shared.ui.constants import COL_CPP, COL_BP, COL_DIM
+from .....shared.ui.constants import COL_DIM
 from .....shared.ui.section_header import make_section_header
 from .queue_panel import QueuePanelMixin, _CACHE_DIR
 from .cache_panel import CachePanelMixin
@@ -54,81 +54,134 @@ _COL_FW       = (0.2, 0.7, 0.9, 1)
 
 @dataclass
 class _QueueItem:
-    mod: object                  # RegistryModEntry
+    mod: ContentDescriptor
     status: str = "queued"       # queued | downloading | unpacking | done | error
     progress: float = 0.0        # 0.0 – 1.0
     error_msg: str = ""
     cache_path: Optional[Path] = None
-    category: str = "mod"        # "mod" | "template" | "other"
     game_id: str = ""            # game this item was queued for; "" = any game
 
     @property
+    def category(self) -> str:
+        from .....shared.data.content_types import TemplateDescriptor as _TPL, BinaryDescriptor as _BD
+        if isinstance(self.mod, _TPL):
+            return "template"
+        if isinstance(self.mod, _BD):
+            return "other"
+        return "mod"
+
+    @property
     def key(self) -> str:
-        if self.category == "template":
-            path  = getattr(self.mod, "path", str(id(self.mod)))
-            owner = getattr(self.mod, "owner", "")
-            repo  = getattr(self.mod, "repo", "")
-            return f"tmpl:{owner}+{repo}/{path}"
-        if self.category == "other":
-            owner = getattr(self.mod, "owner", "")
-            repo  = getattr(self.mod, "repo", "")
-            tag   = getattr(self.mod, "tag", getattr(self.mod, "name", str(id(self.mod))))
-            return f"other:{owner}+{repo}/{tag}"
-        folder = getattr(self.mod, "folder", getattr(self.mod, "mod_id", ""))
-        owner  = getattr(self.mod, "owner", "")
-        repo   = getattr(self.mod, "repo",  "")
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB, TemplateDescriptor as _TPL
+        mod = self.mod
+        if isinstance(mod, _TPL):
+            _src = mod.source
+            owner = _src.repo.owner if _src else ""
+            repo  = _src.repo.repo if _src else ""
+            return f"tmpl:{owner}+{repo}/{mod.template_path}"
+        if isinstance(mod, _GRB):
+            _hash = mod.tags.content_hash if mod.tags else ""
+            _src = mod.source
+            return (f"other:{_hash}" if _hash else
+                    f"other:{_src.repo.owner if _src else ''}+{_src.repo.repo if _src else ''}/{_src.tag if _src else mod.name}")
+        _src = getattr(mod, "source", None)
+        owner = _src.repo.owner if _src else ""
+        repo  = _src.repo.repo if _src else ""
+        folder = getattr(mod, "folder_name", "") or (
+            _src.folder.split("/")[-1] if _src and _src.folder else getattr(mod, "mod_id", "")
+        )
         return f"{owner}+{repo}/{folder}"
 
     @property
     def display_name(self) -> str:
-        if self.category == "template":
-            path = getattr(self.mod, "path", "")
-            return path.rsplit("/", 1)[-1] if path else "Template"
-        if self.category == "other":
-            return getattr(self.mod, "name", "Other")
-        return getattr(self.mod, "name", self.key)
+        return self.mod.name or self.key
 
     @property
     def components(self) -> list:
-        return getattr(self.mod, "components", ["lua"])
+        from .....shared.data.content_types import ModDescriptor as _MD
+        if isinstance(self.mod, _MD) and self.mod.components:
+            return self.mod.components.types
+        return []
 
 
 # ---------------------------------------------------------------------------
 # Cached item (on-disk)
 # ---------------------------------------------------------------------------
 
-@dataclass
 class _CacheItem:
-    folder_name: str
-    owner: str
-    repo: str
-    cache_path: Path
-    components: list = field(default_factory=lambda: ["lua"])
-    bp_pak_files: list = field(default_factory=list)
-    content: Optional[ContentDescriptor] = None
-    mod_ref: Optional[object] = None   # RegistryModEntry fallback
-    category: str = "mod"              # "mod" | "template" | "other"
-    game_name: str = ""
-    install_type: str = ""
+    """A downloaded content item sitting in the local cache."""
+
+    def __init__(self, cache_path: Path, content: ContentDescriptor):
+        self.cache_path = cache_path
+        self.content = content
+
+    @property
+    def category(self) -> str:
+        ct = self.content.content_type
+        if ct == "template":
+            return "template"
+        if ct in ("github_release_binary", "external_url_binary", "manual_binary"):
+            return "other"
+        return "mod"
 
     @property
     def display_name(self) -> str:
-        if self.content and self.content.name:
-            return self.content.name
-        return getattr(self.mod_ref, "name", self.folder_name) if self.mod_ref else self.folder_name
+        return self.content.name or self.content.content_type or "Unknown"
 
     @property
     def version(self) -> str:
-        if self.content and self.content.version:
-            return self.content.version
-        return getattr(self.mod_ref, "version", "") if self.mod_ref else ""
+        return self.content.version or ""
+
+    @property
+    def game_name(self) -> str:
+        return self.content.game_id or ""
+
+    @property
+    def install_type(self) -> str:
+        return getattr(self.content, "install_type", "") or ""
+
+    @property
+    def folder_name(self) -> str:
+        from .....shared.data.content_types import ModDescriptor as _MD
+        if isinstance(self.content, _MD):
+            return self.content.folder_name or ""
+        _src = getattr(self.content, "source", None)
+        if _src and _src.folder:
+            return _src.folder.split("/")[-1]
+        return self.content.name or ""
+
+    @property
+    def owner(self) -> str:
+        _src = getattr(self.content, "source", None)
+        if _src and _src.repo:
+            return _src.repo.owner
+        return ""
+
+    @property
+    def repo(self) -> str:
+        _src = getattr(self.content, "source", None)
+        if _src and _src.repo:
+            return _src.repo.repo
+        return ""
+
+    @property
+    def components(self) -> list:
+        from .....shared.data.content_types import ModDescriptor as _MD
+        if isinstance(self.content, _MD) and self.content.components:
+            return self.content.components.types
+        return []
+
+    @property
+    def bp_pak_files(self) -> list:
+        from .....shared.data.content_types import ModDescriptor as _MD
+        if isinstance(self.content, _MD) and self.content.components:
+            return self.content.components.bp_pak_files
+        return []
 
     @property
     def size_mb(self) -> float:
         try:
-            total = sum(
-                f.stat().st_size for f in self.cache_path.rglob("*") if f.is_file()
-            )
+            total = sum(f.stat().st_size for f in self.cache_path.rglob("*") if f.is_file())
             return total / (1024 * 1024)
         except Exception:
             return 0.0
@@ -222,15 +275,12 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         self._cache_dirty = True
 
     def add_to_queue(self, items: list) -> None:
-        """items: list of (mod_obj, category) tuples OR bare mod objects."""
+        """items: list of (mod_obj, category) tuples OR bare ContentDescriptor objects."""
         with self._queue_lock:
             existing_keys = {qi.key for qi in self._queue}
             for item in items:
-                if isinstance(item, tuple) and len(item) == 2:
-                    mod_obj, category = item
-                else:
-                    mod_obj, category = item, "mod"
-                qi = _QueueItem(mod=mod_obj, category=category, game_id=self._game_id or "")
+                mod_obj = item[0] if isinstance(item, tuple) and len(item) == 2 else item
+                qi = _QueueItem(mod=mod_obj, game_id=self._game_id or "")
                 if qi.key not in existing_keys:
                     self._queue.append(qi)
                     existing_keys.add(qi.key)
@@ -251,80 +301,39 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         items = []
         if not _CACHE_DIR.is_dir():
             return items
-        registry_svc = self._host.get_service("registry")
-        mod_by_folder: dict[str, object] = {}
-        if registry_svc and self._game_id:
-            for m in (registry_svc.get_mods(self._game_id) or []):
-                mod_by_folder[getattr(m, "folder", "")] = m
+        from .....shared.data.pipeline_state import ContentSerializer
+
+        def _add_item(cache_dir: Path) -> None:
+            result = ContentSerializer().load_cache(cache_dir)
+            if not result:
+                return
+            content, _ = result
+            if content.game_id and content.game_id != self._game_id:
+                return
+            items.append(_CacheItem(cache_path=cache_dir, content=content))
 
         _SKIP = {"github", "_framework"}
 
-        def _add_item(folder_dir: Path, owner: str, repo: str) -> None:
-            from .....shared.data.pipeline_state import ContentSerializer
-            from .....shared.data.content_types import BinaryDescriptor, TemplateDescriptor
-            result = ContentSerializer().load_cache(folder_dir)
-            if result:
-                content, _ = result
-                ct = content.content_type
-                if ct in ("ap_mod", "framework_mod", "third_party_mod"):
-                    category = "mod"
-                elif ct == "template":
-                    category = "template"
-                else:
-                    category = "other"
-                game_name = content.game_id or ""
-                install_type = getattr(content, "install_type", "")
-            else:
-                content = None
-                category, game_name, install_type = "mod", "", ""
-            if game_name and game_name != self._game_id:
-                return
-            mod_ref = mod_by_folder.get(folder_dir.name)
-            components = _detect_components(folder_dir)
-            bp_files = _detect_bp_paks(folder_dir)
-            items.append(_CacheItem(
-                folder_name=folder_dir.name,
-                owner=owner, repo=repo,
-                cache_path=folder_dir,
-                components=components,
-                bp_pak_files=bp_files,
-                content=content,
-                mod_ref=mod_ref,
-                category=category,
-                game_name=game_name,
-                install_type=install_type,
-            ))
-
         for repo_dir in _CACHE_DIR.iterdir():
-            if not repo_dir.is_dir():
-                continue
-            if repo_dir.name in _SKIP:
+            if not repo_dir.is_dir() or repo_dir.name in _SKIP:
                 continue
             if repo_dir.name == "_other":
                 for ue4ss_repo_dir in repo_dir.iterdir():
                     if not ue4ss_repo_dir.is_dir():
                         continue
-                    parts = ue4ss_repo_dir.name.split("+", 1)
-                    owner = parts[0] if len(parts) >= 1 else ""
-                    repo  = parts[1] if len(parts) == 2 else ""
                     for tag_dir in ue4ss_repo_dir.iterdir():
                         if tag_dir.is_dir():
-                            _add_item(tag_dir, owner, repo)
+                            _add_item(tag_dir)
                 continue
-
-            parts = repo_dir.name.split("+", 1)
-            owner = parts[0] if len(parts) >= 1 else ""
-            repo  = parts[1] if len(parts) == 2 else ""
-
             for folder_dir in repo_dir.iterdir():
                 if not folder_dir.is_dir():
                     continue
                 if folder_dir.name == "Templates":
                     for game_dir in folder_dir.iterdir():
                         if game_dir.is_dir():
-                            _add_item(game_dir, owner, repo)
+                            _add_item(game_dir)
                     continue
-                _add_item(folder_dir, owner, repo)
+                _add_item(folder_dir)
 
         return items
 
@@ -680,30 +689,3 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
             return sum(1 for q in self._queue if q.status in ("queued", "downloading"))
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _detect_components(folder: Path) -> list:
-    found = []
-    if (folder / "scripts" / "main.lua").exists():
-        found.append("lua")
-    if (folder / "dlls" / "main.dll").exists():
-        found.append("cpp")
-    lm = folder / "LogicMods"
-    if lm.is_dir() and any(
-        f.suffix.lower() in (".pak", ".ucas", ".utoc")
-        for f in lm.iterdir() if f.is_file()
-    ):
-        found.append("blueprint")
-    return found or ["lua"]
-
-
-def _detect_bp_paks(folder: Path) -> list:
-    lm = folder / "LogicMods"
-    if not lm.is_dir():
-        return []
-    return [
-        f.name for f in lm.iterdir()
-        if f.is_file() and f.suffix.lower() in (".pak", ".ucas", ".utoc")
-    ]
