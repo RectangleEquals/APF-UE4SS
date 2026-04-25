@@ -8,7 +8,7 @@ Shows ALL content deployed to the game directory:
   - Manually installed BP pak files (in Content/Paks/LogicMods/, not tracked)
 
 NO enable/disable toggle — that lives in Load Order.
-Uninstall calls deploy_svc.undeploy_mod() for full component cleanup.
+Uninstall calls deploy_svc.undeploy_content() (Phase F) for full component cleanup.
 Uninstalling the framework mod triggers a cascade impact analysis and confirmation dialog.
 """
 
@@ -104,6 +104,18 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
         ue4ss_ok = bool(self._detection and getattr(self._detection, "valid", False))
         fw_mod_ok = bool(self._fw_mod_dir)
 
+        # Load install_map once for this refresh cycle
+        game_id = self._get_game_id()
+        install_map: dict = {}
+        if game_id:
+            from .....shared.data.install_state import InstallStateManager
+            from .....shared.data.pipeline_state import InstallRecord
+            install_map = {
+                d.get("folder_name", ""): InstallRecord.from_dict(d)
+                for d in InstallStateManager(game_id).get_all()
+                if d.get("folder_name")
+            }
+
         # --- Framework conflict banner (shown at top if multiple framework mods) ---
         if self._fw_conflict:
             self._list.add_widget(self._conflict_banner(self._fw_conflict))
@@ -139,7 +151,8 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
             self._list.add_widget(self._section_header("Mods", len(ap_mods + non_ap_mods)))
 
             for mod in ap_mods:
-                self._list.add_widget(self._ap_mod_row(mod, deploy_svc))
+                ir = install_map.get(mod.folder_name)
+                self._list.add_widget(self._ap_mod_row(mod, deploy_svc, ir))
             for mod in non_ap_mods:
                 self._list.add_widget(self._non_ap_row(mod, deploy_svc))
 
@@ -165,7 +178,7 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
                 color=(0.8, 0.55, 0.1, 1),
             ))
         else:
-            self._list.add_widget(self._templates_section())
+            self._list.add_widget(self._templates_section(install_map))
 
     # -----------------------------------------------------------------------
     # Section builders
@@ -308,17 +321,23 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
         section.add_widget(notice_row)
         return section
 
-    def _templates_section(self) -> MDBoxLayout:
+    def _templates_section(self, install_map: dict) -> MDBoxLayout:
         """Installed templates sub-section — scans framework mod's Templates/ directory."""
         section = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
         )
-        # List subdirectories of <fw_dir>/Templates/ as installed game template packs
         templates: list[str] = []
         if self._fw_mod_dir:
             templates_root = self._fw_mod_dir / "Templates"
             if templates_root.is_dir():
                 templates = sorted(d.name for d in templates_root.iterdir() if d.is_dir())
+
+        # Also include template InstallRecords not yet on disk (or supplement with record data)
+        tmpl_records = {
+            r.game_id or r.name: r
+            for r in install_map.values()
+            if r.content_type == "template"
+        }
 
         section.add_widget(self._section_header("Templates", len(templates)))
         if not templates:
@@ -328,10 +347,11 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
             ))
         else:
             for game_name in templates:
-                section.add_widget(self._template_row(game_name))
+                record = tmpl_records.get(game_name)
+                section.add_widget(self._template_row(game_name, record))
         return section
 
-    def _template_row(self, game_name: str) -> MDBoxLayout:
+    def _template_row(self, game_name: str, install_record=None) -> MDBoxLayout:
         row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(40),
             md_bg_color=_BG_ROW_AP, padding=[dp(8), dp(4)], spacing=dp(8),
@@ -344,6 +364,20 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
             text=game_name, font_style="Body",
             size_hint=(1, 1), halign="left", valign="middle",
         ))
+        if install_record:
+            detail_parts = []
+            if install_record.source_repo:
+                detail_parts.append(install_record.source_repo)
+            if install_record.deployed_at:
+                detail_parts.append(install_record.deployed_at[:10])
+            if detail_parts:
+                row.add_widget(MDLabel(
+                    text="  ·  ".join(detail_parts),
+                    font_style="Label", role="small",
+                    size_hint=(None, 1), width=dp(200),
+                    halign="right", valign="middle",
+                    theme_text_color="Custom", text_color=COL_DIM,
+                ))
         return row
 
     def _get_game_id(self) -> str:
@@ -364,7 +398,7 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
     # Actions
     # -----------------------------------------------------------------------
 
-    def _on_uninstall(self, mod, is_orphaned: bool) -> None:
+    def _on_uninstall(self, mod, is_orphaned: bool, install_record=None) -> None:
         from kivymd.uix.dialog import (
             MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
             MDDialogButtonContainer,
@@ -373,10 +407,11 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
         is_framework = bool(mod.mod_id and _FRAMEWORK_MOD_RE.match(mod.mod_id))
 
         if is_framework:
-            self._on_uninstall_framework(mod)
+            self._on_uninstall_framework(mod, install_record)
             return
 
-        components = getattr(mod, "components", ["lua"])
+        components = list(install_record.components if install_record and install_record.components
+                          else getattr(mod, "components", ["lua"]))
         comp_names = {
             "lua": "Lua scripts (scripts/)",
             "cpp": "C++ module (dlls/main.dll)",
@@ -391,7 +426,7 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
 
         def _confirm(*_):
             dlg.dismiss()
-            self._do_uninstall(mod)
+            self._do_uninstall(mod, install_record)
 
         dlg = MDDialog(
             MDDialogHeadlineText(text=f"Uninstall {mod.display_name}?"),
@@ -408,7 +443,7 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
         )
         dlg.open()
 
-    def _on_uninstall_framework(self, mod) -> None:
+    def _on_uninstall_framework(self, mod, install_record=None) -> None:
         """Cascade analysis + confirmation dialog for framework mod uninstall."""
         from kivymd.uix.dialog import (
             MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
@@ -417,7 +452,9 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
 
         deploy_svc = self._host.get_service("deploy")
         impact = {}
-        if deploy_svc and hasattr(deploy_svc, "get_framework_uninstall_impact"):
+        if deploy_svc and install_record and hasattr(deploy_svc, "get_uninstall_impact"):
+            impact = deploy_svc.get_uninstall_impact(install_record)
+        elif deploy_svc and hasattr(deploy_svc, "get_framework_uninstall_impact"):
             impact = deploy_svc.get_framework_uninstall_impact()
 
         affected_mods = impact.get("affected_mods", [])
@@ -425,13 +462,12 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
 
         if affected_mods or template_dirs:
             affected_lines = "\n".join(
-                f"  • {m.display_name} ({', '.join(getattr(m, 'capabilities_includes', []))})"
+                f"  • {getattr(m, 'name', getattr(m, 'display_name', str(m)))} "
+                f"({', '.join(getattr(m, 'capabilities_includes', []))})"
                 for m in affected_mods
             )
             template_lines = "\n".join(f"  • {p}" for p in template_dirs)
-            body = (
-                "Uninstalling the framework mod will also remove its entire Templates/ folder."
-            )
+            body = "Uninstalling the framework mod will also remove its entire Templates/ folder."
             if template_dirs:
                 body += f"\n\nTemplate directories that will be removed:\n{template_lines}"
             if affected_mods:
@@ -448,7 +484,7 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
 
         def _confirm(*_):
             dlg.dismiss()
-            self._do_uninstall(mod)
+            self._do_uninstall(mod, install_record)
 
         dlg = MDDialog(
             MDDialogHeadlineText(text="Warning — Cascading Removal"),
@@ -463,7 +499,7 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
         )
         dlg.open()
 
-    def _do_uninstall(self, mod) -> None:
+    def _do_uninstall(self, mod, install_record=None) -> None:
         from kivy.clock import Clock
 
         is_framework = bool(mod.mod_id and _FRAMEWORK_MOD_RE.match(mod.mod_id))
@@ -471,7 +507,9 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
         mods_svc   = self._host.get_service("mods")
 
         try:
-            if deploy_svc and hasattr(deploy_svc, "undeploy_mod"):
+            if deploy_svc and install_record and hasattr(deploy_svc, "undeploy_content"):
+                deploy_svc.undeploy_content(install_record, self._detection)
+            elif deploy_svc and hasattr(deploy_svc, "undeploy_mod"):
                 deploy_svc.undeploy_mod(mod, self._detection)
             else:
                 import shutil
@@ -488,7 +526,6 @@ class InstalledTab(InstallRowMixin, MDBoxLayout):
             self._host.log(f"[installed] Uninstall failed for {mod.folder_name}: {exc}")
 
         if is_framework:
-            # Full panel refresh — framework mod removal affects all tabs
             Clock.schedule_once(lambda dt: self._trigger_full_refresh(), 0)
         else:
             Clock.schedule_once(lambda dt: self._do_refresh(), 0)

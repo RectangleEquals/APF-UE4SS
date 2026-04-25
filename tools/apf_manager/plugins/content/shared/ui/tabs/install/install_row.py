@@ -26,9 +26,13 @@ class InstallRowMixin:
     # AP mod row
     # -----------------------------------------------------------------------
 
-    def _ap_mod_row(self, mod, deploy_svc) -> MDBoxLayout:
+    def _ap_mod_row(self, mod, deploy_svc, install_record=None) -> MDBoxLayout:
         is_orphaned = getattr(mod, "is_orphaned", False)
-        components  = getattr(mod, "components", ["lua"])
+        components  = list(install_record.components if install_record and install_record.components
+                           else getattr(mod, "components", ["lua"]))
+        version     = (install_record.version if install_record and install_record.version
+                       else getattr(mod, "version", ""))
+        source_repo = install_record.source_repo if install_record else ""
         bg = _BG_ROW_ORPHAN if is_orphaned else _BG_ROW_AP
         key = f"mod:{mod.folder_name}"
         expanded = key in self._expanded
@@ -44,9 +48,11 @@ class InstallRowMixin:
 
         if is_orphaned:
             top.add_widget(badge_icon("folder-account", COL_WARN, "Manually installed"))
+        elif source_repo:
+            label = source_repo.split("/")[-1] if "/" in source_repo else source_repo
+            top.add_widget(badge_text(label, _COL_REGISTRY))
         else:
-            registry_name = self._get_registry_name(mod)
-            top.add_widget(badge_text(registry_name or "Managed", _COL_REGISTRY))
+            top.add_widget(badge_text("Managed", _COL_REGISTRY))
 
         top.add_widget(MDLabel(
             text=mod.display_name, font_style="Body",
@@ -64,9 +70,9 @@ class InstallRowMixin:
                 theme_icon_color="Custom", icon_color=COL_BP,
             ))
 
-        if mod.version:
+        if version:
             top.add_widget(MDLabel(
-                text=f"v{mod.version}", font_style="Label", role="small",
+                text=f"v{version}", font_style="Label", role="small",
                 size_hint=(None, 1), width=dp(60),
                 halign="right", valign="middle",
                 theme_text_color="Custom", text_color=COL_DIM,
@@ -82,7 +88,7 @@ class InstallRowMixin:
             MDButtonText(text="Uninstall"),
             style="text", size_hint=(None, None), size=(dp(88), dp(28)),
             pos_hint={"center_y": 0.5},
-            on_release=lambda *_, m=mod: self._on_uninstall(m, is_orphaned),
+            on_release=lambda *_, m=mod, ir=install_record: self._on_uninstall(m, is_orphaned, ir),
         ))
         container.add_widget(top)
 
@@ -103,6 +109,23 @@ class InstallRowMixin:
                 padding=[dp(0), 0],
             ))
 
+        update_ver = self._check_update(install_record) if install_record else ""
+        if update_ver:
+            upd_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(18),
+                spacing=dp(4),
+            )
+            upd_row.add_widget(MDIcon(
+                icon="arrow-up-circle", size_hint=(None, 1), width=dp(16),
+                theme_icon_color="Custom", icon_color=(0.25, 0.65, 1.0, 1),
+            ))
+            upd_row.add_widget(MDLabel(
+                text=f"Update available: v{update_ver}",
+                font_style="Label", role="small", size_hint=(1, 1),
+                theme_text_color="Custom", text_color=(0.25, 0.65, 1.0, 1),
+            ))
+            container.add_widget(upd_row)
+
         status = self._get_component_status(mod, deploy_svc)
         if len(components) > 1 or is_orphaned:
             status_row = MDBoxLayout(
@@ -115,11 +138,11 @@ class InstallRowMixin:
             container.add_widget(status_row)
 
         if expanded:
-            container.add_widget(self._ap_mod_detail(mod, deploy_svc, status))
+            container.add_widget(self._ap_mod_detail(mod, deploy_svc, status, install_record))
 
         return container
 
-    def _ap_mod_detail(self, mod, deploy_svc, status: dict) -> MDBoxLayout:
+    def _ap_mod_detail(self, mod, deploy_svc, status: dict, install_record=None) -> MDBoxLayout:
         panel = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
             md_bg_color=(0.09, 0.10, 0.13, 1),
@@ -132,19 +155,15 @@ class InstallRowMixin:
                 theme_text_color="Custom", text_color=(0.5, 0.7, 0.9, 1),
             ))
 
-        game_id = self._get_game_id()
-        record = None
-        if game_id:
-            from .....shared.data.install_state import InstallStateManager
-            record = InstallStateManager(game_id).find(mod.folder_name)
-        if record:
-            ver = record.get("version", "")
-            src = record.get("source_repo", "")
+        if install_record:
             parts = []
-            if ver:
-                parts.append(f"v{ver}")
-            if src:
-                parts.append(src)
+            if install_record.version:
+                parts.append(f"v{install_record.version}")
+            if install_record.source_repo:
+                parts.append(install_record.source_repo)
+            if install_record.deployed_at:
+                ts = install_record.deployed_at[:10]
+                parts.append(f"installed {ts}")
             if parts:
                 panel.add_widget(MDLabel(
                     text="  ·  ".join(parts),
@@ -152,7 +171,8 @@ class InstallRowMixin:
                     theme_text_color="Custom", text_color=COL_DIM,
                 ))
 
-        components = getattr(mod, "components", ["lua"])
+        components = list(install_record.components if install_record and install_record.components
+                          else getattr(mod, "components", ["lua"]))
         if components:
             comp_row = MDBoxLayout(
                 orientation="horizontal", size_hint_y=None, height=dp(20),
@@ -277,14 +297,27 @@ class InstallRowMixin:
     # Helpers
     # -----------------------------------------------------------------------
 
-    def _get_registry_name(self, mod) -> str:
-        registry_svc = self._host.get_service("registry")
-        if not registry_svc:
+    def _check_update(self, install_record) -> str:
+        """Return cached version string if newer than installed, else empty string."""
+        if not install_record or not install_record.source_repo or not install_record.folder_name:
             return ""
-        game_id = self._get_game_id()
-        for entry in registry_svc.get_mods(game_id):
-            if getattr(entry, "mod_id", "") == mod.mod_id:
-                reg = getattr(entry, "registry", None)
-                if reg:
-                    return getattr(reg, "repo", "")
+        from pathlib import Path
+        from .....shared.data.pipeline_state import ContentSerializer
+        _cache_dir = Path.home() / ".apf_manager" / "cache"
+        owner_repo = install_record.source_repo.replace("/", "+")
+        mod_cache = _cache_dir / owner_repo / install_record.folder_name
+        result = ContentSerializer().load_cache(mod_cache)
+        if not result:
+            return ""
+        cached_content, _ = result
+        cached_ver = cached_content.version
+        if not cached_ver or cached_ver == install_record.version:
+            return ""
+        try:
+            from .......core.semver import SemVer
+            if SemVer(cached_ver) > SemVer(install_record.version or "0.0.0"):
+                return cached_ver
+        except Exception:
+            if install_record.version and cached_ver != install_record.version:
+                return cached_ver
         return ""
