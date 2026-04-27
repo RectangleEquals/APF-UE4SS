@@ -87,7 +87,55 @@ class ModsSectionMixin:
         folder = getattr(mod, "folder_name", getattr(mod, "folder", getattr(mod, "mod_id", str(index))))
         key = f"mod:{folder}"
         expanded = key in self._expanded
-        known_ids = {getattr(m, "mod_id", "") for m in self._all_mods}
+
+        # known_ids: registry-available + installed (so installed deps don't falsely show red)
+        known_ids = {getattr(m, "mod_id", "") for m in self._all_mods if getattr(m, "mod_id", "")}
+        try:
+            from .....shared.data.install_state import InstallStateManager
+            for d in InstallStateManager(self._game_id).get_all():
+                mid = d.get("mod_id", "")
+                if mid:
+                    known_ids.add(mid)
+        except Exception:
+            pass
+
+        # install_record for update-available detection in the detail panel
+        install_record = None
+        try:
+            from .....shared.data.install_state import InstallStateManager
+            from .....shared.data.pipeline_state import InstallRecord
+            mod_folder = getattr(mod, "folder_name", "")
+            if mod_folder:
+                for d in InstallStateManager(self._game_id).get_all():
+                    if d.get("folder_name") == mod_folder:
+                        install_record = InstallRecord.from_dict(d)
+                        break
+        except Exception:
+            pass
+
+        # docs action button on the unexpanded row
+        actions = []
+        _docs = getattr(mod, "docs", None)
+        if _docs and getattr(_docs, "readme_url", ""):
+            _src = getattr(mod, "source", None)
+            _readme = _docs.readme_url
+            if _src:
+                _raw_url = (
+                    f"https://raw.githubusercontent.com/"
+                    f"{_src.repo.owner}/{_src.repo.repo}/HEAD/{_readme}"
+                )
+            else:
+                _raw_url = _readme
+            _title = getattr(mod, "name", folder)
+
+            def _open_readme(*_, url=_raw_url, title=_title):
+                docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+                if docs_svc and hasattr(docs_svc, "open_url"):
+                    docs_svc.open_url(url, title=title, show_sidebar=True,
+                                      show_mode_toggle=False, sidebar_mode="verbose")
+
+            actions.append({"icon": "file-document-outline", "tooltip": "View Readme",
+                            "callback": _open_readme})
 
         outer = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
         row_widget = ContentRowWidget(
@@ -95,6 +143,7 @@ class ModsSectionMixin:
             checked=key in self._checked, expanded=expanded,
             on_check=lambda val, k=key: self._on_check(k, val),
             on_expand=lambda *_: self._toggle_expand(key),
+            actions=actions,
         )
         if indent:
             inner = MDBoxLayout(orientation="horizontal", size_hint_y=None, adaptive_height=True)
@@ -105,7 +154,9 @@ class ModsSectionMixin:
         else:
             outer.add_widget(row_widget)
         if expanded:
-            outer.add_widget(ContentDetailPanel(content=mod, known_mod_ids=known_ids))
+            outer.add_widget(ContentDetailPanel(
+                content=mod, known_mod_ids=known_ids, install_record=install_record,
+            ))
         return outer
 
     def _open_other_docs(self, docs_path: str, owner: str, repo: str,

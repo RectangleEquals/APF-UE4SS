@@ -379,7 +379,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         self._btn_queue.disabled = not bool(self._checked)
 
     def _on_queue_pressed(self) -> None:
-        from ....shared.data.content_types import GithubReleaseBinary as _GRB
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB
         checked_mods = [
             m for m in self._all_mods
             if f"mod:{getattr(m, 'folder_name', getattr(m, 'folder', getattr(m, 'mod_id', '')))}" in self._checked
@@ -522,7 +522,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         )
         if self._on_queue:
             self._on_queue(items)
-        from ....shared.data.content_types import GithubReleaseBinary as _GRB
+        from .....shared.data.content_types import GithubReleaseBinary as _GRB
         for mod in mods:
             folder = getattr(mod, "folder_name", getattr(mod, "folder", getattr(mod, "mod_id", "")))
             self._checked.discard(f"mod:{folder}")

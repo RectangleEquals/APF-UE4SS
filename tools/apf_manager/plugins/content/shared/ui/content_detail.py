@@ -20,18 +20,33 @@ if TYPE_CHECKING:
 
 _BG_DETAIL = (0.09, 0.10, 0.12, 1)
 
+_COL_MISSING  = (0.9, 0.3, 0.3, 1)
+_COL_DEP_OK   = (0.4, 0.8, 0.4, 1)
+_COL_INCOMPAT = (0.8, 0.5, 0.2, 1)
+_COL_UPDATE   = (0.95, 0.75, 0.2, 1)
+
+_TYPE_LABELS = {
+    "ap_mod":              "AP Mod",
+    "framework_mod":       "Framework Mod",
+    "third_party_mod":     "Third-Party Mod",
+    "template":            "Template",
+    "github_release_binary": "GitHub Release",
+    "external_url_binary": "External URL",
+    "manual_binary":       "Manual",
+}
+
 
 class ContentDetailPanel(MDBoxLayout):
     """
     Expandable detail panel for any ContentDescriptor.
 
     Sections rendered based on isinstance checks:
-    - All:               version, game_id, content_type
-    - ModDescriptor:     description, author, source repo, registry URL
-    - APModDescriptor:   + mod_id, dependencies (coloured by status), capabilities_includes
+    - All:               version, content_type
+    - ModDescriptor:     description, author, components, folder, path, registry, tags
+    - APModDescriptor:   + mod_id, dependencies (coloured), capabilities_includes
     - TemplateDescriptor: template_path, conflict sources list
-    - GithubReleaseBinary: source repo/tag, published_at, changelog excerpt, asset list
-    - install_record present: deployed_at, per-component health chips
+    - GithubReleaseBinary: source repo/tag, published_at, changelog excerpt, asset list w/ sizes
+    - install_record present: deployed_at, installed version, update-available cue
     """
 
     def __init__(self, content, install_record=None, known_mod_ids: Optional[set] = None, **kwargs):
@@ -59,7 +74,6 @@ class ContentDetailPanel(MDBoxLayout):
             TemplateDescriptor as _TPL,
             ModDescriptor as _MOD,
             APModDescriptor as _AP,
-            FrameworkModDescriptor as _FW,
         )
         c = self._content
 
@@ -72,7 +86,7 @@ class ContentDetailPanel(MDBoxLayout):
         elif isinstance(c, _MOD):
             self._build_mod(c)
         else:
-            self._row("Type", c.content_type or "unknown")
+            self._row("Type", _TYPE_LABELS.get(c.content_type, c.content_type or "unknown"))
             if c.name:
                 self._row("Name", c.name)
 
@@ -84,6 +98,16 @@ class ContentDetailPanel(MDBoxLayout):
     # ------------------------------------------------------------------
 
     def _build_mod(self, c) -> None:
+        # Version
+        if c.version:
+            self._row("Version", c.version)
+
+        # Type
+        type_label = _TYPE_LABELS.get(c.content_type, c.content_type or "")
+        if type_label:
+            self._row("Type", type_label)
+
+        # Description
         desc = getattr(c, "description", "")
         if desc:
             self.add_widget(MDLabel(
@@ -91,47 +115,63 @@ class ContentDetailPanel(MDBoxLayout):
                 size_hint_y=None, height=dp(16),
                 theme_text_color="Secondary",
             ))
+
+        # Author
+        author = getattr(c, "author", "")
+        if author:
+            self._row("Author", author)
+
+        # Component chips
+        comps = getattr(c, "components", None)
+        if comps and comps.types:
+            chip_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(28), spacing=dp(6),
+                padding=[0, 0, 0, 0],
+            )
+            for ct in comps.types:
+                chip_row.add_widget(component_status_chip(ct, ok=True))
+            self.add_widget(chip_row)
+
+        # Install folder
+        fn = getattr(c, "folder_name", "")
+        if fn:
+            self._row("Folder", fn)
+
+        # Path within registry repo
         _src = getattr(c, "source", None)
         if _src:
-            self._row("Source", _src.repo.full_name)
-            if _src.registry_url:
-                self._row("Registry", _src.registry_url)
+            if _src.folder:
+                self._row("Path", _src.folder)
+            self._row("Registry", _src.repo.full_name)
+
+        # Tags
+        _tags = getattr(c, "tags", None)
+        if _tags:
+            labels = []
+            if _tags.is_framework:   labels.append("Framework")
+            if _tags.is_submodule:   labels.append("Submodule")
+            if _tags.is_cross_game:  labels.append("Cross-game")
+            if _tags.has_conflict:   labels.append("Conflict")
+            if labels:
+                self._row("Tags", ", ".join(labels))
 
     def _build_ap_mod(self, c) -> None:
         self._build_mod(c)
+
         if c.mod_id:
-            self.add_widget(MDLabel(
-                text=c.mod_id, font_style="Label", role="small",
-                size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=(0.5, 0.7, 0.9, 1),
-            ))
-        deps = [d for d in (c.dependencies or []) if not d.is_incompatible]
+            self._row("Mod ID", c.mod_id)
+
+        deps    = [d for d in (c.dependencies or []) if not d.is_incompatible]
         incompat = [d for d in (c.dependencies or []) if d.is_incompatible]
-        if deps:
-            dep_row = MDBoxLayout(
-                orientation="horizontal", size_hint_y=None, height=dp(16), spacing=dp(4),
-            )
-            dep_row.add_widget(MDLabel(
-                text="Deps:", font_style="Label", role="small",
-                size_hint=(None, 1), width=dp(32),
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-            for dep in deps[:5]:
-                missing = dep.mod_id not in self._known_mod_ids
-                dep_row.add_widget(MDLabel(
-                    text=dep.mod_id + (f" {dep.version_constraint}" if dep.version_constraint else ""),
-                    font_style="Label", role="small",
-                    size_hint=(None, 1), width=dp(max(80, len(dep.mod_id) * 7)),
-                    theme_text_color="Custom",
-                    text_color=(0.9, 0.3, 0.3, 1) if missing else COL_DIM,
-                ))
-            self.add_widget(dep_row)
-        if incompat:
-            self.add_widget(MDLabel(
-                text="Incompatible: " + ", ".join(d.mod_id for d in incompat[:4]),
-                font_style="Label", role="small", size_hint_y=None, height=dp(16),
-                theme_text_color="Custom", text_color=(0.8, 0.5, 0.2, 1),
-            ))
+
+        for dep in deps[:6]:
+            missing = dep.mod_id not in self._known_mod_ids
+            display = dep.mod_id + (f" {dep.version_constraint}" if dep.version_constraint else "")
+            self._row_colored("Requires", display, _COL_MISSING if missing else _COL_DEP_OK)
+
+        for dep in incompat[:4]:
+            self._row_colored("Conflicts", dep.mod_id, _COL_INCOMPAT)
+
         includes = getattr(c, "capabilities_includes", []) or []
         if includes:
             for inc in includes[:4]:
@@ -157,7 +197,7 @@ class ContentDetailPanel(MDBoxLayout):
             self._row("Conflict", ", ".join(r.full_name for r in conflicts))
         _src = getattr(c, "source", None)
         if _src:
-            self._row("Source", _src.repo.full_name)
+            self._row("Registry", _src.repo.full_name)
 
     def _build_grb(self, c) -> None:
         _src = c.source
@@ -179,8 +219,9 @@ class ContentDetailPanel(MDBoxLayout):
                 orientation="vertical", size_hint_y=None, adaptive_height=True, spacing=dp(2),
             )
             for a in c.assets[:6]:
+                size_str = f" ({a.size_bytes / 1_000_000:.1f} MB)" if getattr(a, "size_bytes", 0) else ""
                 asset_col.add_widget(MDLabel(
-                    text=f"\u2022 {a.name}",
+                    text=f"\u2022 {a.name}{size_str}",
                     font_style="Label", role="small",
                     size_hint_y=None, height=dp(16),
                     theme_text_color="Custom", text_color=COL_DIM,
@@ -197,8 +238,21 @@ class ContentDetailPanel(MDBoxLayout):
     def _build_install_record(self, record) -> None:
         if getattr(record, "deployed_at", ""):
             self._row("Installed", record.deployed_at[:10])
-        if getattr(record, "version", ""):
-            self._row("Version", record.version)
+
+        rec_ver = getattr(record, "version", "")
+        if rec_ver:
+            self._row("Inst. Version", rec_ver)
+
+        # Update-available cue: registry version newer than installed
+        reg_ver = getattr(self._content, "version", "")
+        if reg_ver and rec_ver and reg_ver != rec_ver:
+            try:
+                from ......core.semver import SemVer
+                if SemVer.parse(reg_ver) > SemVer.parse(rec_ver):
+                    self._row_colored("Registry Ver.", reg_ver, _COL_UPDATE)
+            except Exception:
+                self._row_colored("Registry Ver.", reg_ver, _COL_UPDATE)
+
         components = getattr(record, "components", []) or []
         if components:
             chip_row = MDBoxLayout(
@@ -212,15 +266,19 @@ class ContentDetailPanel(MDBoxLayout):
     # Layout helpers
     # ------------------------------------------------------------------
 
-    def _row(self, key_text: str, val_text: str) -> None:
+    def _row_colored(self, key_text: str, val_text: str, val_color) -> None:
         r = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(8))
         r.add_widget(MDLabel(
             text=key_text, font_style="Label", role="small",
             size_hint=(None, 1), width=dp(96),
             theme_text_color="Custom", text_color=COL_DIM,
         ))
-        r.add_widget(MDLabel(
-            text=val_text, font_style="Label", role="small",
-            size_hint=(1, 1),
-        ))
+        lbl = MDLabel(text=val_text, font_style="Label", role="small", size_hint=(1, 1))
+        if val_color:
+            lbl.theme_text_color = "Custom"
+            lbl.text_color = val_color
+        r.add_widget(lbl)
         self.add_widget(r)
+
+    def _row(self, key_text: str, val_text: str) -> None:
+        self._row_colored(key_text, val_text, None)

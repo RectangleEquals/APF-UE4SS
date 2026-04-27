@@ -177,6 +177,7 @@ class DocsPanel:
         title: str = "",
         show_sidebar: bool = False,
         show_mode_toggle: bool = False,
+        sidebar_mode: str = "verbose",
     ) -> None:
         """
         Fetch a remote markdown document by raw URL and open it in the SPA viewer.
@@ -189,6 +190,7 @@ class DocsPanel:
         title: window + title bar label; derived from URL filename if empty
         show_sidebar: whether to show the left nav sidebar. Default: False.
         show_mode_toggle: whether to show the sidebar mode chips. Default: False.
+        sidebar_mode: "default" | "verbose" | "tree". Default: "verbose".
         """
         from .md_to_html import convert_body
 
@@ -258,7 +260,7 @@ class DocsPanel:
             tree_json=tree_json,
             docs_html_json=docs_html_json,
             fw_version=_get_framework_version(),
-            sidebar_mode="verbose",
+            sidebar_mode=sidebar_mode,
             show_mode_toggle=show_mode_toggle,
             initial_path=doc_key,
             show_sidebar=show_sidebar,
