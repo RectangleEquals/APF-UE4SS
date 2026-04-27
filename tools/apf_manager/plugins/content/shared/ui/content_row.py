@@ -15,7 +15,7 @@ from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
 
 from .constants import COL_DIM, COL_WARN, COL_CPP, COL_BP, COL_STATUS_OK, COL_STATUS_MISS
-from .hover_row import HoverRow
+from .hover_row import HoverRow, RowHeader
 
 if TYPE_CHECKING:
     from ..data.content_types import (
@@ -107,14 +107,16 @@ class ContentRowWidget(MDBoxLayout):
         is_tpl    = isinstance(c, _TPL)
         is_mod    = isinstance(c, _MOD)
 
-        # Interactable rows use HoverRow for mouse-over highlight
-        if is_grb:
+        # Rows where the body is interactable use HoverRow for mouse-over feedback.
+        # ManualBinary has no expand and no URL action — use RowHeader (typed, no hover).
+        has_hover = (self._on_expand is not None and not is_eub and not is_manual) or is_eub
+        if has_hover:
             header = HoverRow(
                 orientation="horizontal", size_hint_y=None, height=dp(52),
                 padding=[dp(8), dp(4)], spacing=dp(8),
             )
         else:
-            header = MDBoxLayout(
+            header = RowHeader(
                 orientation="horizontal", size_hint_y=None, height=dp(52),
                 padding=[dp(8), dp(4)], spacing=dp(8),
             )
@@ -148,7 +150,7 @@ class ContentRowWidget(MDBoxLayout):
             halign="left", valign="middle",
         ))
 
-        # Component badges for mods
+        # Component badges for mods (C++ and Blueprint only — Lua is implied)
         if is_mod:
             _comp_raw = getattr(c, "components", None)
             comp_types = _comp_raw.types if hasattr(_comp_raw, "types") else (_comp_raw if isinstance(_comp_raw, list) else [])
@@ -194,7 +196,7 @@ class ContentRowWidget(MDBoxLayout):
             ))
         header.add_widget(info)
 
-        # --- Action buttons (external URL open, custom actions) ---
+        # --- Action buttons (custom per-row actions passed from caller) ---
         for act in self._actions:
             btn = MDIconButton(
                 icon=act.get("icon", "dots-vertical"),
@@ -204,6 +206,7 @@ class ContentRowWidget(MDBoxLayout):
             )
             header.add_widget(btn)
 
+        # --- External URL open button or expand chevron ---
         if is_eub:
             import webbrowser
             _url = getattr(c, "url", "")
@@ -244,7 +247,34 @@ class ContentRowWidget(MDBoxLayout):
         return "package-variant", (0.6, 0.6, 0.6, 1)
 
     @staticmethod
-    def _subtitle(c, is_grb, is_eub, is_manual, is_tpl, is_mod):
+    def _mod_type_label(c) -> str:
+        """Derive a human-readable type label from component composition and mod class."""
+        from ..data.content_types import FrameworkModDescriptor as _FW, APModDescriptor as _AP
+        comps = getattr(c, "components", None)
+        types = (
+            comps.types if hasattr(comps, "types")
+            else (comps if isinstance(comps, list) else [])
+        )
+        lua_count       = 1 if "lua"       in types else 0
+        cpp_count       = 1 if "cpp"       in types else 0
+        blueprint_count = 1 if "blueprint" in types else 0
+        if lua_count + cpp_count + blueprint_count > 1:
+            comp_label = "Combo"
+        elif cpp_count:
+            comp_label = "C++"
+        elif blueprint_count:
+            comp_label = "Blueprint"
+        else:
+            comp_label = "Lua"   # default — Lua is the baseline UE4SS mod format
+        if isinstance(c, _FW):
+            return f"Framework {comp_label} Mod"
+        elif isinstance(c, _AP):
+            return f"AP {comp_label} Mod"
+        else:
+            return f"Non-AP {comp_label} Mod"
+
+    @staticmethod
+    def _subtitle(c, is_grb, is_eub, is_manual, is_tpl, is_mod) -> str:
         if is_grb:
             _src = c.source
             if c.install_type == "framework_binary":
@@ -258,13 +288,15 @@ class ContentRowWidget(MDBoxLayout):
             has_conflict = _tags.has_conflict if _tags else False
             return "conflict detected" if has_conflict else ""
         if is_mod:
-            mod_id = getattr(c, "mod_id", "")
-            desc   = getattr(c, "description", "")
-            if mod_id:
-                return mod_id
-            elif desc:
-                return desc
-            return "Non-AP Mod"
+            # Composite subtitle: [type label] • [v{version}] • [description]
+            parts = [ContentRowWidget._mod_type_label(c)]
+            ver = getattr(c, "version", "")
+            if ver:
+                parts.append(f"v{ver}")
+            desc = getattr(c, "description", "")
+            if desc:
+                parts.append(desc)
+            return " \u2022 ".join(parts)
         if is_manual:
             return "Manual Installation"
         return ""

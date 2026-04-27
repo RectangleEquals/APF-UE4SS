@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import threading
+import time
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -185,41 +186,70 @@ class DeployService:
         components = content.components.types if content.components else ["lua"]
         bp_pak_files = content.components.bp_pak_files if content.components else []
         folder_name = content.folder_name
+        t0 = time.monotonic()
 
-        if any(c in components for c in ("lua", "cpp")):
-            dest = detection.mods_dir / folder_name
-            if dest.exists():
-                shutil.rmtree(str(dest))
-            shutil.copytree(str(cache_path), str(dest),
-                            ignore=shutil.ignore_patterns("enabled.txt"))
-            with self._lock:
-                if self._mods_txt:
-                    self._mods_txt.ensure_entry(folder_name, enabled=True)
-                    self._mods_txt.save()
+        try:
+            if any(c in components for c in ("lua", "cpp")):
+                dest = detection.mods_dir / folder_name
+                self._host.log(
+                    f"[deploy] Deploying {content.content_type} '{folder_name}' "
+                    f"from {cache_path} \u2192 {dest}"
+                )
+                if dest.exists():
+                    shutil.rmtree(str(dest))
+                    self._host.log(f"[deploy] Removed existing install at {dest}")
+                # K-7: exclude .apf_cache; K-8 Fix B: exclude ue4ss.json
+                shutil.copytree(
+                    str(cache_path), str(dest),
+                    ignore=shutil.ignore_patterns("enabled.txt", ".apf_cache", "ue4ss.json"),
+                )
+                n_files = sum(1 for _ in dest.rglob("*") if _.is_file())
+                self._host.log(f"[deploy] Copied mod tree \u2192 {dest}  ({n_files} files)")
+                with self._lock:
+                    if self._mods_txt:
+                        self._mods_txt.ensure_entry(folder_name, enabled=True)
+                        self._mods_txt.save()
+                        self._host.log(f"[deploy] mods.txt updated for '{folder_name}'")
 
-        if "blueprint" in components and bp_pak_files:
-            lm_dir = detection.logicmods_dir
-            if lm_dir:
-                lm_dir.mkdir(parents=True, exist_ok=True)
-                lm_src = cache_path / "LogicMods"
-                for pak in bp_pak_files:
-                    src_pak = lm_src / pak
-                    if src_pak.exists():
-                        shutil.copy2(str(src_pak), str(lm_dir / pak))
+            if "blueprint" in components and bp_pak_files:
+                lm_dir = detection.logicmods_dir
+                if lm_dir:
+                    lm_dir.mkdir(parents=True, exist_ok=True)
+                    lm_src = cache_path / "LogicMods"
+                    for pak in bp_pak_files:
+                        src_pak = lm_src / pak
+                        if src_pak.exists():
+                            shutil.copy2(str(src_pak), str(lm_dir / pak))
+                            self._host.log(f"[deploy] Copied pak '{pak}' \u2192 {lm_dir}")
+
+            elapsed = time.monotonic() - t0
+            self._host.log(f"[deploy] DONE '{folder_name}' ({elapsed:.2f}s)")
+        except Exception as exc:
+            self._host.log(f"[deploy] ERROR deploying '{folder_name}': {exc}")
+            raise
 
     def _deploy_template_content(self, cache_path: "Path", content: "TemplateDescriptor") -> None:
         game_name = content.game_id or content.name or ""
         target = self.get_templates_dir(game_name)
         if not target:
             raise RuntimeError("Cannot deploy template: framework mod not found or in conflict state")
-        target.mkdir(parents=True, exist_ok=True)
-        for src in cache_path.rglob("*"):
-            if src.is_dir():
-                continue
-            rel = src.relative_to(cache_path)
-            dst = target / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(src), str(dst))
+        template_path = getattr(content, "template_path", game_name)
+        self._host.log(f"[deploy] Deploying template '{template_path}' \u2192 {target}")
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            n = 0
+            for src in cache_path.rglob("*"):
+                if src.is_dir():
+                    continue
+                rel = src.relative_to(cache_path)
+                dst = target / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
+                n += 1
+            self._host.log(f"[deploy] Template deployed ({n} files copied)")
+        except Exception as exc:
+            self._host.log(f"[deploy] ERROR deploying template '{template_path}': {exc}")
+            raise
 
     def _deploy_binary_content(
         self,
@@ -232,38 +262,60 @@ class DeployService:
             raise RuntimeError("Game platform directory not detected")
         import zipfile
         dest_dir = platform_dir
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        zips = sorted(cache_path.glob("*.zip"))
-        if zips:
-            for zip_path in zips:
-                if zip_path.stem.lower() == "zmapgenbp":
-                    mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
-                    mapgen_dir.mkdir(parents=True, exist_ok=True)
-                    with zipfile.ZipFile(zip_path, "r") as zf:
-                        zf.extractall(str(mapgen_dir))
-                    continue
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    kind = _classify_zip(zf)
-                    if kind == "blueprint_pak":
-                        lm_dir = getattr(detection, "logicmods_dir", None)
-                        if lm_dir and lm_dir.parts:
-                            lm_dir.mkdir(parents=True, exist_ok=True)
-                            for info in zf.infolist():
-                                if info.filename.lower().endswith(".pak"):
-                                    zf.extract(info, str(lm_dir))
-                        else:
-                            zf.extractall(str(dest_dir))
-                    elif kind == "unknown":
+        install_type = getattr(content, "install_type", "")
+        self._host.log(
+            f"[deploy] Deploying binary '{content.name}' install_type={install_type} "
+            f"from {cache_path}"
+        )
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            zips = sorted(cache_path.glob("*.zip"))
+            if zips:
+                for zip_path in zips:
+                    if zip_path.stem.lower() == "zmapgenbp":
+                        mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
+                        mapgen_dir.mkdir(parents=True, exist_ok=True)
                         self._host.log(
-                            f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
-                            "manual installation required"
+                            f"[deploy] Extracting {zip_path.name} as MapGenBP \u2192 {mapgen_dir}"
                         )
-                    else:
-                        zf.extractall(str(dest_dir))
-        else:
-            for f in cache_path.iterdir():
-                if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
-                    shutil.copy2(str(f), str(dest_dir / f.name))
+                        with zipfile.ZipFile(zip_path, "r") as zf:
+                            zf.extractall(str(mapgen_dir))
+                        continue
+                    with zipfile.ZipFile(zip_path, "r") as zf:
+                        kind = _classify_zip(zf)
+                        if kind == "blueprint_pak":
+                            lm_dir = getattr(detection, "logicmods_dir", None)
+                            if lm_dir and lm_dir.parts:
+                                lm_dir.mkdir(parents=True, exist_ok=True)
+                                self._host.log(
+                                    f"[deploy] Extracting {zip_path.name} as {kind} \u2192 {lm_dir}"
+                                )
+                                for info in zf.infolist():
+                                    if info.filename.lower().endswith(".pak"):
+                                        zf.extract(info, str(lm_dir))
+                            else:
+                                self._host.log(
+                                    f"[deploy] Extracting {zip_path.name} as {kind} \u2192 {dest_dir}"
+                                )
+                                zf.extractall(str(dest_dir))
+                        elif kind == "unknown":
+                            self._host.log(
+                                f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
+                                "manual installation required"
+                            )
+                        else:
+                            self._host.log(
+                                f"[deploy] Extracting {zip_path.name} as {kind} \u2192 {dest_dir}"
+                            )
+                            zf.extractall(str(dest_dir))
+            else:
+                for f in cache_path.iterdir():
+                    if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
+                        shutil.copy2(str(f), str(dest_dir / f.name))
+            self._host.log(f"[deploy] DONE binary '{content.name}'")
+        except Exception as exc:
+            self._host.log(f"[deploy] ERROR deploying binary '{content.name}': {exc}")
+            raise
 
     def undeploy_content(
         self,

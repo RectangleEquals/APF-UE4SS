@@ -126,8 +126,6 @@ class QueuePanelMixin:
             _save_descriptor_cache(item, dest, self._game_id)
 
             from .......core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
-            token = _BUNDLED_TOKEN_PATH.read_text().strip() \
-                if _BUNDLED_TOKEN_PATH.exists() else ""
 
             if isinstance(_mod, _GRB):
                 import zipfile as _zipfile
@@ -177,11 +175,11 @@ class QueuePanelMixin:
                             dest_file.unlink(missing_ok=True)
                             raise ValueError(f"Downloaded file is not a valid zip: {asset_name}")
             elif isinstance(_mod, _TPL):
-                _download_github_folder(owner, repo, _mod.template_path, dest, token,
+                _download_github_folder(owner, repo, _mod.template_path, dest,
                                         progress_cb=lambda p: self._set_progress(item, p))
             else:
                 folder_path = (_src.folder if _src and _src.folder else folder_name)
-                _download_github_folder(owner, repo, folder_path, dest, token,
+                _download_github_folder(owner, repo, folder_path, dest,
                                         progress_cb=lambda p: self._set_progress(item, p))
 
             with self._queue_lock:
@@ -223,50 +221,73 @@ def _save_descriptor_cache(item, dest: Path, current_game_id: str) -> None:
         pass
 
 
+# Registry metadata files that must never be downloaded into the mod cache.
+_REGISTRY_META = frozenset({"ue4ss.json"})
+
+# File extensions that must be written as raw bytes (not decoded as UTF-8 text).
+_BINARY_EXTS = frozenset({".dll", ".pak", ".zip", ".exe", ".pdb", ".db", ".so", ".dylib"})
+
+
 def _download_github_folder(
     owner: str, repo: str, path: str, dest: Path,
-    token: str = "",
     progress_cb: Optional[Callable[[float], None]] = None,
 ) -> None:
-    """Recursively download a GitHub repo folder into dest using the Contents API."""
-    import requests
+    """Recursively download a GitHub repo folder into dest.
 
-    headers: dict = {"Accept": "application/vnd.github+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    Uses GitHubAPI.list_contents() for directory traversal (auth, 1-hr cache,
+    rate-limit tracking). Text files are written via GitHubAPI.fetch_text()
+    (24-hr TTL caching, stale fallback). Binary files are downloaded directly
+    via httpx since fetch_text only handles text.
+    """
+    from .......core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+    api = GitHubAPI(
+        repo_owner=owner, repo_name=repo,
+        token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
+    )
 
     file_list: list[tuple[str, Path]] = []
-    _collect_files(owner, repo, path, dest, headers, file_list)
+    _collect_files(api, path, dest, file_list)
 
     total = len(file_list)
     for idx, (url, dest_file) in enumerate(file_list):
         dest_file.parent.mkdir(parents=True, exist_ok=True)
-        r = requests.get(url, headers=headers, timeout=60)
-        r.raise_for_status()
-        dest_file.write_bytes(r.content)
+        if dest_file.suffix.lower() in _BINARY_EXTS:
+            import requests
+            r = requests.get(url, timeout=60)
+            r.raise_for_status()
+            dest_file.write_bytes(r.content)
+        else:
+            content = api.fetch_text(url)
+            dest_file.write_text(content, encoding="utf-8")
         if progress_cb and total:
             progress_cb((idx + 1) / total)
 
 
-def _collect_files(
-    owner: str, repo: str, api_path: str, local_base: Path,
-    headers: dict, out: list,
-) -> None:
-    import requests
+def _collect_files(api: "object", api_path: str, local_base: Path, out: list) -> None:
+    """Recursively collect (download_url, dest_path) pairs for a GitHub repo subtree.
 
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{api_path}"
-    r = requests.get(url, headers=headers, timeout=30)
-    r.raise_for_status()
-    items = r.json()
-    if isinstance(items, dict):
-        items = [items]
+    Uses GitHubAPI.list_contents() so directory traversal goes through the
+    shared auth/cache/rate-limit layer.
 
+    K-8 Fix A: files named in _REGISTRY_META (e.g. 'ue4ss.json') are skipped.
+    K-9 fix: subdirectory recursion passes the computed subdir path as local_base,
+    preserving the full directory structure instead of flattening everything to root.
+    """
+    items = api.list_contents(api_path)  # type: ignore[attr-defined]
     for item in items:
-        rel = Path(item["path"]).relative_to(api_path) if api_path else Path(item["path"])
+        # K-8 Fix A: skip registry metadata files
+        if item["type"] == "file" and item.get("name", "") in _REGISTRY_META:
+            continue
+        rel = (
+            Path(item["path"]).relative_to(api_path)
+            if api_path else Path(item["path"])
+        )
         local_path = local_base / rel
         if item["type"] == "dir":
             local_path.mkdir(parents=True, exist_ok=True)
-            _collect_files(owner, repo, item["path"], local_base, headers, out)
+            # K-9: pass local_path (the subdir's computed destination) so that
+            # nested files land under their correct parent directory, not at root.
+            _collect_files(api, item["path"], local_path, out)
         elif item["type"] == "file":
             dl_url = item.get("download_url", "")
             if dl_url:

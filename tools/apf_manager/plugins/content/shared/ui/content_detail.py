@@ -41,9 +41,9 @@ class ContentDetailPanel(MDBoxLayout):
     Expandable detail panel for any ContentDescriptor.
 
     Sections rendered based on isinstance checks:
-    - All:               version, content_type
-    - ModDescriptor:     description, author, components, folder, path, registry, tags
-    - APModDescriptor:   + mod_id, dependencies (coloured), capabilities_includes
+    - All:               content_type
+    - ModDescriptor:     author, components, path, registry, tags
+    - APModDescriptor:   + mod_id (highlighted), dependencies (coloured), capabilities_includes
     - TemplateDescriptor: template_path, conflict sources list
     - GithubReleaseBinary: source repo/tag, published_at, changelog excerpt, asset list w/ sizes
     - install_record present: deployed_at, installed version, update-available cue
@@ -98,23 +98,10 @@ class ContentDetailPanel(MDBoxLayout):
     # ------------------------------------------------------------------
 
     def _build_mod(self, c) -> None:
-        # Version
-        if c.version:
-            self._row("Version", c.version)
-
         # Type
         type_label = _TYPE_LABELS.get(c.content_type, c.content_type or "")
         if type_label:
             self._row("Type", type_label)
-
-        # Description
-        desc = getattr(c, "description", "")
-        if desc:
-            self.add_widget(MDLabel(
-                text=desc, font_style="Label", role="small",
-                size_hint_y=None, height=dp(16),
-                theme_text_color="Secondary",
-            ))
 
         # Author
         author = getattr(c, "author", "")
@@ -132,16 +119,17 @@ class ContentDetailPanel(MDBoxLayout):
                 chip_row.add_widget(component_status_chip(ct, ok=True))
             self.add_widget(chip_row)
 
-        # Install folder
-        fn = getattr(c, "folder_name", "")
-        if fn:
-            self._row("Folder", fn)
-
-        # Path within registry repo
+        # Path within registry repo (deduplicates redundant Folder row — K-1)
         _src = getattr(c, "source", None)
+        if _src and _src.folder:
+            self._row("Path", _src.folder)
+        else:
+            fn = getattr(c, "folder_name", "")
+            if fn:
+                self._row("Folder", fn)
+
+        # Registry (short name only — no URL row)
         if _src:
-            if _src.folder:
-                self._row("Path", _src.folder)
             self._row("Registry", _src.repo.full_name)
 
         # Tags
@@ -158,8 +146,13 @@ class ContentDetailPanel(MDBoxLayout):
     def _build_ap_mod(self, c) -> None:
         self._build_mod(c)
 
+        # Mod ID as a highlighted blue label (K-4)
         if c.mod_id:
-            self._row("Mod ID", c.mod_id)
+            self.add_widget(MDLabel(
+                text=c.mod_id, font_style="Label", role="small",
+                size_hint_y=None, height=dp(16),
+                theme_text_color="Custom", text_color=(0.5, 0.7, 0.9, 1),
+            ))
 
         deps    = [d for d in (c.dependencies or []) if not d.is_incompatible]
         incompat = [d for d in (c.dependencies or []) if d.is_incompatible]

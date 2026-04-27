@@ -39,10 +39,10 @@ class ModsSectionMixin:
         def _on_pkg_check(inst, val, mods=pkg_mods):
             for m in mods:
                 k = _mod_key(m)
-                if val:
-                    self._checked.add(k)
-                else:
-                    self._checked.discard(k)
+                self._checked.add(k) if val else self._checked.discard(k)
+            if hasattr(self, "_sync_queue_btn"):
+                self._sync_queue_btn()
+            Clock.schedule_once(lambda dt: self._do_refresh(), 0)
         cb.bind(active=_on_pkg_check)
         header.add_widget(cb)
         header.add_widget(MDIcon(
@@ -114,21 +114,14 @@ class ModsSectionMixin:
             pass
 
         # docs action button on the unexpanded row
+        # K-3: readme_url is always a full https://raw.githubusercontent.com/… URL from the
+        # resolver — use it directly, no re-wrapping.
         actions = []
         _docs = getattr(mod, "docs", None)
         if _docs and getattr(_docs, "readme_url", ""):
-            _src = getattr(mod, "source", None)
-            _readme = _docs.readme_url
-            if _src:
-                _raw_url = (
-                    f"https://raw.githubusercontent.com/"
-                    f"{_src.repo.owner}/{_src.repo.repo}/HEAD/{_readme}"
-                )
-            else:
-                _raw_url = _readme
             _title = getattr(mod, "name", folder)
 
-            def _open_readme(*_, url=_raw_url, title=_title):
+            def _open_readme(*_, url=_docs.readme_url, title=_title):
                 docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
                 if docs_svc and hasattr(docs_svc, "open_url"):
                     docs_svc.open_url(url, title=title, show_sidebar=True,
@@ -141,7 +134,7 @@ class ModsSectionMixin:
         row_widget = ContentRowWidget(
             content=mod, row_index=index,
             checked=key in self._checked, expanded=expanded,
-            on_check=lambda val, k=key: self._on_check(k, val),
+            on_check=lambda val, k=key: self._on_check_mod(k, val),
             on_expand=lambda *_: self._toggle_expand(key),
             actions=actions,
         )
@@ -174,7 +167,8 @@ class ModsSectionMixin:
     def _other_row(self, item, index: int) -> MDBoxLayout:
         from .....shared.ui.content_row import ContentRowWidget
         from .....shared.data.content_types import GithubReleaseBinary as _GRB
-        if isinstance(item, _GRB):
+        is_grb = isinstance(item, _GRB)
+        if is_grb:
             _hash = item.tags.content_hash if item.tags else ""
             _src = item.source
             key = (f"other:{_hash}" if _hash else
@@ -183,13 +177,44 @@ class ModsSectionMixin:
             key = f"other:{getattr(item, 'name', str(index))}"
         expanded = key in self._expanded
 
+        # K-5 Fix B: GRB parent checkbox cascades down to all assets (downward cascade).
+        # Upward cascade (assets → parent) is handled in _other_detail/_on_asset_check.
+        if is_grb:
+            _assets = item.assets or []
+            def _grb_on_check(val, k=key, assets=_assets):
+                self._on_check(k, val)
+                for a in assets:
+                    a.selected = val
+                if hasattr(self, "_sync_queue_btn"):
+                    self._sync_queue_btn()
+                Clock.schedule_once(lambda dt: self._do_refresh(), 0)
+            on_check_cb = lambda val, k=key: _grb_on_check(val)
+        else:
+            on_check_cb = lambda val, k=key: self._on_check(k, val)
+
+        # K-11 Fix B: docs action button when item.docs is present (same pattern as _mod_row).
+        actions = []
+        _docs = getattr(item, "docs", None)
+        if _docs and getattr(_docs, "readme_url", ""):
+            _title = getattr(item, "name", "Docs")
+
+            def _open_docs(*_, url=_docs.readme_url, title=_title):
+                docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+                if docs_svc and hasattr(docs_svc, "open_url"):
+                    docs_svc.open_url(url, title=title, show_sidebar=True,
+                                      show_mode_toggle=False, sidebar_mode="verbose")
+
+            actions.append({"icon": "file-document-outline", "tooltip": "View Docs",
+                            "callback": _open_docs})
+
         outer = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
         outer.add_widget(ContentRowWidget(
             content=item, row_index=index,
             checked=key in self._checked,
             expanded=expanded,
-            on_check=lambda val, k=key: self._on_check(k, val),
+            on_check=on_check_cb,
             on_expand=lambda *_: self._toggle_expand(key),
+            actions=actions,
         ))
         if expanded:
             outer.add_widget(self._other_detail(item, outer_key=key))

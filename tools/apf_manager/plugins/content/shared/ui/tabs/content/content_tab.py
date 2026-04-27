@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Optional, Callable
 
+from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
@@ -293,7 +294,6 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
                 traceback.print_exc()
                 self._cached_other_items = []
 
-            from kivy.clock import Clock
             Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
         threading.Thread(target=_bg, daemon=True).start()
@@ -331,7 +331,6 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         else:
             self._expanded.clear()
             self._expanded.add(key)
-        from kivy.clock import Clock
         Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
     @staticmethod
@@ -353,8 +352,36 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
             self._checked.discard(key)
         self._sync_queue_btn()
 
-    def _on_mod_check(self, key: str, checked: bool, mod) -> None:
+    def _on_check_mod(self, key: str, checked: bool) -> None:
+        """Check/uncheck a mod and auto-cascade to its dependencies (K-6 UX convenience).
+
+        This is UI-only — the real enforcement happens at install time via
+        resolve_install_order. Recursively walks transitive deps.
+        """
         self._on_check(key, checked)
+        if not checked:
+            return
+        folder = key[4:]  # strip "mod:" prefix
+        mod = next(
+            (m for m in self._all_mods
+             if getattr(m, "folder_name", "") == folder
+             or getattr(m, "mod_id", "") == folder),
+            None,
+        )
+        if not mod:
+            return
+        for dep in getattr(mod, "dependencies", None) or []:
+            if getattr(dep, "is_incompatible", False):
+                continue
+            dep_mod = next(
+                (m for m in self._all_mods if getattr(m, "mod_id", "") == dep.mod_id),
+                None,
+            )
+            if dep_mod:
+                dep_key = f"mod:{dep_mod.folder_name}"
+                if dep_key not in self._checked:
+                    self._on_check_mod(dep_key, True)
+        Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
     def _check_all(self, checked: bool) -> None:
         from .....shared.data.content_types import GithubReleaseBinary as _GRB
@@ -411,6 +438,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         if not checked_mods and not checked_templates and not checked_other:
             return
 
+        # Run validation for hard errors/warnings before proceeding
         validation_svc = self._host.get_service("validation")
         if validation_svc and checked_mods:
             mods_svc = self._host.get_service("mods")
@@ -431,7 +459,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
                                           checked_other, allow_proceed=True)
                 return
 
-        self._show_install_plan(checked_mods, checked_templates, checked_other)
+        self._resolve_and_queue(checked_mods, checked_templates, checked_other)
 
     def _show_validation_dlg(self, errors, warnings, mods, templates,
                               other=None, allow_proceed: bool = False) -> None:
@@ -454,7 +482,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
             btns.append(MDButton(
                 MDButtonText(text="Queue Anyway"), style="filled",
                 on_release=lambda *_, m=mods, t=templates, o=_other: (
-                    dlg.dismiss(), self._show_install_plan(m, t, o)
+                    dlg.dismiss(), self._resolve_and_queue(m, t, o)
                 ),
             ))
 
@@ -465,11 +493,14 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         )
         dlg.open()
 
-    def _show_install_plan(self, mods: list, templates: list, other: list) -> None:
-        from .....shared.ui.install_plan_dialog import InstallPlanDialog
+    def _resolve_and_queue(self, mods: list, templates: list, other: list) -> None:
+        """Resolve dependency order, show a snackbar for missing deps, and queue directly.
+
+        No modal confirmation dialog — dep ordering is a backend concern, not a
+        user-confirmation step. Missing deps surface as a non-blocking warning.
+        """
         from .....utils.dependency_resolver import resolve_install_order
 
-        # Build available and installed maps for dep resolution
         available: dict = {}
         installed: dict = {}
         try:
@@ -492,22 +523,23 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
         staged = mods + templates + other
         try:
-            ordered, missing, warnings = resolve_install_order(staged, available, installed)
+            ordered, missing, _ = resolve_install_order(staged, available, installed)
         except Exception:
-            ordered, missing, warnings = staged, [], []
+            ordered, missing = staged, []
 
-        # Split ordered back into (mods, templates, other) for _do_queue
+        if missing:
+            from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
+            names = ", ".join(missing[:3])
+            suffix = "\u2026" if len(missing) > 3 else ""
+            MDSnackbar(MDSnackbarText(
+                text=f"Warning: missing deps \u2014 {names}{suffix}"
+            )).open()
+
         from .....shared.data.content_types import TemplateDescriptor, BinaryDescriptor
         o_mods      = [x for x in ordered if not isinstance(x, (TemplateDescriptor, BinaryDescriptor))]
         o_templates = [x for x in ordered if isinstance(x, TemplateDescriptor)]
         o_other     = [x for x in ordered if isinstance(x, BinaryDescriptor)]
-
-        InstallPlanDialog(
-            items=ordered,
-            missing=missing,
-            warnings=warnings,
-            on_confirm=lambda: self._do_queue(o_mods, o_templates, o_other),
-        ).open()
+        self._do_queue(o_mods, o_templates, o_other)
 
     def _do_queue(self, mods: list, templates: Optional[list] = None,
                   other: Optional[list] = None) -> None:

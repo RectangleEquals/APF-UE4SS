@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -405,7 +406,42 @@ class RegistryService:
         with self._lock:
             self._mods_cache = mods
             self._mods_cache_game_id = game_id
+
+        # K-3 Fix C: pre-warm the docs cache so the viewer is fast on first open.
+        # Runs on a daemon thread — never blocks the caller.
+        threading.Thread(
+            target=self._prefetch_docs_bg,
+            args=(list(mods),),
+            daemon=True,
+        ).start()
+
         return mods
+
+    def _prefetch_docs_bg(self, mods: list) -> None:
+        """Background pre-fetch for all mod README files.
+
+        GitHubAPI.fetch_text caches responses with a 24-hour TTL, so this is a
+        no-op when the cache is warm. On a cold start, it warms the cache so the
+        in-app docs viewer opens instantly without a network round-trip.
+        """
+        try:
+            for mod in mods:
+                _docs = getattr(mod, "docs", None)
+                if not _docs:
+                    continue
+                url = getattr(_docs, "readme_url", "")
+                if not url or not url.startswith("http"):
+                    continue
+                _src = getattr(mod, "source", None)
+                if not _src:
+                    continue
+                try:
+                    api = self._make_api(_src.repo.owner, _src.repo.repo)
+                    api.fetch_text(url, force_refresh=False)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _load_mods(self, game_id: str) -> list:
         resolver = self._get_resolver()
@@ -480,6 +516,9 @@ class RegistryService:
         Traverses registries directly (not through get_mods) so that UE4SS options
         are gated only by their own ue4ss_option: keys — independent of whether the
         framework mod itself is in selected_content.
+
+        K-8 Fix C/D: freshly built descriptors are cached to disk. On API failure,
+        falls back to the last cached descriptor set for that registry + game.
         """
         from ..utils.registry.resolver import _is_framework_mod_id
         resolver = self._get_resolver()
@@ -488,20 +527,93 @@ class RegistryService:
         for entry in self.get_user_registries():
             if game_id and entry.game_id and entry.game_id.lower() != game_id.lower():
                 continue
+            entry_descriptors: list = []
             try:
                 discovered = resolver.traverse(entry.url, cache)
-            except Exception:
-                continue
-            for mod in discovered:
-                if not mod.ue4ss_info or not _is_framework_mod_id(getattr(mod, "mod_id", "")):
-                    continue
-                for opt in mod.ue4ss_info.get("options", []):
-                    raw_repo = opt.get("repo", "")
-                    tag = opt.get("tag", "")
-                    if not ContentFilter.includes_ue4ss(entry.selected_content, raw_repo, tag):
+                for mod in discovered:
+                    if not mod.ue4ss_info or not _is_framework_mod_id(getattr(mod, "mod_id", "")):
                         continue
-                    results.append(_to_binary_descriptor(opt, entry))
+                    for opt in mod.ue4ss_info.get("options", []):
+                        raw_repo = opt.get("repo", "")
+                        tag = opt.get("tag", "")
+                        if not ContentFilter.includes_ue4ss(entry.selected_content, raw_repo, tag):
+                            continue
+                        entry_descriptors.append(_to_binary_descriptor(opt, entry))
+                # K-8 Fix C: persist fresh descriptors to disk
+                if entry_descriptors:
+                    self._save_grb_descriptors(entry, game_id, entry_descriptors)
+            except Exception as exc:
+                self._host.log(
+                    f"[registry] get_other_content traversal failed for {entry.url}: {exc} "
+                    "— falling back to cached descriptors"
+                )
+                # K-8 Fix D: fall back to persisted descriptor cache on API failure
+                entry_descriptors = self._load_grb_descriptors(entry, game_id)
+            results.extend(entry_descriptors)
         return results
+
+    def _grb_cache_dir(self, entry: RegistryDescriptor, game_id: str) -> "Path":
+        """Return the per-registry+game cache directory for binary descriptors."""
+        slug = f"{entry.repo.owner}+{entry.repo.repo}"
+        return (
+            Path.home() / ".apf_manager" / "cache" / "_registries"
+            / slug / (game_id or "_global") / "ue4ss_options"
+        )
+
+    def _save_grb_descriptors(
+        self, entry: RegistryDescriptor, game_id: str, descriptors: list
+    ) -> None:
+        """Persist typed binary descriptors to disk (K-8 Fix C)."""
+        import hashlib
+        from ..shared.data.pipeline_state import ContentSerializer
+        cache_dir = self._grb_cache_dir(entry, game_id)
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for desc in descriptors:
+                # Use content_hash if available, otherwise derive from name + install_type
+                _hash = getattr(getattr(desc, "tags", None), "content_hash", None)
+                key = _hash or f"{desc.name}|{getattr(desc, 'install_type', '')}"
+                safe_key = hashlib.sha256(key.encode()).hexdigest()[:16]
+                dest = cache_dir / safe_key
+                dest.mkdir(parents=True, exist_ok=True)
+                ContentSerializer().save_cache(dest, desc)
+        except Exception as exc:
+            self._host.log(f"[registry] _save_grb_descriptors failed: {exc}")
+
+    def _load_grb_descriptors(
+        self, entry: RegistryDescriptor, game_id: str
+    ) -> list:
+        """Load persisted binary descriptors from disk (K-8 Fix D)."""
+        from ..shared.data.pipeline_state import ContentSerializer
+        cache_dir = self._grb_cache_dir(entry, game_id)
+        results = []
+        if not cache_dir.exists():
+            return results
+        for subdir in cache_dir.iterdir():
+            if not subdir.is_dir():
+                continue
+            result = ContentSerializer().load_cache(subdir)
+            if result:
+                desc, _ = result
+                results.append(desc)
+        return results
+
+    def invalidate_other_cache(self, owner: str, repo: str, game_id: str) -> None:
+        """Delete the on-disk binary descriptor cache for a registry+game (K-8 Fix D).
+
+        Called when the user clicks Refresh or re-adds a registry, forcing a fresh
+        API load on the next get_other_content() call.
+        """
+        slug = f"{owner}+{repo}"
+        cache_dir = (
+            Path.home() / ".apf_manager" / "cache" / "_registries"
+            / slug / (game_id or "_global") / "ue4ss_options"
+        )
+        try:
+            if cache_dir.exists():
+                shutil.rmtree(str(cache_dir))
+        except Exception as exc:
+            self._host.log(f"[registry] invalidate_other_cache failed: {exc}")
 
     def get_framework_candidates(self, game_id: str) -> list[FrameworkModCandidate]:
         """Return scored framework mod candidates from all registered registries."""
@@ -980,6 +1092,19 @@ def _to_binary_descriptor(opt: dict, entry: RegistryDescriptor) -> BinaryDescrip
     name = opt.get("note", "UE4SS")
     install_type = opt.get("install_type", "ue4ss")
 
+    # K-11 Fix A: parse the optional 'docs' field (registry-relative path → full raw URL).
+    # The docs field is a path relative to the REGISTRY repo root (e.g. "APFrameworkMod/setup.md").
+    # We construct a full raw GitHub URL here because the path is registry-relative — this is
+    # intentionally different from the K-3 bug, where an already-full URL was being re-wrapped.
+    docs_path = opt.get("docs", "")
+    docs = None
+    if docs_path:
+        raw_doc_url = (
+            f"https://raw.githubusercontent.com/"
+            f"{entry.repo.owner}/{entry.repo.repo}/HEAD/{docs_path}"
+        )
+        docs = DocInfo(readme_url=raw_doc_url)
+
     if otype == "github_release":
         fp = "|".join([owner, repo_name, tag, install_type, entry.repo.full_name, "github_release"])
         content_hash = hashlib.sha256(fp.encode()).hexdigest()[:20]
@@ -993,11 +1118,15 @@ def _to_binary_descriptor(opt: dict, entry: RegistryDescriptor) -> BinaryDescrip
             ),
             registry_source=RegistrySource(repo=entry.repo, registry_url=entry.url, folder=""),
             tags=ContentTags(content_hash=content_hash),
+            docs=docs,
         )
     elif otype == "external_url":
-        return ExternalUrlBinary(name=name, install_type=install_type, url=opt.get("url", ""), note=name)
+        return ExternalUrlBinary(
+            name=name, install_type=install_type,
+            url=opt.get("url", ""), note=name, docs=docs,
+        )
     else:
-        return ManualBinary(name=name, install_type=install_type, note=name)
+        return ManualBinary(name=name, install_type=install_type, note=name, docs=docs)
 
 
 def _ui(fn: Callable) -> None:
