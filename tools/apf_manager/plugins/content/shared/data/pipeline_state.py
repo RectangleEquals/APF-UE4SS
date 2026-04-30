@@ -47,7 +47,9 @@ def _from_dict_recursive(cls, data: dict):
         return data
     try:
         hints = get_type_hints(cls)
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("[pipeline_state] WARN: get_type_hints failed for %s: %s", cls, exc)
         hints = {}
     kwargs = {}
     for f in dataclasses.fields(cls):
@@ -62,8 +64,14 @@ def _from_dict_recursive(cls, data: dict):
             inner if inner and dataclasses.is_dataclass(inner)
             else (ft if ft and dataclasses.is_dataclass(ft) else None)
         )
-        if target_cls and isinstance(val, dict):
-            val = _from_dict_recursive(target_cls, val)
+        if target_cls:
+            if isinstance(val, list):
+                val = [
+                    _from_dict_recursive(target_cls, item) if isinstance(item, dict) else item
+                    for item in val
+                ]
+            elif isinstance(val, dict):
+                val = _from_dict_recursive(target_cls, val)
         kwargs[f.name] = val
     return cls(**kwargs)
 
@@ -87,7 +95,9 @@ class ContentSerializer:
         with gzip.open(str(cache_dir / _CACHE_FILENAME), "wt", encoding="utf-8", compresslevel=6) as f:
             json.dump(payload, f, separators=(",", ":"), default=str)
 
-    def load_cache(self, cache_dir: Path) -> Optional[tuple[ContentDescriptor, str]]:
+    def load_cache(
+        self, cache_dir: Path, log_fn=None
+    ) -> Optional[tuple[ContentDescriptor, str]]:
         path = cache_dir / _CACHE_FILENAME
         if not path.exists():
             return None
@@ -95,7 +105,9 @@ class ContentSerializer:
             with gzip.open(str(path), "rt", encoding="utf-8") as f:
                 d = json.load(f)
             return self.from_dict(d["content"]), d.get("cached_at", "")
-        except Exception:
+        except Exception as exc:
+            if log_fn:
+                log_fn(f"[cache] WARN: failed to load {path}: {exc}")
             return None
 
 
@@ -116,6 +128,7 @@ class InstallRecord:
     components: list = field(default_factory=list)
     bp_pak_files_deployed: list = field(default_factory=list)
     capabilities_includes: list = field(default_factory=list)
+    dependencies: list = field(default_factory=list)  # list[str] mod_ids this mod hard-depends on
     deployed_at: str = ""
 
     def to_dict(self) -> dict:
@@ -134,7 +147,7 @@ class InstallRecord:
         game_id: str,
         bp_pak_files_deployed: Optional[list] = None,
     ) -> "InstallRecord":
-        from .content_base import RegistrySource
+        from .content_base import RegistrySource, DependencySpec
         from .content_types import (
             ModDescriptor, APModDescriptor, BinaryDescriptor, RegistryDescriptor,
         )
@@ -159,6 +172,10 @@ class InstallRecord:
         if isinstance(content, APModDescriptor):
             r.mod_id = content.mod_id
             r.capabilities_includes = list(content.capabilities_includes)
+            r.dependencies = [
+                d.mod_id for d in (content.dependencies or [])
+                if isinstance(d, DependencySpec) and not d.is_incompatible and d.mod_id
+            ]
         if isinstance(content, BinaryDescriptor):
             r.install_type = content.install_type
             if bp_pak_files_deployed:

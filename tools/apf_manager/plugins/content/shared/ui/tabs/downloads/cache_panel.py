@@ -6,7 +6,6 @@ from typing import Optional, TYPE_CHECKING
 
 from kivy.clock import Clock
 from kivy.metrics import dp
-from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDLabel
@@ -56,11 +55,11 @@ class CachePanelMixin:
         # Size label
         size = ci.size_mb
         if size > 0:
-            from kivymd.uix.boxlayout import MDBoxLayout as _BL
-            from kivymd.uix.label import MDLabel as _ML
-            size_row = _BL(orientation="horizontal", size_hint_y=None, height=dp(22),
-                           padding=[dp(16), 0, dp(8), 0])
-            size_row.add_widget(_ML(
+            size_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(22),
+                padding=[dp(16), 0, dp(8), 0],
+            )
+            size_row.add_widget(MDLabel(
                 text=f"Cache size: {size:.1f} MB",
                 font_style="Label", role="small", size_hint=(1, 1),
                 theme_text_color="Custom", text_color=COL_DIM,
@@ -72,23 +71,8 @@ class CachePanelMixin:
             changelog = ci.content.source.changelog
 
             def _show_changelog(*_, _cl=changelog, _nm=ci.display_name):
-                from kivymd.uix.dialog import (
-                    MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-                    MDDialogButtonContainer,
-                )
-                dlg_ref = [None]
-                def _close(*_):
-                    if dlg_ref[0]:
-                        dlg_ref[0].dismiss()
-                dlg = MDDialog(
-                    MDDialogHeadlineText(text="Release Notes"),
-                    MDDialogSupportingText(text=_cl[:500]),
-                    MDDialogButtonContainer(
-                        MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
-                    ),
-                )
-                dlg_ref[0] = dlg
-                dlg.open()
+                from .....shared.ui.dialogs.changelog_dialog import ChangelogDialog
+                ChangelogDialog(title=f"{_nm} — Release Notes", changelog=_cl).open()
 
             outer.add_widget(MDButton(
                 MDButtonText(text="Release Notes"),
@@ -127,8 +111,8 @@ class CachePanelMixin:
         import shutil
         try:
             shutil.rmtree(ci.cache_path, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._host.log(f"[cache] WARN: failed to remove cached item {ci.cache_path}: {exc}")
         self._selected_cache.discard(str(ci.cache_path))
         self._scan_cache_and_rebuild()
 
@@ -144,8 +128,8 @@ class CachePanelMixin:
         for ci in selected:
             try:
                 shutil.rmtree(ci.cache_path, ignore_errors=True)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._host.log(f"[cache] WARN: failed to remove {ci.cache_path}: {exc}")
             self._selected_cache.discard(str(ci.cache_path))
         self._scan_cache_and_rebuild()
 
@@ -196,7 +180,8 @@ class CachePanelMixin:
             seen = {id(ci) for ci in result}
             result += [ci for ci in items if id(ci) not in seen]
             return result
-        except Exception:
+        except Exception as exc:
+            self._host.log(f"[cache] WARN: dependency sort failed, using original order: {exc}")
             return items
 
     def _on_install_all(self) -> None:
@@ -204,30 +189,17 @@ class CachePanelMixin:
 
     def _show_install_warn(self, errors, warnings, allow_proceed: bool,
                            items: Optional[list] = None) -> None:
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
+        from .....shared.ui.dialogs.validation_warning_dialog import ValidationWarningDialog
+        install_items = items or self._cached
         lines  = [f"[ERROR] {r.label}: {r.detail}" for r in errors]
         lines += [f"[WARN]  {r.label}: {r.detail}" for r in warnings]
         title  = "Cannot Install" if not allow_proceed else "Install with Warnings?"
-        install_items = items or self._cached
-        btns: list = [
-            Widget(),
-            MDButton(MDButtonText(text="Cancel"), style="text",
-                     on_release=lambda *_: dlg.dismiss()),
-        ]
-        if allow_proceed:
-            btns.append(MDButton(
-                MDButtonText(text="Install Anyway"), style="filled",
-                on_release=lambda *_: (dlg.dismiss(), self._do_install(install_items)),
-            ))
-        dlg = MDDialog(
-            MDDialogHeadlineText(text=title),
-            MDDialogSupportingText(text="\n".join(lines) or "Validation issue."),
-            MDDialogButtonContainer(*btns),
-        )
-        dlg.open()
+        ValidationWarningDialog.for_install(
+            title=title,
+            lines=lines,
+            allow_proceed=allow_proceed,
+            on_confirm=lambda: self._do_install(install_items),
+        ).open()
 
     def _do_install(self, items: list) -> None:
         deploy_svc = self._host.get_service("deploy")

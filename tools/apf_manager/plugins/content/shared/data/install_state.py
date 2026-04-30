@@ -25,9 +25,12 @@ Schema per game:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .pipeline_state import InstallRecord
@@ -55,7 +58,8 @@ class InstallStateManager:
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             self._data = raw.get("installed", [])
-        except Exception:
+        except Exception as exc:
+            _log.warning("[install_state] WARN: failed to load %s: %s", self._path, exc)
             self._data = []
 
     def _save(self) -> None:

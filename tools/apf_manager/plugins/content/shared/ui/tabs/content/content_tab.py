@@ -18,16 +18,12 @@ from typing import Optional, Callable
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
-from kivymd.uix.label import MDIcon, MDLabel
-from kivymd.uix.selectioncontrol import MDCheckbox
+from kivymd.uix.label import MDLabel
 
-from .......gui.widgets.tip_icon_button import TipIconButton
 from .....services.mod_service import _FRAMEWORK_MOD_RE
-from .....shared.ui.constants import COL_DIM, COL_WARN
 from .....shared.ui.section_header import make_section_header
+from .....shared.ui.content_toolbar_widget import ContentToolbarWidget
 from .templates_section import TemplatesSectionMixin
 from .mods_section import ModsSectionMixin
 
@@ -60,44 +56,13 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        toolbar = MDBoxLayout(
-            orientation="horizontal",
-            size_hint_y=None, height=dp(48),
-            md_bg_color=(0.12, 0.16, 0.20, 1),
-            padding=(dp(8), 0), spacing=dp(4),
+        self._toolbar = ContentToolbarWidget(
+            on_check_all=lambda: self._check_all(True),
+            on_uncheck_all=lambda: self._check_all(False),
+            on_refresh=self._load_other_items_bg,
+            on_queue=self._on_queue_pressed,
         )
-        from kivymd.uix.button import MDButtonIcon
-        self._btn_check_all = MDButton(
-            MDButtonIcon(icon="checkbox-multiple-marked"),
-            MDButtonText(text="Select All"),
-            style="outlined", size_hint=(None, None), size=(dp(128), dp(32)),
-            pos_hint={"center_y": 0.5},
-            on_release=lambda *_: self._check_all(True),
-        )
-        self._btn_uncheck_all = MDButton(
-            MDButtonIcon(icon="checkbox-multiple-blank-outline"),
-            MDButtonText(text="Select None"),
-            style="outlined", size_hint=(None, None), size=(dp(128), dp(32)),
-            pos_hint={"center_y": 0.5},
-            on_release=lambda *_: self._check_all(False),
-        )
-        toolbar.add_widget(self._btn_check_all)
-        toolbar.add_widget(self._btn_uncheck_all)
-        toolbar.add_widget(Widget(size_hint_x=1))
-        toolbar.add_widget(TipIconButton(
-            icon="refresh",
-            tooltip_text="Refresh registry content",
-            on_release=lambda *_: self._load_other_items_bg(),
-        ))
-        self._btn_queue = MDButton(
-            MDButtonText(text="Queue for Download"),
-            style="filled", size_hint=(None, None), size=(dp(200), dp(36)),
-            pos_hint={"center_y": 0.5},
-            on_release=lambda *_: self._on_queue_pressed(),
-        )
-        self._btn_queue.disabled = True
-        toolbar.add_widget(self._btn_queue)
-        self.add_widget(toolbar)
+        self.add_widget(self._toolbar)
 
         self.add_widget(MDLabel(
             text=(
@@ -289,8 +254,9 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
                 combined = enriched_custom + ue4ss_official + fw_items
                 self._cached_other_items = _dedup_other_items(combined)
-            except Exception:
+            except Exception as exc:
                 import traceback
+                self._host.log(f"[content_tab] ERROR: failed to load other items: {exc}")
                 traceback.print_exc()
                 self._cached_other_items = []
 
@@ -352,37 +318,6 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
             self._checked.discard(key)
         self._sync_queue_btn()
 
-    def _on_check_mod(self, key: str, checked: bool) -> None:
-        """Check/uncheck a mod and auto-cascade to its dependencies (K-6 UX convenience).
-
-        This is UI-only — the real enforcement happens at install time via
-        resolve_install_order. Recursively walks transitive deps.
-        """
-        self._on_check(key, checked)
-        if not checked:
-            return
-        folder = key[4:]  # strip "mod:" prefix
-        mod = next(
-            (m for m in self._all_mods
-             if getattr(m, "folder_name", "") == folder
-             or getattr(m, "mod_id", "") == folder),
-            None,
-        )
-        if not mod:
-            return
-        for dep in getattr(mod, "dependencies", None) or []:
-            if getattr(dep, "is_incompatible", False):
-                continue
-            dep_mod = next(
-                (m for m in self._all_mods if getattr(m, "mod_id", "") == dep.mod_id),
-                None,
-            )
-            if dep_mod:
-                dep_key = f"mod:{dep_mod.folder_name}"
-                if dep_key not in self._checked:
-                    self._on_check_mod(dep_key, True)
-        Clock.schedule_once(lambda dt: self._do_refresh(), 0)
-
     def _check_all(self, checked: bool) -> None:
         from .....shared.data.content_types import GithubReleaseBinary as _GRB
         for mod in self._all_mods:
@@ -403,7 +338,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         self._do_refresh()
 
     def _sync_queue_btn(self) -> None:
-        self._btn_queue.disabled = not bool(self._checked)
+        self._toolbar.set_queue_enabled(bool(self._checked))
 
     def _on_queue_pressed(self) -> None:
         from .....shared.data.content_types import GithubReleaseBinary as _GRB
@@ -463,35 +398,14 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
     def _show_validation_dlg(self, errors, warnings, mods, templates,
                               other=None, allow_proceed: bool = False) -> None:
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
-        lines = [f"[ERROR] {r.label}: {r.detail}" for r in errors]
-        lines += [f"[WARN]  {r.label}: {r.detail}" for r in warnings]
-        title = "Cannot Queue" if not allow_proceed else "Queue with Warnings?"
-        text  = "\n".join(lines) or "Validation issue."
+        from .....shared.ui.dialogs.validation_warning_dialog import ValidationWarningDialog
         _other = other or []
-
-        btns: list = [
-            Widget(),
-            MDButton(MDButtonText(text="Cancel"), style="text",
-                     on_release=lambda *_: dlg.dismiss()),
-        ]
-        if allow_proceed:
-            btns.append(MDButton(
-                MDButtonText(text="Queue Anyway"), style="filled",
-                on_release=lambda *_, m=mods, t=templates, o=_other: (
-                    dlg.dismiss(), self._resolve_and_queue(m, t, o)
-                ),
-            ))
-
-        dlg = MDDialog(
-            MDDialogHeadlineText(text=title),
-            MDDialogSupportingText(text=text),
-            MDDialogButtonContainer(*btns),
-        )
-        dlg.open()
+        ValidationWarningDialog.for_queue(
+            errors=errors,
+            warnings=warnings,
+            allow_proceed=allow_proceed,
+            on_confirm=lambda: self._resolve_and_queue(mods, templates, _other),
+        ).open()
 
     def _resolve_and_queue(self, mods: list, templates: list, other: list) -> None:
         """Resolve dependency order, show a snackbar for missing deps, and queue directly.
@@ -518,13 +432,14 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
                     for d in InstallStateManager(self._game_id).get_all()
                     if d.get("mod_id")
                 }
-        except Exception:
-            pass
+        except Exception as exc:
+            self._host.log(f"[content] WARN: failed to load registry/install state for dep sort: {exc}")
 
         staged = mods + templates + other
         try:
             ordered, missing, _ = resolve_install_order(staged, available, installed)
-        except Exception:
+        except Exception as exc:
+            self._host.log(f"[content] WARN: resolve_install_order failed: {exc}")
             ordered, missing = staged, []
 
         if missing:

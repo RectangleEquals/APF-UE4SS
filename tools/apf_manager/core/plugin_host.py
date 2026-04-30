@@ -79,6 +79,7 @@ class PluginHost:
         self._navigate_fn: Optional[Callable[["GameProfile"], None]] = None
         self._dialog_fn: Optional[Callable[[str, dict], None]] = None
         self._failure_fn: Optional[Callable[[], None]] = None
+        self._state_listeners: dict[str, list[Callable]] = {}
         self.has_failures: bool = False
         self.dev_mode: bool = False
         self.devtools_mode: bool = False
@@ -388,6 +389,16 @@ class PluginHost:
     def log(self, msg: str) -> None:
         if self._log_fn:
             self._log_fn(msg)
+
+    def notify_state_change(self, scope: str) -> None:
+        """Notify all subscribers that state in the given scope has changed."""
+        from kivy.clock import Clock
+        for fn in list(self._state_listeners.get(scope, [])):
+            Clock.schedule_once(lambda dt, _fn=fn: _fn(), 0)
+
+    def subscribe_state_change(self, scope: str, callback: Callable) -> None:
+        """Register a callback to be invoked when notify_state_change(scope) is called."""
+        self._state_listeners.setdefault(scope, []).append(callback)
 
     # -----------------------------------------------------------------------
     # Wiring (set by the GUI app after construction)

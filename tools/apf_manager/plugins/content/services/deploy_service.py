@@ -356,8 +356,8 @@ class DeployService:
             for pak in (record.bp_pak_files_deployed or []):
                 try:
                     (detection.logicmods_dir / pak).unlink(missing_ok=True)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._host.log(f"[deploy] WARN: failed to remove pak '{pak}': {exc}")
 
     def _undeploy_template_record(self, record: "InstallRecord") -> None:
         target = self.get_templates_dir(record.game_id or record.name)
@@ -424,8 +424,8 @@ class DeployService:
                 pak_path = detection.logicmods_dir / pak
                 try:
                     pak_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._host.log(f"[deploy] WARN: failed to remove pak '{pak}': {exc}")
 
         if self._profile:
             from ..shared.data.install_state import InstallStateManager
@@ -586,8 +586,8 @@ class DeployService:
             full = target / rel_path
             try:
                 full.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._host.log(f"[deploy] WARN: failed to remove template file '{rel_path}': {exc}")
         # Prune empty directories left behind
         for dirpath in sorted(target.rglob("*"), reverse=True):
             if dirpath.is_dir():

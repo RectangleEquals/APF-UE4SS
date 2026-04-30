@@ -18,11 +18,13 @@ blacklist.json is NEVER cached — always fetched live, held in memory only.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Optional
 
 _CACHE_ROOT = Path.home() / ".apf_manager" / "github" / "registry"
+_log = logging.getLogger(__name__)
 
 TTL_SEARCH     = 3600    # 1 hour
 TTL_TRAVERSAL  = 3600    # 1 hour
@@ -47,8 +49,8 @@ class RegistryCache:
         if p.exists():
             try:
                 return p.read_text(encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("[registry_cache] WARN: failed to read cache entry %s: %s", key, exc)
         return None
 
     def set(self, key: str, value: str) -> None:
@@ -57,7 +59,8 @@ class RegistryCache:
         p.parent.mkdir(parents=True, exist_ok=True)
         try:
             p.write_text(value, encoding="utf-8")
-        except Exception:
+        except Exception as exc:
+            _log.warning("[registry_cache] WARN: failed to write cache entry %s: %s", key, exc)
             return
         self._meta[key] = {"stored_at": time.time()}
         self._save_meta()
@@ -70,8 +73,8 @@ class RegistryCache:
         try:
             if p.exists():
                 p.unlink()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("[registry_cache] WARN: failed to delete cache file %s: %s", p, exc)
 
     def invalidate_all(self) -> None:
         """Wipe all cached data."""
@@ -79,8 +82,8 @@ class RegistryCache:
         try:
             shutil.rmtree(self._root, ignore_errors=True)
             self._root.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("[registry_cache] WARN: failed to wipe cache root: %s", exc)
         self._meta = {}
 
     # -----------------------------------------------------------------------
@@ -109,8 +112,8 @@ class RegistryCache:
         if p.exists():
             try:
                 return json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("[registry_cache] WARN: failed to parse meta.json: %s", exc)
         return {}
 
     def _save_meta(self) -> None:
@@ -118,5 +121,5 @@ class RegistryCache:
             self._meta_path().write_text(
                 json.dumps(self._meta), encoding="utf-8"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("[registry_cache] WARN: failed to save meta.json: %s", exc)

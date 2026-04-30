@@ -1,21 +1,23 @@
 """
 ContentRowWidget — universal typed content row for any ContentDescriptor subtype.
 
-Replaces hand-built row builders in content, downloads, and installed tabs.
+Extends BaseContentRow. Subclass provides:
+  _build_header_content() — type icon, name label, subtitle
+  _build_detail_content() — ContentDetailPanel
+  _build_right_side()     — chevron for most types, "Open" button for ExternalUrlBinary
 """
 from __future__ import annotations
 
+import webbrowser
 from typing import Optional, Callable, TYPE_CHECKING
 
 from kivy.metrics import dp
-from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDIconButton, MDButton, MDButtonText
+from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDIcon, MDLabel
-from kivymd.uix.selectioncontrol import MDCheckbox
 
-from .constants import COL_DIM, COL_WARN, COL_CPP, COL_BP, COL_STATUS_OK, COL_STATUS_MISS
-from .hover_row import HoverRow, RowHeader
+from .base_content_row import BaseContentRow
+from .constants import COL_DIM
 
 if TYPE_CHECKING:
     from ..data.content_types import (
@@ -26,21 +28,14 @@ if TYPE_CHECKING:
     from ..data.pipeline_state import InstallRecord
 
 
-_BG_ROW_EVEN = (0.11, 0.12, 0.15, 1)
-_BG_ROW_ODD  = (0.09, 0.10, 0.13, 1)
-
-
-class ContentRowWidget(MDBoxLayout):
+class ContentRowWidget(BaseContentRow):
     """
     Universal typed content row for any ContentDescriptor subtype.
-
-    Layout (horizontal header):
-      [checkbox?] [type-icon] [name + subline] [version badge] [action btns] [chevron?]
 
     Parameters
     ----------
     content        : ContentDescriptor subclass
-    row_index      : int — used for alternating background
+    row_index      : int — alternating background
     checked        : bool | None — initial checkbox state (None = no checkbox)
     expanded       : bool — initial expanded state
     on_check       : Callable[[bool], None]
@@ -61,22 +56,29 @@ class ContentRowWidget(MDBoxLayout):
         install_record=None,
         **kwargs,
     ):
-        super().__init__(
-            orientation="vertical",
-            size_hint_y=None,
-            adaptive_height=True,
-            md_bg_color=_BG_ROW_EVEN if row_index % 2 == 0 else _BG_ROW_ODD,
-            **kwargs,
-        )
+        from ..data.content_types import ExternalUrlBinary as _EUB, ManualBinary as _MB
+
         self._content = content
-        self._checked = checked
-        self._expanded = expanded
-        self._on_check = on_check
-        self._on_expand = on_expand
-        self._actions = actions or []
         self._install_record = install_record
 
-        self._build()
+        # EUB and ManualBinary have no expand; EUB still gets hover for the "Open" button
+        _is_eub    = isinstance(content, _EUB)
+        _is_manual = isinstance(content, _MB)
+        _has_hover = (on_expand is not None and not _is_eub and not _is_manual) or _is_eub
+        _show_chev = not _is_eub and not _is_manual
+
+        super().__init__(
+            row_index=row_index,
+            checked=checked if not _is_eub and not _is_manual else None,
+            expanded=expanded,
+            on_check=on_check,
+            on_expand=on_expand if not _is_eub and not _is_manual else None,
+            actions=actions or [],
+            has_hover=_has_hover,
+            show_chevron=_show_chev,
+            expand_on_header=False,
+            **kwargs,
+        )
 
     # ------------------------------------------------------------------
     # Public
@@ -87,11 +89,10 @@ class ContentRowWidget(MDBoxLayout):
         self._build()
 
     # ------------------------------------------------------------------
-    # Build
+    # BaseContentRow interface
     # ------------------------------------------------------------------
 
-    def _build(self) -> None:
-        self.clear_widgets()
+    def _build_header_content(self, header, info_col) -> None:
         from ..data.content_types import (
             GithubReleaseBinary as _GRB,
             ExternalUrlBinary as _EUB,
@@ -100,47 +101,21 @@ class ContentRowWidget(MDBoxLayout):
             ModDescriptor as _MOD,
         )
         c = self._content
-
         is_grb    = isinstance(c, _GRB)
         is_eub    = isinstance(c, _EUB)
         is_manual = isinstance(c, _MB)
         is_tpl    = isinstance(c, _TPL)
         is_mod    = isinstance(c, _MOD)
 
-        # Rows where the body is interactable use HoverRow for mouse-over feedback.
-        # ManualBinary has no expand and no URL action — use RowHeader (typed, no hover).
-        has_hover = (self._on_expand is not None and not is_eub and not is_manual) or is_eub
-        if has_hover:
-            header = HoverRow(
-                orientation="horizontal", size_hint_y=None, height=dp(52),
-                padding=[dp(8), dp(4)], spacing=dp(8),
-            )
-        else:
-            header = RowHeader(
-                orientation="horizontal", size_hint_y=None, height=dp(52),
-                padding=[dp(8), dp(4)], spacing=dp(8),
-            )
-
-        # --- Checkbox ---
-        if self._checked is not None and not is_eub and not is_manual:
-            cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
-                            pos_hint={"center_y": 0.5})
-            cb.active = bool(self._checked)
-            if self._on_check:
-                cb.bind(active=lambda inst, val, fn=self._on_check: fn(val))
-            header.add_widget(cb)
-        else:
-            header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(24)))
-
-        # --- Type icon ---
+        # Type icon (inserted between checkbox and info_col by header, not here)
         icon, icon_color = self._type_icon(c, is_grb, is_tpl, is_mod)
+        # Insert the icon right after the checkbox (before info_col is added)
         header.add_widget(MDIcon(
             icon=icon, size_hint=(None, 1), width=dp(22),
             theme_icon_color="Custom", icon_color=icon_color,
         ))
 
-        # --- Info column (name + subtitle + component badges) ---
-        info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
+        # Name row — no C++/BP icon badges (redundant with subtitle type label)
         name_row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(24), spacing=dp(4),
         )
@@ -149,74 +124,53 @@ class ContentRowWidget(MDBoxLayout):
             font_style="Body", size_hint=(1, 1),
             halign="left", valign="middle",
         ))
-
-        # Component badges for mods (C++ and Blueprint only — Lua is implied)
-        if is_mod:
-            _comp_raw = getattr(c, "components", None)
-            comp_types = _comp_raw.types if hasattr(_comp_raw, "types") else (_comp_raw if isinstance(_comp_raw, list) else [])
-            if "cpp" in comp_types:
-                name_row.add_widget(MDIcon(
-                    icon="code-braces", size_hint=(None, None), size=(dp(20), dp(20)),
-                    pos_hint={"center_y": 0.5},
-                    theme_icon_color="Custom", icon_color=COL_CPP,
-                ))
-            if "blueprint" in comp_types:
-                name_row.add_widget(MDIcon(
-                    icon="blueprint", size_hint=(None, None), size=(dp(20), dp(20)),
-                    pos_hint={"center_y": 0.5},
-                    theme_icon_color="Custom", icon_color=COL_BP,
-                ))
-        info.add_widget(name_row)
+        info_col.add_widget(name_row)
 
         # Subtitle
         subtitle = self._subtitle(c, is_grb, is_eub, is_manual, is_tpl, is_mod)
         if subtitle:
-            info.add_widget(MDLabel(
+            info_col.add_widget(MDLabel(
                 text=subtitle, font_style="Label", role="small",
                 size_hint_y=None, height=dp(18),
                 theme_text_color="Custom", text_color=COL_DIM,
             ))
 
-        # Duplicate source warning for GRB
+        # Duplicate-source warning (GRB only)
         if is_grb:
             _tags = getattr(c, "tags", None)
             if _tags and _tags.has_duplicate_source:
-                info.add_widget(MDLabel(
+                info_col.add_widget(MDLabel(
                     text="duplicate source",
                     font_style="Label", role="small",
                     size_hint_y=None, height=dp(14),
                     theme_text_color="Custom", text_color=(1.0, 0.75, 0.0, 1),
                 ))
 
-        # Expand touch binding (for expandable types)
+        # Expand touch binding on info_col (non-EUB, non-Manual types)
         has_expand = not is_eub and not is_manual
         if has_expand and self._on_expand:
-            info.bind(on_touch_down=lambda w, t, fn=self._on_expand, ex=self._expanded: (
+            info_col.bind(on_touch_down=lambda w, t, fn=self._on_expand, ex=self._expanded: (
                 fn(not ex) if w.collide_point(*t.pos) else None
             ))
-        header.add_widget(info)
 
-        # --- Action buttons (custom per-row actions passed from caller) ---
-        for act in self._actions:
-            btn = MDIconButton(
-                icon=act.get("icon", "dots-vertical"),
-                size_hint=(None, None), size=(dp(32), dp(32)),
-                pos_hint={"center_y": 0.5},
-                on_release=lambda *_, cb=act.get("callback"): cb() if cb else None,
-            )
-            header.add_widget(btn)
+    def _build_right_side(self, header) -> None:
+        from ..data.content_types import ExternalUrlBinary as _EUB, ManualBinary as _MB
+        c = self._content
+        is_eub    = isinstance(c, _EUB)
+        is_manual = isinstance(c, _MB)
+        has_expand = not is_eub and not is_manual
 
-        # --- External URL open button or expand chevron ---
         if is_eub:
-            import webbrowser
             _url = getattr(c, "url", "")
             header.add_widget(MDButton(
                 MDButtonText(text="Open"),
-                style="outlined", size_hint=(None, None), size=(dp(72), dp(32)),
+                style="outlined",
+                size_hint=(None, None), size=(dp(72), dp(32)),
                 pos_hint={"center_y": 0.5},
                 on_release=lambda *_, u=_url: webbrowser.open(u) if u else None,
             ))
         elif has_expand and self._on_expand:
+            from kivymd.uix.button import MDIconButton
             chevron = "chevron-up" if self._expanded else "chevron-down"
             header.add_widget(MDIconButton(
                 icon=chevron,
@@ -227,10 +181,15 @@ class ContentRowWidget(MDBoxLayout):
         else:
             header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(40)))
 
-        self.add_widget(header)
+    def _build_detail_content(self):
+        from .content_detail import ContentDetailPanel
+        return ContentDetailPanel(
+            content=self._content,
+            install_record=self._install_record,
+        )
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Static helpers
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -248,24 +207,24 @@ class ContentRowWidget(MDBoxLayout):
 
     @staticmethod
     def _mod_type_label(c) -> str:
-        """Derive a human-readable type label from component composition and mod class."""
         from ..data.content_types import FrameworkModDescriptor as _FW, APModDescriptor as _AP
         comps = getattr(c, "components", None)
         types = (
             comps.types if hasattr(comps, "types")
             else (comps if isinstance(comps, list) else [])
         )
-        lua_count       = 1 if "lua"       in types else 0
         cpp_count       = 1 if "cpp"       in types else 0
         blueprint_count = 1 if "blueprint" in types else 0
-        if lua_count + cpp_count + blueprint_count > 1:
+        lua_count       = 1 if "lua"       in types else 0
+        total = cpp_count + blueprint_count + lua_count
+        if total > 1:
             comp_label = "Combo"
         elif cpp_count:
             comp_label = "C++"
         elif blueprint_count:
             comp_label = "Blueprint"
         else:
-            comp_label = "Lua"   # default — Lua is the baseline UE4SS mod format
+            comp_label = "Lua"
         if isinstance(c, _FW):
             return f"Framework {comp_label} Mod"
         elif isinstance(c, _AP):
@@ -288,7 +247,6 @@ class ContentRowWidget(MDBoxLayout):
             has_conflict = _tags.has_conflict if _tags else False
             return "conflict detected" if has_conflict else ""
         if is_mod:
-            # Composite subtitle: [type label] • [v{version}] • [description]
             parts = [ContentRowWidget._mod_type_label(c)]
             ver = getattr(c, "version", "")
             if ver:

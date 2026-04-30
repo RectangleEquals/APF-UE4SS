@@ -183,7 +183,9 @@ class _CacheItem:
         try:
             total = sum(f.stat().st_size for f in self.cache_path.rglob("*") if f.is_file())
             return total / (1024 * 1024)
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("[downloads_tab] WARN: failed to compute cache size for %s: %s", self.cache_path, exc)
             return 0.0
 
 
@@ -370,7 +372,8 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
             for item in self._cached:
                 try:
                     size = sum(f.stat().st_size for f in item.cache_path.rglob("*") if f.is_file())
-                except Exception:
+                except Exception as exc:
+                    self._host.log(f"[downloads] WARN: failed to stat cache files at {item.cache_path}: {exc}")
                     size = 0
                 total_bytes += size
                 if item.category != "other" and self._game_id and item.game_name == self._game_id:
@@ -393,7 +396,8 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
                 )
             else:
                 self._title_label.text = f"Downloads — Total: {_fmt(total_bytes)}"
-        except Exception:
+        except Exception as exc:
+            self._host.log(f"[downloads] WARN: failed to compute cache size: {exc}")
             self._title_label.text = "Downloads"
 
     def _rebuild_ui(self) -> None:
@@ -466,45 +470,18 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
 
     def _cat_sub_header(self, title: str, icon: str, accent: tuple, count: int,
                         key: str = "", collapsed: bool = False) -> MDBoxLayout:
-        chevron = "chevron-right" if collapsed else "chevron-down"
-        outer = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(28),
-            md_bg_color=(0.09, 0.11, 0.14, 1),
-        )
-        outer.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(8)))
-        outer.add_widget(MDBoxLayout(
-            size_hint=(None, 1), width=dp(2), md_bg_color=accent,
-        ))
-        inner = MDBoxLayout(
-            orientation="horizontal", size_hint=(1, 1),
-            padding=[dp(6), 0], spacing=dp(6),
-        )
-        inner.add_widget(MDIcon(
-            icon=icon, size_hint=(None, 1), width=dp(16),
-            theme_icon_color="Custom", icon_color=(0.7, 0.72, 0.8, 1),
-        ))
-        inner.add_widget(MDLabel(
-            text=f"{title}  ({count})", font_style="Label", role="medium",
-            size_hint_x=1, halign="left",
-            theme_text_color="Custom", text_color=(0.7, 0.72, 0.8, 1),
-        ))
-        inner.add_widget(MDIcon(
-            icon=chevron, size_hint=(None, 1), width=dp(16),
-            theme_icon_color="Custom", icon_color=(0.45, 0.47, 0.55, 1),
-        ))
-        outer.add_widget(inner)
+        def _toggle(t, k=key):
+            if k in self._collapsed_sections:
+                self._collapsed_sections.discard(k)
+            else:
+                self._collapsed_sections.add(k)
+            Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
 
-        if key:
-            def _on_touch(widget, touch):
-                if widget.collide_point(*touch.pos) and touch.button == "left":
-                    if key in self._collapsed_sections:
-                        self._collapsed_sections.discard(key)
-                    else:
-                        self._collapsed_sections.add(key)
-                    Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
-                    return True
-            outer.bind(on_touch_down=_on_touch)
-        return outer
+        return make_section_header(
+            title=title, icon=icon, count=count,
+            accent_color=accent, collapsed=collapsed,
+            on_toggle=_toggle if key else None,
+        )
 
     def _maybe_add_updates_section(self) -> None:
         updates_svc = self._host.get_service("updates")
@@ -514,36 +491,22 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         if not (fw_info and fw_info.is_update_available and fw_info.latest_stable):
             return
 
+        from .....shared.ui.banners.framework_status_banner import FrameworkStatusBanner
+
         latest_tag = fw_info.latest_stable.tag_name
         current    = fw_info.current if fw_info.current != "unknown" else "?"
+        detail     = f"AP Framework update available: {current} → {latest_tag}"
 
         section = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
             md_bg_color=_BG_UPDATES, padding=[dp(8), dp(8)], spacing=dp(4),
         )
-        header = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(28), spacing=dp(8),
-        )
-        header.add_widget(MDIcon(
-            icon="update", size_hint=(None, 1), width=dp(24),
-            theme_icon_color="Custom", icon_color=_COL_TEAL,
-        ))
-        header.add_widget(MDLabel(
-            text="Framework Update Available",
-            font_style="Title", role="small", size_hint=(1, 1),
-            theme_text_color="Custom", text_color=_COL_TEAL,
-        ))
-        section.add_widget(header)
+        section.add_widget(FrameworkStatusBanner(state="update_available", detail=detail))
 
-        detail_row = MDBoxLayout(
+        has_detection = bool(self._detection and getattr(self._detection, "valid", False))
+        dl_row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(8),
         )
-        ver_text = f"AP Framework: {current} → {latest_tag}"
-        detail_row.add_widget(MDLabel(
-            text=ver_text, size_hint=(1, 1), halign="left",
-            theme_text_color="Custom", text_color=_COL_FW,
-        ))
-        has_detection = bool(self._detection and getattr(self._detection, "valid", False))
         dl_btn = MDButton(
             MDButtonText(text="Download"),
             style="filled", size_hint=(None, None), size=(dp(110), dp(32)),
@@ -551,15 +514,16 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
             on_release=lambda *_: self._download_framework(fw_info),
         )
         dl_btn.disabled = not has_detection
-        detail_row.add_widget(dl_btn)
+        dl_row.add_widget(dl_btn)
         if not has_detection:
-            detail_row.add_widget(MDLabel(
+            from kivymd.uix.label import MDLabel as _ML
+            dl_row.add_widget(_ML(
                 text="Requires UE4SS installation",
                 size_hint=(None, 1), width=dp(180),
                 font_style="Label", role="small",
                 theme_text_color="Custom", text_color=COL_DIM,
             ))
-        section.add_widget(detail_row)
+        section.add_widget(dl_row)
         self._content.add_widget(section)
 
     def _download_framework(self, update_info) -> None:

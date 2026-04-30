@@ -238,6 +238,10 @@ class ContentPipelinePanel(PluginPanel):
         self.add_widget(MDDivider())
         self.add_widget(carousel)
 
+        # M-1: subscribe tabs to state change notifications
+        self.host.subscribe_state_change("install", self._on_install_state_changed)
+        self.host.subscribe_state_change("registry", self._on_registry_state_changed)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -420,6 +424,25 @@ class ContentPipelinePanel(PluginPanel):
             self._carousel.index = _TAB_INSTALLED
         if self._tab_installed:
             self._tab_installed.refresh(self._profile, self._detection)
+
+    # ------------------------------------------------------------------
+    # M-1: State change notifications
+    # ------------------------------------------------------------------
+
+    def _on_install_state_changed(self) -> None:
+        """Called when InstalledTab emits notify_state_change('install')."""
+        if self._tab_load_order:
+            self._tab_load_order.refresh(self._profile, self._detection)
+        if self._tab_installed:
+            self._tab_installed.refresh(self._profile, self._detection)
+        self._update_badges()
+
+    def _on_registry_state_changed(self) -> None:
+        """Called when RegistriesTab emits notify_state_change('registry')."""
+        game_id = self._game_id()
+        if self._tab_content:
+            self._tab_content.refresh(game_id)
+        self._update_badges()
 
     def _game_id(self) -> str:
         """Derive game_id from the registry service or fall back to profile."""

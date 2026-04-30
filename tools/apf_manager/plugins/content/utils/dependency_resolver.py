@@ -154,6 +154,8 @@ def resolve_uninstall_cascade(
             return False
         if is_framework and record.capabilities_includes:
             return True
+        if on_id and on_id in (getattr(record, "dependencies", None) or []):
+            return True
         return any(on_id in inc for inc in (record.capabilities_includes or []))
 
     is_fw = target.content_type == "framework_mod"

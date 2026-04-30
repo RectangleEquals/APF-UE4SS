@@ -647,8 +647,8 @@ class RegistryViewer:
         try:
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump({"action": "cancel", "selected": []}, f)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._host.log(f"[registry_viewer] WARN: failed to seed output sentinel file: {exc}")
 
         label = repo_url or "Review Repository"
 
@@ -658,8 +658,8 @@ class RegistryViewer:
             try:
                 with open(output_file, encoding="utf-8") as f:
                     result = json.load(f)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._host.log(f"[registry_viewer] WARN: failed to read viewer result file: {exc}")
             try:
                 os.unlink(output_file)
             except OSError:

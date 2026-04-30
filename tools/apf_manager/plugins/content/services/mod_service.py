@@ -221,8 +221,8 @@ class ModService:
                 raw = json.loads(manifest_path.read_text(encoding="utf-8"))
                 if _FRAMEWORK_MOD_RE.match(raw.get("mod_id", "")):
                     results.append(entry)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._host.log(f"[mods] WARN: failed to read manifest at {manifest_path}: {exc}")
         return results
 
     def get_framework_mod_dir(self) -> Optional[Path]:
@@ -267,8 +267,9 @@ class ModService:
             try:
                 from ..shared.data.install_state import InstallStateManager
                 install_state = InstallStateManager(game_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("[mods] WARN: failed to load install state for %s: %s", game_id, exc)
 
         for entry in sorted(mods_dir.iterdir()):
             if not entry.is_dir():
@@ -308,8 +309,9 @@ class ModService:
                 info.item_overrides = [
                     ModService._parse_item_override(x) for x in raw.get("item_overrides", [])
                 ]
-            except Exception:
-                pass
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("[mods] WARN: failed to parse manifest at %s: %s", manifest_path, exc)
 
         # --- Component detection (from filesystem structure) ---
         detected = []

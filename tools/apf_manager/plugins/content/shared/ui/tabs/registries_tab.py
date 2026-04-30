@@ -11,7 +11,6 @@ Shows:
 
 from __future__ import annotations
 
-import threading
 import webbrowser
 from typing import Optional, TYPE_CHECKING
 
@@ -21,12 +20,20 @@ from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText, MDIconButton
-from kivymd.uix.card import MDCard
+from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText
+from kivymd.uix.dialog import (
+    MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
+    MDDialogButtonContainer,
+)
 from kivymd.uix.divider import MDDivider
-from kivymd.uix.label import MDIcon, MDLabel
+from kivymd.uix.label import MDLabel
 from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 from kivymd.uix.textfield import MDTextField
+
+from ..registry_entry_row import RegistryEntryRow
+from ..search_result_card import SearchResultCard, search_score
+from ..ue4ss_status_card import UE4SSStatusCard
+from ..dialogs.rate_limit_dialog import RateLimitDialog
 
 if TYPE_CHECKING:
     from ....services.registry_service import RegistryService
@@ -42,13 +49,12 @@ class RegistriesTab(MDBoxLayout):
         self._url_field: Optional[MDTextField] = None
         self._registries_list: Optional[MDBoxLayout] = None
         self._search_results: Optional[MDBoxLayout] = None
-        self._ue4ss_card: Optional[MDBoxLayout] = None
-        self._ue4ss_status_icon: Optional[MDIcon] = None
-        self._ue4ss_status_lbl: Optional[MDLabel] = None
+        self._ue4ss_card: Optional[UE4SSStatusCard] = None
         self._add_status: Optional[MDLabel] = None
         self._share_btn: Optional[MDButton] = None
         self._game_id: str = ""
         self._build_ui()
+        self._wire_rate_limit_callbacks()
 
     # -----------------------------------------------------------------------
     # Build
@@ -63,7 +69,6 @@ class RegistriesTab(MDBoxLayout):
             spacing=dp(12),
         )
 
-        # Tab purpose description
         content.add_widget(MDLabel(
             text=(
                 "Registries are GitHub repositories that contain AP mods for your game. "
@@ -78,7 +83,7 @@ class RegistriesTab(MDBoxLayout):
         ))
 
         # UE4SS setup card
-        self._ue4ss_card = self._build_ue4ss_card()
+        self._ue4ss_card = UE4SSStatusCard()
         content.add_widget(self._ue4ss_card)
 
         content.add_widget(MDDivider())
@@ -166,46 +171,13 @@ class RegistriesTab(MDBoxLayout):
         scroll.add_widget(content)
         self.add_widget(scroll)
 
-    def _build_ue4ss_card(self) -> MDBoxLayout:
-        card = MDBoxLayout(
-            orientation="vertical",
-            adaptive_height=True,
-            padding=[dp(8), dp(8)],
-            spacing=dp(4),
-            md_bg_color=(0.1, 0.14, 0.18, 1),
-        )
-        card.add_widget(MDLabel(
-            text="UE4SS",
-            font_style="Label",
-            role="medium",
-            size_hint_y=None,
-            height=dp(24),
-            theme_text_color="Custom",
-            text_color=(0.7, 0.7, 0.7, 1),
-        ))
-        status_row = MDBoxLayout(
-            orientation="horizontal",
-            size_hint_y=None,
-            height=dp(24),
-            spacing=dp(6),
-        )
-        self._ue4ss_status_icon = MDIcon(
-            icon="loading",
-            size_hint=(None, 1),
-            width=dp(20),
-            theme_text_color="Custom",
-            text_color=(0.7, 0.7, 0.7, 1),
-        )
-        self._ue4ss_status_lbl = MDLabel(
-            text="Checking…",
-            size_hint=(1, 1),
-            theme_text_color="Custom",
-            text_color=(0.7, 0.7, 0.7, 1),
-        )
-        status_row.add_widget(self._ue4ss_status_icon)
-        status_row.add_widget(self._ue4ss_status_lbl)
-        card.add_widget(status_row)
-        return card
+    def _wire_rate_limit_callbacks(self) -> None:
+        svc = self._registry_svc()
+        if svc and hasattr(svc, "set_rate_limit_callbacks"):
+            svc.set_rate_limit_callbacks(
+                on_rate_limit=self._on_rate_limit,
+                on_search_rate_limit=self._on_search_rate_limit,
+            )
 
     # -----------------------------------------------------------------------
     # Refresh
@@ -217,62 +189,14 @@ class RegistriesTab(MDBoxLayout):
             self._search_results.clear_widgets()
         self._refresh_ue4ss_card(ue4ss_detected)
         self._refresh_registries()
+        self._wire_rate_limit_callbacks()
 
     def _refresh_ue4ss_card(self, ue4ss_detected: bool) -> None:
-        if not ue4ss_detected:
-            self._ue4ss_status_icon.icon = "alert"
-            self._ue4ss_status_icon.text_color = (0.9, 0.6, 0.1, 1)
-            self._ue4ss_status_lbl.text = "UE4SS not detected"
-            self._ue4ss_status_lbl.text_color = (0.9, 0.6, 0.1, 1)
-            # Remove any previously added update row
-            self._remove_ue4ss_update_row()
-            return
-
-        updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
-        ue4ss_info = updates_svc.get_update_info("ue4ss") if updates_svc else None
-
-        current_ver = getattr(ue4ss_info, "current", "unknown") if ue4ss_info else "unknown"
-        if current_ver == "unknown":
-            status_text = "UE4SS detected (version unknown)"
-        else:
-            status_text = f"UE4SS detected  v{current_ver}"
-
-        self._ue4ss_status_icon.icon = "check-circle"
-        self._ue4ss_status_icon.text_color = (0.3, 0.8, 0.4, 1)
-        self._ue4ss_status_lbl.text = status_text
-        self._ue4ss_status_lbl.text_color = (0.3, 0.8, 0.4, 1)
-
-        # Add/refresh update notice if an update is available
-        self._remove_ue4ss_update_row()
-        if ue4ss_info and ue4ss_info.is_update_available and ue4ss_info.latest_stable:
-            update_row = MDBoxLayout(
-                orientation="horizontal",
-                size_hint_y=None,
-                height=dp(24),
-                spacing=dp(6),
-            )
-            latest_tag = ue4ss_info.latest_stable.tag_name
-            update_row.add_widget(MDIcon(
-                icon="arrow-up-circle",
-                size_hint=(None, 1), width=dp(20),
-                theme_text_color="Custom", text_color=(0.25, 0.55, 1.0, 1),
-            ))
-            update_row.add_widget(MDLabel(
-                text=f"Update available: v{latest_tag}",
-                font_style="Label", role="small", size_hint=(1, 1),
-                theme_text_color="Custom", text_color=(0.25, 0.55, 1.0, 1),
-            ))
-            update_row._is_ue4ss_update_row = True
-            if self._ue4ss_card:
-                self._ue4ss_card.add_widget(update_row)
-
-    def _remove_ue4ss_update_row(self) -> None:
         if not self._ue4ss_card:
             return
-        to_remove = [w for w in self._ue4ss_card.children
-                     if getattr(w, "_is_ue4ss_update_row", False)]
-        for w in to_remove:
-            self._ue4ss_card.remove_widget(w)
+        updates_svc = self._host.get_service("updates") if self._host.has_service("updates") else None
+        ue4ss_info = updates_svc.get_update_info("ue4ss") if updates_svc else None
+        self._ue4ss_card.refresh(ue4ss_detected, ue4ss_info)
 
     def _refresh_registries(self) -> None:
         self._registries_list.clear_widgets()
@@ -303,37 +227,13 @@ class RegistriesTab(MDBoxLayout):
             return
 
         for entry in entries:
-            row = MDBoxLayout(
-                orientation="horizontal",
-                size_hint_y=None,
-                height=dp(48),
-                spacing=dp(8),
-            )
-            row.add_widget(MDLabel(
-                text=entry.repo.full_name,
-                size_hint=(1, 1),
+            self._registries_list.add_widget(RegistryEntryRow(
+                entry=entry,
+                on_view=self._on_view,
+                on_report=self._on_report,
+                on_refresh=self._on_refresh_one,
+                on_remove=self._on_remove,
             ))
-            row.add_widget(MDIconButton(
-                icon="eye",
-                theme_icon_color="Custom",
-                icon_color=(0.5, 0.75, 1.0, 1),
-                on_release=lambda *_, e=entry: self._on_view(e),
-            ))
-            row.add_widget(MDIconButton(
-                icon="flag",
-                theme_icon_color="Custom",
-                icon_color=(0.9, 0.2, 0.2, 1),
-                on_release=lambda *_, u=entry.url: self._on_report(u),
-            ))
-            row.add_widget(MDIconButton(
-                icon="refresh",
-                on_release=lambda *_, e=entry: self._on_refresh_one(e),
-            ))
-            row.add_widget(MDIconButton(
-                icon="delete",
-                on_release=lambda *_, e=entry: self._on_remove(e),
-            ))
-            self._registries_list.add_widget(row)
 
     # -----------------------------------------------------------------------
     # Actions
@@ -364,7 +264,7 @@ class RegistriesTab(MDBoxLayout):
                 self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
                 return
 
-        self._set_add_status("Loading…", (0.7, 0.7, 0.7, 1))
+        self._set_add_status("Loading\u2026", (0.7, 0.7, 0.7, 1))
         svc.add_registry_with_viewer(url, self._game_id, on_done=self._on_add_done)
 
     def _on_add_done(self, success: bool, msg: str) -> None:
@@ -375,6 +275,8 @@ class RegistriesTab(MDBoxLayout):
             self._refresh_registries()
             if self._on_registry_changed:
                 self._on_registry_changed()
+            if hasattr(self._host, "notify_state_change"):
+                self._host.notify_state_change("registry")
 
     def _set_add_status(self, text: str, color) -> None:
         if self._add_status:
@@ -382,11 +284,10 @@ class RegistriesTab(MDBoxLayout):
             self._add_status.text_color = color
 
     def _on_view(self, entry) -> None:
-        """Open the registry viewer for an already-added registry (re-uses cached data)."""
         svc = self._registry_svc()
         if not svc:
             return
-        self._set_add_status("Opening viewer…", (0.7, 0.7, 0.7, 1))
+        self._set_add_status("Opening viewer\u2026", (0.7, 0.7, 0.7, 1))
         svc.add_registry_with_viewer(
             entry.url, self._game_id,
             on_done=lambda ok, msg: self._set_add_status(
@@ -402,12 +303,14 @@ class RegistriesTab(MDBoxLayout):
         self._show_snackbar("Registry removed.")
         if self._on_registry_changed:
             self._on_registry_changed()
+        if hasattr(self._host, "notify_state_change"):
+            self._host.notify_state_change("registry")
 
     def _on_refresh_one(self, entry) -> None:
         svc = self._registry_svc()
         if not svc:
             return
-        self._set_add_status("Refreshing…", (0.7, 0.7, 0.7, 1))
+        self._set_add_status("Refreshing\u2026", (0.7, 0.7, 0.7, 1))
 
         def _on_refresh_done():
             self._set_add_status("", (0.7, 0.7, 0.7, 1))
@@ -432,7 +335,7 @@ class RegistriesTab(MDBoxLayout):
             return
         self._search_results.clear_widgets()
         self._search_results.add_widget(MDLabel(
-            text="Searching GitHub…",
+            text="Searching GitHub\u2026",
             size_hint_y=None,
             height=dp(32),
         ))
@@ -449,16 +352,7 @@ class RegistriesTab(MDBoxLayout):
             return
 
         svc = self._registry_svc()
-
-        # Sort results by freshness + stars score (descending) before display.
-        def _search_score(r: dict) -> int:
-            days = r.get("last_push_days", 999)
-            stars = r.get("stars", 0)
-            freshness = 3 if days <= 30 else (2 if days <= 90 else 0)
-            import math
-            star_pts = min(5, int(math.log10(stars + 1) * 5)) if stars >= 0 else 0
-            return freshness + star_pts
-        results = sorted(results, key=_search_score, reverse=True)
+        results = sorted(results, key=search_score, reverse=True)
 
         self._search_results.add_widget(MDLabel(
             text=f"Found {len(results)} public registry repo(s):",
@@ -466,131 +360,32 @@ class RegistriesTab(MDBoxLayout):
             size_hint_y=None,
             height=dp(28),
         ))
+        existing_urls: set = set()
+        if svc:
+            for entry in svc.get_user_registries(self._game_id):
+                existing_urls.add(entry.url.rstrip("/").lower())
+
         for r in results:
             owner, repo = r["owner"], r["repo"]
             is_bl = svc.is_blacklisted(owner, repo) if svc else False
+            html_url = r.get("html_url", "")
+            is_added = html_url.rstrip("/").lower() in existing_urls
             if is_bl:
                 self._host.log(
                     f"[registry] [WARN] Search result {owner}/{repo} is blacklisted — Add disabled"
                 )
-
-            card = MDBoxLayout(
-                orientation="vertical",
-                adaptive_height=True,
-                spacing=0,
-            )
-
-            row = MDBoxLayout(
-                orientation="horizontal",
-                size_hint_y=None,
-                height=dp(40),
-                spacing=dp(8),
-            )
-            info_box = MDBoxLayout(
-                orientation="horizontal",
-                adaptive_height=True,
-                spacing=dp(4),
-                size_hint_x=1,
-            )
-            info_box.add_widget(MDLabel(
-                text=f"{owner}/{repo}",
-                size_hint_x=1,
-                adaptive_height=True,
+            self._search_results.add_widget(SearchResultCard(
+                result=r,
+                is_blacklisted=is_bl,
+                is_already_added=is_added,
+                on_view=self._on_add_from_search,
+                on_report=self._on_report,
             ))
-
-            # Freshness dot
-            days = r.get("last_push_days", 999)
-            if days <= 30:
-                dot_color = (0.3, 0.8, 0.4, 1)    # green
-            elif days <= 90:
-                dot_color = (0.9, 0.7, 0.2, 1)    # yellow
-            else:
-                dot_color = (0.5, 0.5, 0.5, 1)    # grey
-            info_box.add_widget(MDIcon(
-                icon="circle-small",
-                size_hint=(None, None),
-                size=(dp(20), dp(20)),
-                theme_icon_color="Custom",
-                icon_color=dot_color,
-                pos_hint={"center_y": 0.5},
-            ))
-
-            # Star count
-            star_box = MDBoxLayout(
-                orientation="horizontal",
-                adaptive_height=True,
-                size_hint_x=None,
-                width=dp(60),
-                spacing=dp(2),
-            )
-            star_box.add_widget(MDIcon(
-                icon="star",
-                size_hint=(None, None),
-                size=(dp(16), dp(16)),
-                theme_icon_color="Custom",
-                icon_color=(1, 0.84, 0, 1),
-                pos_hint={"center_y": 0.5},
-            ))
-            star_box.add_widget(MDLabel(
-                text=str(r["stars"]),
-                size_hint_x=None,
-                width=dp(36),
-                adaptive_height=True,
-            ))
-            info_box.add_widget(star_box)
-            row.add_widget(info_box)
-            row.add_widget(MDIconButton(
-                icon="flag",
-                theme_icon_color="Custom",
-                icon_color=(0.9, 0.2, 0.2, 1),
-                pos_hint={"center_y": 0.5},
-                on_release=lambda *_, url=r["html_url"]: self._on_report(url),
-            ))
-            row.add_widget(MDButton(
-                MDButtonText(text="View"),
-                style="filled",
-                size_hint=(None, None),
-                size=(dp(64), dp(32)),
-                pos_hint={"center_y": 0.5},
-                disabled=is_bl,
-                on_release=lambda *_, url=r["html_url"]: self._on_add_from_search(url),
-            ))
-            card.add_widget(row)
-
-            if is_bl:
-                warn_row = MDBoxLayout(
-                    orientation="horizontal",
-                    size_hint_y=None,
-                    height=dp(22),
-                    spacing=dp(4),
-                    padding=[dp(4), 0],
-                )
-                warn_row.add_widget(MDIcon(
-                    icon="block-helper",
-                    size_hint=(None, None),
-                    size=(dp(16), dp(16)),
-                    theme_icon_color="Custom",
-                    icon_color=(0.9, 0.3, 0.3, 1),
-                    pos_hint={"center_y": 0.5},
-                ))
-                warn_row.add_widget(MDLabel(
-                    text="On block list.",
-                    size_hint_y=None,
-                    height=dp(22),
-                    theme_text_color="Custom",
-                    text_color=(0.9, 0.3, 0.3, 1),
-                    font_style="Body",
-                    role="small",
-                ))
-                card.add_widget(warn_row)
-
-            self._search_results.add_widget(card)
 
     def _on_add_from_search(self, url: str) -> None:
         svc = self._registry_svc()
         if not svc:
             return
-        # Blacklist check — never open viewer for blacklisted repos
         from ....utils.registry.resolver import parse_github_url
         parsed = parse_github_url(url)
         if parsed:
@@ -599,7 +394,7 @@ class RegistriesTab(MDBoxLayout):
             if resolver_svc and resolver_svc.is_blacklisted(owner, repo):
                 self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
                 return
-        self._set_add_status("Loading…", (0.7, 0.7, 0.7, 1))
+        self._set_add_status("Loading\u2026", (0.7, 0.7, 0.7, 1))
         svc.add_registry_with_viewer(url, self._game_id, on_done=self._on_add_done)
 
     def _on_share(self) -> None:
@@ -610,22 +405,25 @@ class RegistriesTab(MDBoxLayout):
         Clipboard.copy(encoded)
         self._show_snackbar("Registry list copied to clipboard.")
 
-    def _show_import_dialog(self, urls: list[str]) -> None:
+    def _on_rate_limit(self, msg: str = "") -> None:
+        RateLimitDialog(reset_str=msg, is_search=False).open()
+
+    def _on_search_rate_limit(self, msg: str = "") -> None:
+        RateLimitDialog(reset_str=msg, is_search=True).open()
+
+    def _show_import_dialog(self, urls: list) -> None:
         if not urls:
             self._set_add_status("No registries found in share payload.", (0.9, 0.6, 0.1, 1))
             return
-
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
 
         svc = self._registry_svc()
         if not svc:
             return
 
+        dlg_ref = [None]
+
         def _add_all(*_):
-            dlg.dismiss()
+            dlg_ref[0].dismiss()
             self._url_field.text = ""
             remaining = [len(urls)]
 
@@ -645,7 +443,7 @@ class RegistriesTab(MDBoxLayout):
                 svc.add_registry(url, on_done=_one_done)
 
         def _dismiss(*_):
-            dlg.dismiss()
+            dlg_ref[0].dismiss()
 
         dlg = MDDialog(
             MDDialogHeadlineText(text="Import Registries"),
@@ -658,6 +456,7 @@ class RegistriesTab(MDBoxLayout):
                 MDButton(MDButtonText(text="Add All"), style="filled", on_release=_add_all),
             ),
         )
+        dlg_ref[0] = dlg
         dlg.open()
 
     # -----------------------------------------------------------------------

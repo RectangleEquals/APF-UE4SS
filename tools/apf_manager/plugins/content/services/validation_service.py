@@ -320,7 +320,7 @@ class ValidationService:
                         status="warn",
                         source="Disk",
                     ))
-            except Exception:
-                pass
+            except Exception as exc:
+                self._host.log(f"[validation] WARN: disk_usage check failed: {exc}")
 
         return results

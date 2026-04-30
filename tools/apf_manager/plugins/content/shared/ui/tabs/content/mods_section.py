@@ -5,11 +5,12 @@ from __future__ import annotations
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
-from kivymd.uix.label import MDIcon, MDLabel
+from kivymd.uix.button import MDButton, MDButtonText
+from kivymd.uix.label import MDLabel
 from kivymd.uix.selectioncontrol import MDCheckbox
 
-from .....shared.ui.constants import COL_DIM, COL_WARN
+from .....shared.ui.constants import COL_DIM
+from .....shared.ui.package_header_widget import PackageHeaderWidget
 
 
 _BG_ROW_EVEN = (0.13, 0.13, 0.13, 1)
@@ -19,60 +20,33 @@ _BG_ROW_ODD  = (0.11, 0.11, 0.11, 1)
 class ModsSectionMixin:
     """Mod and Other row builders for ContentTab."""
 
-    def _package_header(self, pkg_id: str, pkg_mods: list, collapsed: bool) -> MDBoxLayout:
-        key = f"pkg:{pkg_id}"
-        bg = (0.10, 0.13, 0.17, 1)
-        container = MDBoxLayout(
-            orientation="vertical", size_hint_y=None, adaptive_height=True,
-            md_bg_color=bg,
-        )
-        header = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(44),
-            padding=[dp(8), dp(4)], spacing=dp(8),
-        )
+    def _package_header(self, pkg_id: str, pkg_mods: list, collapsed: bool) -> PackageHeaderWidget:
         def _mod_key(m):
             return f"mod:{getattr(m,'folder_name',getattr(m,'folder',getattr(m,'mod_id','')))}"
-        all_checked = all(_mod_key(m) in self._checked for m in pkg_mods)
-        cb = MDCheckbox(size_hint=(None, None), size=(dp(24), dp(24)),
-                        pos_hint={"center_y": 0.5})
-        cb.active = all_checked
-        def _on_pkg_check(inst, val, mods=pkg_mods):
-            for m in mods:
+
+        any_checked = any(_mod_key(m) in self._checked for m in pkg_mods)
+
+        def _on_pkg_check(val: bool) -> None:
+            was = any(_mod_key(m) in self._checked for m in pkg_mods)
+            if val == was:
+                return
+            for m in pkg_mods:
                 k = _mod_key(m)
                 self._checked.add(k) if val else self._checked.discard(k)
             if hasattr(self, "_sync_queue_btn"):
                 self._sync_queue_btn()
             Clock.schedule_once(lambda dt: self._do_refresh(), 0)
-        cb.bind(active=_on_pkg_check)
-        header.add_widget(cb)
-        header.add_widget(MDIcon(
-            icon="package-variant-closed", size_hint=(None, 1), width=dp(22),
-            theme_icon_color="Custom", icon_color=(0.5, 0.6, 0.9, 1),
-        ))
-        pkg_label = pkg_id.split("/")[-1] if "/" in pkg_id else pkg_id
-        info = MDBoxLayout(orientation="vertical", adaptive_height=True, size_hint=(1, 1))
-        info.add_widget(MDLabel(
-            text=pkg_label, font_style="Body",
-            size_hint_y=None, height=dp(24),
-        ))
-        info.add_widget(MDLabel(
-            text=f"{len(pkg_mods)} components  ·  {pkg_id}",
-            font_style="Label", role="small",
-            size_hint_y=None, height=dp(18),
-            theme_text_color="Custom", text_color=COL_DIM,
-        ))
-        info.bind(on_touch_down=lambda w, t: self._toggle_pkg_collapse(key)
-                  if w.collide_point(*t.pos) else None)
-        header.add_widget(info)
-        chevron_icon = "chevron-up" if not collapsed else "chevron-down"
-        header.add_widget(MDIconButton(
-            icon=chevron_icon,
-            size_hint=(None, None), size=(dp(32), dp(32)),
-            pos_hint={"center_y": 0.5},
-            on_release=lambda *_, k=key: self._toggle_pkg_collapse(k),
-        ))
-        container.add_widget(header)
-        return container
+
+        return PackageHeaderWidget(
+            pkg_id=pkg_id,
+            pkg_label=pkg_id.split("/")[-1] if "/" in pkg_id else pkg_id,
+            mod_count=len(pkg_mods),
+            any_checked=any_checked,
+            on_toggle=lambda: self._toggle_pkg_collapse(f"pkg:{pkg_id}"),
+            on_check=_on_pkg_check,
+            collapsed=collapsed,
+            md_bg_color=(0.10, 0.13, 0.17, 1),
+        )
 
     def _toggle_pkg_collapse(self, key: str) -> None:
         if key in self._collapsed:
@@ -96,8 +70,8 @@ class ModsSectionMixin:
                 mid = d.get("mod_id", "")
                 if mid:
                     known_ids.add(mid)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._host.log(f"[mods_section] WARN: failed to load install state for known_ids: {exc}")
 
         # install_record for update-available detection in the detail panel
         install_record = None
@@ -110,8 +84,8 @@ class ModsSectionMixin:
                     if d.get("folder_name") == mod_folder:
                         install_record = InstallRecord.from_dict(d)
                         break
-        except Exception:
-            pass
+        except Exception as exc:
+            self._host.log(f"[mods_section] WARN: failed to load install record for {getattr(mod, 'folder_name', '?')}: {exc}")
 
         # docs action button on the unexpanded row
         # K-3: readme_url is always a full https://raw.githubusercontent.com/… URL from the
@@ -134,7 +108,7 @@ class ModsSectionMixin:
         row_widget = ContentRowWidget(
             content=mod, row_index=index,
             checked=key in self._checked, expanded=expanded,
-            on_check=lambda val, k=key: self._on_check_mod(k, val),
+            on_check=lambda val, k=key: self._on_check(k, val),
             on_expand=lambda *_: self._toggle_expand(key),
             actions=actions,
         )
@@ -349,23 +323,8 @@ class ModsSectionMixin:
                         allow_mode_toggle=False,
                     )
                 else:
-                    from kivymd.uix.dialog import (
-                        MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-                        MDDialogButtonContainer,
-                    )
-                    dlg_ref = [None]
-                    def _close(*_):
-                        if dlg_ref[0]:
-                            dlg_ref[0].dismiss()
-                    dlg = MDDialog(
-                        MDDialogHeadlineText(text="Release Notes"),
-                        MDDialogSupportingText(text=_cl[:500]),
-                        MDDialogButtonContainer(
-                            MDButton(MDButtonText(text="Close"), style="text", on_release=_close),
-                        ),
-                    )
-                    dlg_ref[0] = dlg
-                    dlg.open()
+                    from .....shared.ui.dialogs.changelog_dialog import ChangelogDialog
+                    ChangelogDialog(title=f"{_nm} — Release Notes", changelog=_cl).open()
 
             panel.add_widget(MDButton(
                 MDButtonText(text="Release Notes"),

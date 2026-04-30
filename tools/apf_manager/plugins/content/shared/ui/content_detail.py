@@ -49,7 +49,14 @@ class ContentDetailPanel(MDBoxLayout):
     - install_record present: deployed_at, installed version, update-available cue
     """
 
-    def __init__(self, content, install_record=None, known_mod_ids: Optional[set] = None, **kwargs):
+    def __init__(
+        self,
+        content,
+        install_record=None,
+        known_mod_ids: Optional[set] = None,
+        component_health: Optional[dict] = None,
+        **kwargs,
+    ):
         super().__init__(
             orientation="vertical",
             size_hint_y=None,
@@ -62,6 +69,7 @@ class ContentDetailPanel(MDBoxLayout):
         self._content = content
         self._install_record = install_record
         self._known_mod_ids = known_mod_ids or set()
+        self._component_health = component_health
         self._build()
 
     # ------------------------------------------------------------------
@@ -243,16 +251,20 @@ class ContentDetailPanel(MDBoxLayout):
                 from ......core.semver import SemVer
                 if SemVer.parse(reg_ver) > SemVer.parse(rec_ver):
                     self._row_colored("Registry Ver.", reg_ver, _COL_UPDATE)
-            except Exception:
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("[content_detail] WARN: version compare failed: %s", exc)
                 self._row_colored("Registry Ver.", reg_ver, _COL_UPDATE)
 
         components = getattr(record, "components", []) or []
         if components:
+            health = self._component_health or {}
             chip_row = MDBoxLayout(
                 orientation="horizontal", size_hint_y=None, height=dp(28), spacing=dp(6),
             )
             for comp in components:
-                chip_row.add_widget(component_status_chip(comp, ok=True))
+                ok = health.get(comp, True) if health else True
+                chip_row.add_widget(component_status_chip(comp, ok=ok))
             self.add_widget(chip_row)
 
     # ------------------------------------------------------------------

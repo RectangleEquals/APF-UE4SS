@@ -92,8 +92,9 @@ class RegistryService:
         self._mods_cache_game_id: str = ""
         self._staged: list[str] = []   # staged mod_ids
 
-        # Rate limit dialog deduplication — None when no dialog is open
-        self._rate_limit_dialog = None
+        # Rate-limit callbacks — set by registries_tab via set_rate_limit_callbacks()
+        self._on_rate_limit_cb: Optional[Callable] = None
+        self._on_search_rate_limit_cb: Optional[Callable] = None
 
     # -----------------------------------------------------------------------
     # Lifecycle
@@ -320,7 +321,8 @@ class RegistryService:
                     url, cache, game_id=derived_game_id or game_id,
                     existing_mod_ids=existing_mod_ids,
                 )
-            except Exception:
+            except Exception as exc:
+                self._host.log(f"[registry] WARN: get_folder_tree failed for {url}: {exc}")
                 folder_tree = None
 
             def _finalize(selected_mods, raw_selected_ids=None):
@@ -438,10 +440,10 @@ class RegistryService:
                 try:
                     api = self._make_api(_src.repo.owner, _src.repo.repo)
                     api.fetch_text(url, force_refresh=False)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as exc:
+                    self._host.log(f"[registry] WARN: prefetch doc failed for {url}: {exc}")
+        except Exception as exc:
+            self._host.log(f"[registry] WARN: _prefetch_docs_bg failed: {exc}")
 
     def _load_mods(self, game_id: str) -> list:
         resolver = self._get_resolver()
@@ -488,7 +490,8 @@ class RegistryService:
         for entry in self.get_user_registries():
             try:
                 discovered = resolver.traverse(entry.url, cache)
-            except Exception:
+            except Exception as exc:
+                self._host.log(f"[registry] WARN: traversal failed for {entry.url}: {exc}")
                 continue
             for mod in discovered:
                 for tpath in mod.templates_paths:
@@ -625,7 +628,8 @@ class RegistryService:
         for entry in self.get_user_registries():
             try:
                 discovered = resolver.traverse(entry.url, cache)
-            except Exception:
+            except Exception as exc:
+                self._host.log(f"[registry] WARN: traversal failed for {entry.url}: {exc}")
                 continue
             for mod in discovered:
                 if _is_framework_mod_id(getattr(mod, "mod_id", "")):
@@ -667,7 +671,8 @@ class RegistryService:
                 continue
             try:
                 discovered = resolver.traverse(entry.url, cache)
-            except Exception:
+            except Exception as exc:
+                self._host.log(f"[registry] WARN: traversal failed for {entry.url}: {exc}")
                 continue
             for mod in discovered:
                 if mod.ue4ss_info and _is_framework_mod_id(getattr(mod, "mod_id", "")):
@@ -774,7 +779,8 @@ class RegistryService:
         api = self._make_api(entry.repo.owner, entry.repo.repo)
         try:
             contents = api.list_contents("")
-        except Exception:
+        except Exception as exc:
+            self._host.log(f"[registry] WARN: list_contents failed for {entry.repo.full_name}: {exc}")
             return []
         docs = []
         root_readme = next(
@@ -807,8 +813,8 @@ class RegistryService:
                             title=f["name"].replace(".md", "").replace("_", " ").title(),
                             doc_type="registry",
                         ))
-            except Exception:
-                pass
+            except Exception as exc:
+                self._host.log(f"[registry] WARN: list_contents docs/ failed for {entry.repo.full_name}: {exc}")
         return docs
 
     # -----------------------------------------------------------------------
@@ -827,7 +833,8 @@ class RegistryService:
             if data.get("apf_registry_share") != "v1":
                 return []
             return data.get("registries", [])
-        except Exception:
+        except Exception as exc:
+            self._host.log(f"[registry] WARN: import_registries_b64 decode failed: {exc}")
             return []
 
     @staticmethod
@@ -884,6 +891,7 @@ class RegistryService:
         if mod.mod_id:
             parts = mod.mod_id.split(".")
             game_id = parts[1] if len(parts) >= 2 else ""
+            parsed_deps = self._parse_manifest_deps(mod.manifest)
             if _is_framework_mod_id(mod.mod_id):
                 return FrameworkModDescriptor(
                     name=name, version=version, game_id=game_id,
@@ -893,6 +901,7 @@ class RegistryService:
                     mod_id=mod.mod_id,
                     source=source, components=components, docs=docs, tags=tags,
                     capabilities_includes=mod.manifest.get("capabilities", {}).get("include", []),
+                    dependencies=parsed_deps,
                 )
             return APModDescriptor(
                 name=name, version=version, game_id=game_id,
@@ -902,6 +911,7 @@ class RegistryService:
                 mod_id=mod.mod_id,
                 source=source, components=components, docs=docs, tags=tags,
                 capabilities_includes=mod.manifest.get("capabilities", {}).get("include", []),
+                dependencies=parsed_deps,
             )
         return ThirdPartyModDescriptor(
             name=name, version=version,
@@ -916,6 +926,23 @@ class RegistryService:
     # Helpers
     # -----------------------------------------------------------------------
 
+    def _parse_manifest_deps(self, manifest: dict) -> list:
+        """Convert manifest 'depends'/'incompatible' arrays to DependencySpec objects."""
+        from ..shared.data.content_base import DependencySpec
+        result = []
+        for kind, is_incompat in [("depends", False), ("incompatible", True)]:
+            for s in manifest.get(kind, []):
+                try:
+                    parts = str(s).strip().split(" ", 1)
+                    result.append(DependencySpec(
+                        mod_id=parts[0],
+                        version_constraint=parts[1] if len(parts) > 1 else "",
+                        is_incompatible=is_incompat,
+                    ))
+                except Exception as exc:
+                    self._host.log(f"[registry] WARN: malformed dep entry '{s}': {exc}")
+        return result
+
     def _get_cache(self) -> "RegistryCache":
         if self._cache is None:
             from ..utils.registry.cache import RegistryCache
@@ -928,73 +955,34 @@ class RegistryService:
             self._resolver = RegistryResolver(on_status=self._on_status)
         return self._resolver
 
+    def set_rate_limit_callbacks(
+        self,
+        on_rate_limit: Optional[Callable],
+        on_search_rate_limit: Optional[Callable],
+    ) -> None:
+        """Called by registries_tab to wire UI-layer rate-limit dialogs."""
+        self._on_rate_limit_cb = on_rate_limit
+        self._on_search_rate_limit_cb = on_search_rate_limit
+
     def _on_status(self, level: str, msg: str) -> None:
         if level == "rate_limit_exceeded":
-            from kivy.clock import Clock
-            Clock.schedule_once(lambda dt, m=msg: self._show_rate_limit_dialog(m))
+            if self._on_rate_limit_cb:
+                from kivy.clock import Clock
+                Clock.schedule_once(lambda dt, m=msg: self._on_rate_limit_cb(m))
+            else:
+                self._host.log(f"[registry] WARN: GitHub rate limit reached: {msg}")
             return
         if level == "rate_limit_exceeded_search":
-            from kivy.clock import Clock
-            Clock.schedule_once(lambda dt, m=msg: self._show_search_rate_limit_dialog(m))
+            if self._on_search_rate_limit_cb:
+                from kivy.clock import Clock
+                Clock.schedule_once(lambda dt, m=msg: self._on_search_rate_limit_cb(m))
+            else:
+                self._host.log(f"[registry] WARN: GitHub search rate limit reached: {msg}")
             return
         if level == "debug":
             self._host.log(f"[registry] {msg}")
             return
         self._host.log(f"[registry] [{level.upper()}] {msg}")
-
-    def _show_rate_limit_dialog(self, reset_str: str) -> None:
-        if self._rate_limit_dialog is not None:
-            return  # dialog already open — don't stack duplicates
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
-        from kivymd.uix.button import MDButton, MDButtonText
-        def _close(*_):
-            if self._rate_limit_dialog:
-                self._rate_limit_dialog.dismiss()
-            self._rate_limit_dialog = None
-        self._rate_limit_dialog = MDDialog(
-            MDDialogHeadlineText(text="GitHub Rate Limit Reached"),
-            MDDialogSupportingText(
-                text=(
-                    "Too many requests have been made to the GitHub API. "
-                    "Registry browsing is unavailable until the limit resets.\n\n"
-                    f"Expected to reset at: {reset_str}"
-                )
-            ),
-            MDDialogButtonContainer(
-                MDButton(MDButtonText(text="OK"), style="text", on_release=_close),
-            ),
-        )
-        self._rate_limit_dialog.open()
-
-    def _show_search_rate_limit_dialog(self, reset_str: str) -> None:
-        if self._rate_limit_dialog is not None:
-            return  # dialog already open — don't stack duplicates
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
-        from kivymd.uix.button import MDButton, MDButtonText
-        def _close(*_):
-            if self._rate_limit_dialog:
-                self._rate_limit_dialog.dismiss()
-            self._rate_limit_dialog = None
-        self._rate_limit_dialog = MDDialog(
-            MDDialogHeadlineText(text="GitHub Search Limit Reached"),
-            MDDialogSupportingText(
-                text=(
-                    "The GitHub search API allows 30 requests per minute. "
-                    "Registry search is temporarily unavailable.\n\n"
-                    f"Expected to reset at: {reset_str}"
-                )
-            ),
-            MDDialogButtonContainer(
-                MDButton(MDButtonText(text="OK"), style="text", on_release=_close),
-            ),
-        )
-        self._rate_limit_dialog.open()
 
     def _invalidate_mods_cache(self) -> None:
         with self._lock:

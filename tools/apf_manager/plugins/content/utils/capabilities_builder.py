@@ -366,8 +366,9 @@ class CapabilitiesBuilder:
                             return set(data)
                         if isinstance(data, dict):
                             return set(data.keys())
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        import logging
+                        logging.getLogger(__name__).warning("[capabilities_builder] WARN: failed to parse vocab file %s: %s", p, exc)
             return None
 
         def fuzzy_suggest(name: str, vocab: set[str], limit: int = 3) -> list[str]:

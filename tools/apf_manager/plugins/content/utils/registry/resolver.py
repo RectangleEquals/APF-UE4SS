@@ -187,8 +187,8 @@ class RegistryResolver:
                     )
                     for d in raw
                 ]
-            except Exception:
-                pass
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to deserialize traverse cache for {owner}/{repo}: {exc}")
 
         api = self._make_api(owner, repo)
         contents = api.list_contents("")
@@ -203,8 +203,8 @@ class RegistryResolver:
                 if raw_text:
                     try:
                         ue4ss_info = json.loads(raw_text)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self._on_status("warn", f"[resolver] Failed to parse ue4ss.json for {owner}/{repo}: {exc}")
                 break
 
         # UE4SS submodule: a submodule with no manifest.json treated as UE4SS source
@@ -222,8 +222,8 @@ class RegistryResolver:
                 for game_dir in sub:
                     if game_dir["type"] == "dir":
                         templates_paths.append(f"Templates/{game_dir['name']}")
-            except Exception:
-                pass
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to list Templates/ for {owner}/{repo}: {exc}")
 
         mods: list[DiscoveredMod] = []
 
@@ -234,7 +234,8 @@ class RegistryResolver:
             folder_path = entry["path"]
             try:
                 sub_contents = api.list_contents(folder_path)
-            except Exception:
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to list {folder_path} in {owner}/{repo}: {exc}")
                 continue
 
             manifest_entry = next(
@@ -268,7 +269,8 @@ class RegistryResolver:
                 continue
             try:
                 manifest = json.loads(manifest_text)
-            except Exception:
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to parse manifest.json in {folder_path}: {exc}")
                 continue
 
             mod_id = manifest.get("mod_id", "")
@@ -296,8 +298,8 @@ class RegistryResolver:
                     if _ue4ss_text:
                         try:
                             mod_ue4ss = json.loads(_ue4ss_text)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            self._on_status("warn", f"[resolver] Failed to parse subfolder ue4ss.json in {folder_path}: {exc}")
 
             # Component detection from sub_contents directory structure
             _detected = []
@@ -319,8 +321,8 @@ class RegistryResolver:
                         e["name"] for e in _lm_contents
                         if e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
                     ]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._on_status("warn", f"[resolver] Failed to list LogicMods/ in {folder_path}: {exc}")
                 if _bp_pak_files:
                     _detected.append("blueprint")
             _bp_combined = bool(_bp_pak_files) and (_has_lua or _has_cpp)
@@ -429,8 +431,8 @@ class RegistryResolver:
                     for m in mods
                 ]
                 cache.set(cache_key, json.dumps(serialisable))
-            except Exception:
-                pass
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to serialize traverse cache for {owner}/{repo}: {exc}")
 
         return mods
 
@@ -469,7 +471,8 @@ class RegistryResolver:
         api = self._make_api(owner, repo)
         try:
             contents = api.list_contents("") or []
-        except Exception:
+        except Exception as exc:
+            self._on_status("warn", f"[resolver] Failed to list root contents for {owner}/{repo}: {exc}")
             return None
 
         root = FolderTreeNode(
@@ -547,7 +550,8 @@ class RegistryResolver:
 
         try:
             sub_contents = api.list_contents(epath) or []
-        except Exception:
+        except Exception as exc:
+            self._on_status("warn", f"[resolver] Failed to list dir {epath} in {owner}/{repo}: {exc}")
             return FolderTreeNode(
                 node_type="dir", name=ename, path=epath, owner=owner, repo=repo
             )
@@ -601,10 +605,10 @@ class RegistryResolver:
                             if ue4ss_text:
                                 try:
                                     mod.ue4ss_info = json.loads(ue4ss_text)
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
+                                except Exception as exc:
+                                    self._on_status("warn", f"[resolver] Failed to parse ue4ss.json in {epath}: {exc}")
+                except Exception as exc:
+                    self._on_status("warn", f"[resolver] Failed to parse manifest.json in {epath}: {exc}")
 
         # Only direct children of Templates/ are template_dir (e.g. Templates/Palworld/).
         # Templates/ itself and deeper paths (e.g. Templates/Palworld/logic/) stay as dir.
@@ -830,8 +834,8 @@ class RegistryResolver:
         if cached:
             try:
                 return json.loads(cached)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to parse search cache for {game_id}: {exc}")
 
         results = self._call_search_api(f"apf-ue4ss-registry-{game_id}")
         if results:
@@ -876,7 +880,8 @@ class RegistryResolver:
             data = _json.loads(text) if text else {}
             self._blacklist_cache = {r.lower() for r in data.get("repos", [])}
             self._blacklist_cache_time = now
-        except Exception:
+        except Exception as exc:
+            self._on_status("warn", f"[resolver] Failed to parse blacklist.json: {exc}")
             # On parse failure keep old cache and don't advance the timestamp
             if self._blacklist_cache is None:
                 self._blacklist_cache = set()
@@ -914,14 +919,14 @@ class RegistryResolver:
                 t = data.get("token", "").strip()
                 if t:
                     return t
-            except Exception:
-                pass
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to read user GitHub token override: {exc}")
         # 2. Bundled PAT
         if _BUNDLED_PAT.exists():
             try:
                 t = _BUNDLED_PAT.read_text(encoding="utf-8").strip()
                 if t:
                     return t
-            except Exception:
-                pass
+            except Exception as exc:
+                self._on_status("warn", f"[resolver] Failed to read bundled GitHub token: {exc}")
         return None

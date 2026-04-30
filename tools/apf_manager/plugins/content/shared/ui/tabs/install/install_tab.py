@@ -18,7 +18,6 @@ from typing import Optional, TYPE_CHECKING
 
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
@@ -28,6 +27,9 @@ from .....services.mod_service import _FRAMEWORK_MOD_RE
 from .....shared.ui.constants import COL_DIM, COL_WARN, COL_STATUS_OK, COL_STATUS_MISS
 from .....shared.ui.installed_row_widget import InstalledRowWidget
 from .....shared.ui.badges import badge_text
+from .....shared.ui.banners.conflict_banner import ConflictBanner
+from .....shared.ui.banners.framework_status_banner import FrameworkStatusBanner
+from .....shared.ui.dialogs.uninstall_dialog import UninstallDialog
 
 if TYPE_CHECKING:
     from .......core.config import GameProfile
@@ -407,20 +409,7 @@ class InstalledTab(MDBoxLayout):
             md_bg_color=(0.11, 0.11, 0.11, 1),
         )
         section.add_widget(self._section_header(title))
-        notice_row = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(36),
-            padding=[dp(12), dp(4)], spacing=dp(8),
-        )
-        notice_row.add_widget(MDIcon(
-            icon="lock-outline", size_hint=(None, 1), width=dp(18),
-            theme_icon_color="Custom", icon_color=color,
-        ))
-        notice_row.add_widget(MDLabel(
-            text=notice, font_style="Label", role="small",
-            size_hint=(1, 1), halign="left", valign="middle",
-            theme_text_color="Custom", text_color=color,
-        ))
-        section.add_widget(notice_row)
+        section.add_widget(FrameworkStatusBanner(state="locked", detail=notice, color=color))
         return section
 
     def _templates_section(self, install_map: dict) -> MDBoxLayout:
@@ -514,109 +503,36 @@ class InstalledTab(MDBoxLayout):
 
     def _on_uninstall(self, install_record: "InstallRecord", is_orphaned: bool,
                       mod_info=None) -> None:
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
-
         is_framework = bool(
             install_record.mod_id and _FRAMEWORK_MOD_RE.match(install_record.mod_id)
         )
+        is_ap_mod = bool(install_record.mod_id)
 
-        if is_framework:
-            self._on_uninstall_framework(install_record)
-            return
+        # Cascade detection for ALL AP mods (not just framework)
+        if is_ap_mod:
+            deploy_svc = self._host.get_service("deploy")
+            impact: dict = {}
+            if deploy_svc and hasattr(deploy_svc, "get_uninstall_impact"):
+                impact = deploy_svc.get_uninstall_impact(install_record)
+            elif is_framework and deploy_svc and hasattr(deploy_svc, "get_framework_uninstall_impact"):
+                impact = deploy_svc.get_framework_uninstall_impact()
+            affected_mods = impact.get("affected_mods", [])
+            template_dirs = impact.get("template_dirs_removed", [])
 
-        components = install_record.components or ["lua"]
-        comp_names = {
-            "lua":       "Lua scripts (scripts/)",
-            "cpp":       "C++ module (dlls/main.dll)",
-            "blueprint": f"Blueprint files ({', '.join(install_record.bp_pak_files_deployed or ['LogicMods/*.pak'])})",
-        }
-        comp_text  = "\n".join(f"  \u2022 {comp_names[c]}" for c in components if c in comp_names)
-        manual_note = (
-            "\n\nThis mod was installed manually — APF Manager will remove it, "
-            "but no backup was tracked."
-            if is_orphaned else ""
-        )
+            if is_framework or affected_mods or template_dirs:
+                UninstallDialog.for_cascade(
+                    install_record=install_record,
+                    affected_mods=affected_mods,
+                    template_dirs=template_dirs,
+                    on_confirm=lambda: self._do_uninstall(install_record, mod_info),
+                ).open()
+                return
 
-        dlg_ref = [None]
-
-        def _confirm(*_):
-            dlg_ref[0].dismiss()
-            self._do_uninstall(install_record, mod_info)
-
-        dlg = MDDialog(
-            MDDialogHeadlineText(text=f"Uninstall {install_record.name}?"),
-            MDDialogSupportingText(
-                text=f"The following will be removed:\n{comp_text}{manual_note}"
-            ),
-            MDDialogButtonContainer(
-                Widget(),
-                MDButton(MDButtonText(text="Cancel"), style="text",
-                         on_release=lambda *_: dlg_ref[0].dismiss()),
-                MDButton(MDButtonText(text="Uninstall"), style="filled",
-                         on_release=_confirm),
-            ),
-        )
-        dlg_ref[0] = dlg
-        dlg.open()
-
-    def _on_uninstall_framework(self, install_record: "InstallRecord") -> None:
-        from kivymd.uix.dialog import (
-            MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
-            MDDialogButtonContainer,
-        )
-        deploy_svc = self._host.get_service("deploy")
-        impact: dict = {}
-        if deploy_svc and hasattr(deploy_svc, "get_uninstall_impact"):
-            impact = deploy_svc.get_uninstall_impact(install_record)
-        elif deploy_svc and hasattr(deploy_svc, "get_framework_uninstall_impact"):
-            impact = deploy_svc.get_framework_uninstall_impact()
-
-        affected_mods = impact.get("affected_mods", [])
-        template_dirs = impact.get("template_dirs_removed", [])
-
-        if affected_mods or template_dirs:
-            affected_lines = "\n".join(
-                f"  \u2022 {getattr(m, 'name', getattr(m, 'display_name', str(m)))}"
-                for m in affected_mods
-            )
-            template_lines = "\n".join(f"  \u2022 {p}" for p in template_dirs)
-            body = "Uninstalling the framework mod will also remove its entire Templates/ folder."
-            if template_dirs:
-                body += f"\n\nTemplate directories that will be removed:\n{template_lines}"
-            if affected_mods:
-                body += (
-                    f"\n\nThe following mods will not function correctly without the templates:\n"
-                    f"{affected_lines}\n\n"
-                    "These mods will need to be reinstalled after reinstalling the framework mod."
-                )
-        else:
-            body = (
-                "Uninstalling the framework mod will remove the AP runtime and all templates.\n"
-                "No currently installed mods appear to depend on its templates."
-            )
-
-        dlg_ref = [None]
-
-        def _confirm(*_):
-            dlg_ref[0].dismiss()
-            self._do_uninstall(install_record)
-
-        dlg = MDDialog(
-            MDDialogHeadlineText(text="Warning — Cascading Removal"),
-            MDDialogSupportingText(text=body),
-            MDDialogButtonContainer(
-                Widget(),
-                MDButton(MDButtonText(text="Cancel"), style="text",
-                         on_release=lambda *_: dlg_ref[0].dismiss()),
-                MDButton(MDButtonText(text="Uninstall Anyway"), style="filled",
-                         on_release=_confirm),
-            ),
-        )
-        dlg_ref[0] = dlg
-        dlg.open()
+        UninstallDialog.for_mod(
+            install_record=install_record,
+            is_orphaned=is_orphaned,
+            on_confirm=lambda: self._do_uninstall(install_record, mod_info),
+        ).open()
 
     def _do_uninstall(self, install_record: "InstallRecord", mod_info=None) -> None:
         from kivy.clock import Clock
@@ -652,27 +568,16 @@ class InstalledTab(MDBoxLayout):
                 f"[installed] Uninstall failed for {install_record.folder_name}: {exc}"
             )
 
+        if hasattr(self._host, "notify_state_change"):
+            Clock.schedule_once(lambda dt: self._host.notify_state_change("install"), 0)
+
         if is_framework:
             Clock.schedule_once(lambda dt: self._trigger_full_refresh(), 0)
         else:
             Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
-    def _conflict_banner(self, conflict_paths: list) -> MDBoxLayout:
-        names = ", ".join(p.name if hasattr(p, "name") else str(p) for p in conflict_paths)
-        row = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(44),
-            md_bg_color=(0.22, 0.06, 0.06, 1), padding=[dp(12), 0], spacing=dp(8),
-        )
-        row.add_widget(MDIcon(
-            icon="alert-octagon", size_hint=(None, 1), width=dp(24),
-            theme_icon_color="Custom", icon_color=(1.0, 0.3, 0.3, 1),
-        ))
-        row.add_widget(MDLabel(
-            text=f"Multiple framework mods detected — resolve conflict before managing mods.\nConflicting: {names}",
-            theme_text_color="Custom", text_color=(1.0, 0.5, 0.5, 1),
-            font_style="Body", role="small",
-        ))
-        return row
+    def _conflict_banner(self, conflict_paths: list) -> ConflictBanner:
+        return ConflictBanner(conflict_paths=conflict_paths)
 
     def _trigger_full_refresh(self) -> None:
         self._do_refresh()
@@ -681,8 +586,8 @@ class InstalledTab(MDBoxLayout):
             if hasattr(parent, "on_activate") and hasattr(parent, "_profile"):
                 try:
                     parent.on_activate(parent._profile)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._host.log(f"[installed] WARN: full refresh trigger failed: {exc}")
                 break
             parent = getattr(parent, "parent", None)
 
@@ -755,5 +660,6 @@ class InstalledTab(MDBoxLayout):
             all_mods = mods_svc.scan()
             orphaned = sum(1 for m in all_mods if getattr(m, "is_orphaned", False))
             return (len(all_mods), orphaned)
-        except Exception:
+        except Exception as exc:
+            self._host.log(f"[installed] WARN: get_installed_count failed: {exc}")
             return (0, 0)

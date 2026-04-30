@@ -16,9 +16,13 @@ from typing import Optional, Callable, TYPE_CHECKING
 from kivy.metrics import dp
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDIcon, MDLabel
+import logging
 
-from .badges import badge_icon, badge_text, component_status_chip
-from .constants import COL_DIM, COL_WARN
+_log = logging.getLogger(__name__)
+
+from .badge_bar import BadgeBar
+from .badges import badge_icon, badge_text
+from .constants import COL_WARN
 
 if TYPE_CHECKING:
     from ..data.pipeline_state import InstallRecord
@@ -156,26 +160,22 @@ class InstalledRowWidget(MDBoxLayout):
         # ------------------------------------------------------------------
         # Overlay bar: source badge + update-available badge
         # ------------------------------------------------------------------
-        badge_bar = MDBoxLayout(
-            orientation="horizontal",
-            size_hint_y=None, height=dp(22),
-            spacing=dp(8), padding=[dp(36), 0, dp(8), 0],
-        )
+        bar = BadgeBar()
 
         if self._is_orphaned:
-            badge_bar.add_widget(badge_icon("folder-account", COL_WARN, "Manually installed"))
-            badge_bar.add_widget(MDLabel(
+            bar.add_widget(badge_icon("folder-account", COL_WARN, "Manually installed"))
+            bar.add_widget(MDLabel(
                 text="Orphaned — not tracked by APF Manager",
                 font_style="Label", role="small", size_hint=(1, 1),
                 theme_text_color="Custom", text_color=COL_WARN,
             ))
         elif r.source_repo:
             label = r.source_repo.split("/")[-1] if "/" in r.source_repo else r.source_repo
-            badge_bar.add_widget(badge_text(label, _COL_MANAGED))
-            badge_bar.add_widget(MDLabel(size_hint=(1, 1)))
+            bar.add_widget(badge_text(label, _COL_MANAGED))
+            bar.add_widget(MDLabel(size_hint=(1, 1)))
         else:
-            badge_bar.add_widget(badge_text("Managed", _COL_MANAGED))
-            badge_bar.add_widget(MDLabel(size_hint=(1, 1)))
+            bar.add_widget(badge_text("Managed", _COL_MANAGED))
+            bar.add_widget(MDLabel(size_hint=(1, 1)))
 
         update_ver = self._check_update()
         if update_ver:
@@ -191,32 +191,20 @@ class InstalledRowWidget(MDBoxLayout):
                 font_style="Label", role="small", size_hint=(1, 1),
                 theme_text_color="Custom", text_color=_COL_UPDATE,
             ))
-            badge_bar.add_widget(upd)
+            bar.add_widget(upd)
 
-        self.add_widget(badge_bar)
-
-        # ------------------------------------------------------------------
-        # Component health chips (filesystem-verified)
-        # ------------------------------------------------------------------
-        component_status = self._compute_component_status()
-        if component_status:
-            health_row = MDBoxLayout(
-                orientation="horizontal",
-                size_hint_y=None, height=dp(22),
-                spacing=dp(8), padding=[dp(36), 0, dp(8), 0],
-            )
-            for comp, ok in component_status.items():
-                health_row.add_widget(component_status_chip(comp, ok))
-            self.add_widget(health_row)
+        self.add_widget(bar)
 
         # ------------------------------------------------------------------
-        # Expanded detail panel
+        # Expanded detail panel (component health chips rendered inside)
         # ------------------------------------------------------------------
         if self._expanded:
             from .content_detail import ContentDetailPanel
+            component_status = self._compute_component_status()
             self.add_widget(ContentDetailPanel(
                 content=content,
                 install_record=self._record,
+                component_health=component_status or None,
             ))
 
     # ------------------------------------------------------------------
@@ -243,7 +231,8 @@ class InstalledRowWidget(MDBoxLayout):
             from .....core.semver import SemVer
             if SemVer(cached_ver) > SemVer(r.version or "0.0.0"):
                 return cached_ver
-        except Exception:
+        except Exception as exc:
+            _log.warning("[installed_row] WARN: semver compare failed for %s: %s", r.folder_name, exc)
             if r.version and cached_ver != r.version:
                 return cached_ver
         return ""

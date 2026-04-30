@@ -23,6 +23,7 @@ def badge_text(text: str, color) -> MDLabel:
         text=f"[{text}]", font_style="Label", role="small",
         size_hint=(None, 1), width=dp(90),
         halign="left", valign="middle",
+        shorten=True, shorten_from="right",
         theme_text_color="Custom", text_color=color,
     )
 
