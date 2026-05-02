@@ -105,7 +105,7 @@ class LoadOrderModRow(MDBoxLayout):
         self._enabled = enabled
         self._is_keybinds = is_keybinds
 
-        from ......gui.theme import STATUS_ICONS
+        from .....gui.theme import STATUS_ICONS
 
         if is_keybinds:
             self.md_bg_color = ROW_BG_KEYBINDS

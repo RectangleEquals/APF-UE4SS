@@ -61,11 +61,12 @@ class BaseContentRow(MDBoxLayout):
         expand_on_header: bool = False,
         **kwargs,
     ):
+        bg = kwargs.pop("md_bg_color", _BG_ROW_EVEN if row_index % 2 == 0 else _BG_ROW_ODD)
         super().__init__(
             orientation="vertical",
             size_hint_y=None,
             adaptive_height=True,
-            md_bg_color=_BG_ROW_EVEN if row_index % 2 == 0 else _BG_ROW_ODD,
+            md_bg_color=bg,
             **kwargs,
         )
         self._row_index = row_index

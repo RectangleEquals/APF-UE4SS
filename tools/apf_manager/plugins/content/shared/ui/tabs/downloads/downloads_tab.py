@@ -34,7 +34,8 @@ from kivymd.uix.progressindicator import MDLinearProgressIndicator
 from .......gui.widgets.tip_icon_button import TipIconButton
 from .....shared.ui.constants import COL_DIM
 from .....shared.ui.section_header import make_section_header
-from .queue_panel import QueuePanelMixin, _CACHE_DIR
+from .queue_panel import QueuePanelMixin
+from .....services.download_service import _CACHE_DIR
 from .cache_panel import CachePanelMixin
 
 if TYPE_CHECKING:

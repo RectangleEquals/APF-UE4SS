@@ -176,7 +176,7 @@ def download_github_folder(
     (24-hr TTL caching, stale fallback). Binary files downloaded directly via
     requests since fetch_text only handles text.
     """
-    from ......core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+    from ....core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
     api = GitHubAPI(
         repo_owner=owner, repo_name=repo,
         token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,

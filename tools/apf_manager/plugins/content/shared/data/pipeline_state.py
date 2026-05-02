@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, get_type_hints
+from typing import Optional, Union, get_type_hints, get_origin, get_args
 
 from .content_base import ContentDescriptor, GitHubRepo
 
@@ -57,21 +57,32 @@ def _from_dict_recursive(cls, data: dict):
             continue
         val = data[f.name]
         ft = hints.get(f.name)
-        inner = None
-        if hasattr(ft, "__args__"):
-            inner = next((a for a in ft.__args__ if a is not type(None)), None)
-        target_cls = (
-            inner if inner and dataclasses.is_dataclass(inner)
-            else (ft if ft and dataclasses.is_dataclass(ft) else None)
-        )
-        if target_cls:
-            if isinstance(val, list):
-                val = [
-                    _from_dict_recursive(target_cls, item) if isinstance(item, dict) else item
-                    for item in val
-                ]
-            elif isinstance(val, dict):
-                val = _from_dict_recursive(target_cls, val)
+
+        # Unwrap Optional[X] → X using the documented typing API.
+        # Optional[X] is Union[X, None]; get_origin returns Union, get_args returns (X, NoneType).
+        effective = ft
+        if get_origin(ft) is Union:
+            non_none = [a for a in get_args(ft) if a is not type(None)]
+            if len(non_none) == 1:
+                effective = non_none[0]
+
+        # Path A: effective is list[DataClass] — handles list[DC] and Optional[list[DC]]
+        list_item_cls = None
+        if get_origin(effective) is list:
+            args = get_args(effective)
+            if args and dataclasses.is_dataclass(args[0]):
+                list_item_cls = args[0]
+
+        # Path B: effective is a direct dataclass (no generic wrapper)
+        direct_cls = effective if (effective is not None and dataclasses.is_dataclass(effective)) else None
+
+        if list_item_cls and isinstance(val, list):
+            val = [
+                _from_dict_recursive(list_item_cls, item) if isinstance(item, dict) else item
+                for item in val
+            ]
+        elif direct_cls and isinstance(val, dict):
+            val = _from_dict_recursive(direct_cls, val)
         kwargs[f.name] = val
     return cls(**kwargs)
 

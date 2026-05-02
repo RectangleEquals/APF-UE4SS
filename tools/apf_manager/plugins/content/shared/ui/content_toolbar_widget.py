@@ -8,7 +8,7 @@ from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText
 
-from .......gui.widgets.tip_icon_button import TipIconButton
+from .....gui.widgets.tip_icon_button import TipIconButton
 
 
 class ContentToolbarWidget(MDBoxLayout):

@@ -27,7 +27,7 @@ class ThirdPartyModDescriptor(ModDescriptor):
 class APModDescriptor(ModDescriptor):
     content_type: str = "ap_mod"
     mod_id: str = ""
-    dependencies: list = field(default_factory=list)
+    dependencies: list[DependencySpec] = field(default_factory=list)
     capabilities_includes: list = field(default_factory=list)
 
 
@@ -44,13 +44,13 @@ class TemplateDescriptor(ContentDescriptor):
     source: Optional[RegistrySource] = None
     docs: Optional[DocInfo] = None
     tags: Optional[ContentTags] = None
-    conflict_sources: list = field(default_factory=list)
+    conflict_sources: list[GitHubRepo] = field(default_factory=list)
 
 
 @dataclass
 class BinaryDescriptor(ContentDescriptor):
     install_type: str = ""
-    assets: list = field(default_factory=list)
+    assets: list[ContentAsset] = field(default_factory=list)
     docs: Optional[DocInfo] = None
     tags: Optional[ContentTags] = None
 
