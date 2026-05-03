@@ -23,24 +23,6 @@ if TYPE_CHECKING:
     from ..shared.data.pipeline_state import InstallRecord
 
 
-def _classify_zip(zf) -> str:
-    """Inspect a ZipFile TOC to determine the appropriate install target.
-
-    Returns one of: "ue4ss" | "framework_bin" | "blueprint_pak" | "unknown"
-    """
-    names_lower = {info.filename.lower() for info in zf.infolist()}
-    # UE4SS: has ue4ss/ folder containing UE4SS.dll (universal UE4SS marker)
-    if any("ue4ss/ue4ss.dll" in n for n in names_lower):
-        return "ue4ss"
-    # Framework binary: has APFrameworkCore.dll
-    if any("apframeworkcore.dll" in n for n in names_lower):
-        return "framework_bin"
-    # Standalone blueprint pak: ALL non-directory entries are .pak files
-    non_dir = [n for n in names_lower if not n.endswith("/")]
-    if non_dir and all(n.endswith(".pak") for n in non_dir):
-        return "blueprint_pak"
-    return "unknown"
-
 
 class DeployService:
     def __init__(self, host) -> None:
@@ -251,6 +233,72 @@ class DeployService:
             self._host.log(f"[deploy] ERROR deploying template '{template_path}': {exc}")
             raise
 
+    # -----------------------------------------------------------------------
+    # Modular zip controller dispatch
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _zip_controller_classes():
+        from .controllers.ue4ss_zip_controller import UE4SSZipFileController
+        from .controllers.framework_zip_controller import FrameworkZipFileController
+        from .controllers.blueprint_pak_zip_controller import BlueprintPakZipFileController
+        return [UE4SSZipFileController, FrameworkZipFileController, BlueprintPakZipFileController]
+
+    def _find_zip_controller(self, zip_path: "Path", content):
+        """
+        Open zip_path, try each registered controller in order, return the first
+        that classifies it (layout stored as instance state). Returns None if
+        no controller recognises the zip layout.
+
+        classify() is called exactly once per zip here. create_install_controller()
+        reads the stored _detected_layout — the zip is not re-opened.
+        """
+        import zipfile
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                for cls in self._zip_controller_classes():
+                    ctrl = cls(content)
+                    if ctrl.classify(zf):
+                        return ctrl
+        except zipfile.BadZipFile as exc:
+            self._host.log(f"[deploy] WARN: corrupt zip '{zip_path.name}': {exc}")
+        return None
+
+    def _dispatch_zip(
+        self,
+        zip_path: "Path",
+        content,
+        dest_dir: "Path",
+        logicmods_dir: "Optional[Path]",
+    ) -> None:
+        """
+        Shared per-zip dispatch used by both _deploy_binary_content and deploy_other.
+
+        MapGenBP zips are handled specially (fixed target). All other zips are
+        routed to the appropriate install controller via _find_zip_controller.
+        """
+        import zipfile
+        if zip_path.stem.lower() == "zmapgenbp":
+            mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
+            mapgen_dir.mkdir(parents=True, exist_ok=True)
+            self._host.log(f"[deploy] Extracting {zip_path.name} as MapGenBP \u2192 {mapgen_dir}")
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(str(mapgen_dir))
+            return
+        ctrl = self._find_zip_controller(zip_path, content)
+        if ctrl is None:
+            self._host.log(
+                f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
+                "manual installation required"
+            )
+            return
+        install_ctrl = ctrl.create_install_controller()
+        self._host.log(
+            f"[deploy] Extracting {zip_path.name} via "
+            f"{type(install_ctrl).__name__} \u2192 {dest_dir}"
+        )
+        install_ctrl.deploy(zip_path, dest_dir, logicmods_dir=logicmods_dir)
+
     def _deploy_binary_content(
         self,
         cache_path: "Path",
@@ -260,9 +308,9 @@ class DeployService:
         platform_dir = getattr(detection, "platform_dir", None)
         if not detection or platform_dir is None or not platform_dir.parts:
             raise RuntimeError("Game platform directory not detected")
-        import zipfile
         dest_dir = platform_dir
         install_type = getattr(content, "install_type", "")
+        logicmods_dir = getattr(detection, "logicmods_dir", None)
         self._host.log(
             f"[deploy] Deploying binary '{content.name}' install_type={install_type} "
             f"from {cache_path}"
@@ -272,42 +320,7 @@ class DeployService:
             zips = sorted(cache_path.glob("*.zip"))
             if zips:
                 for zip_path in zips:
-                    if zip_path.stem.lower() == "zmapgenbp":
-                        mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
-                        mapgen_dir.mkdir(parents=True, exist_ok=True)
-                        self._host.log(
-                            f"[deploy] Extracting {zip_path.name} as MapGenBP \u2192 {mapgen_dir}"
-                        )
-                        with zipfile.ZipFile(zip_path, "r") as zf:
-                            zf.extractall(str(mapgen_dir))
-                        continue
-                    with zipfile.ZipFile(zip_path, "r") as zf:
-                        kind = _classify_zip(zf)
-                        if kind == "blueprint_pak":
-                            lm_dir = getattr(detection, "logicmods_dir", None)
-                            if lm_dir and lm_dir.parts:
-                                lm_dir.mkdir(parents=True, exist_ok=True)
-                                self._host.log(
-                                    f"[deploy] Extracting {zip_path.name} as {kind} \u2192 {lm_dir}"
-                                )
-                                for info in zf.infolist():
-                                    if info.filename.lower().endswith(".pak"):
-                                        zf.extract(info, str(lm_dir))
-                            else:
-                                self._host.log(
-                                    f"[deploy] Extracting {zip_path.name} as {kind} \u2192 {dest_dir}"
-                                )
-                                zf.extractall(str(dest_dir))
-                        elif kind == "unknown":
-                            self._host.log(
-                                f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
-                                "manual installation required"
-                            )
-                        else:
-                            self._host.log(
-                                f"[deploy] Extracting {zip_path.name} as {kind} \u2192 {dest_dir}"
-                            )
-                            zf.extractall(str(dest_dir))
+                    self._dispatch_zip(zip_path, content, dest_dir, logicmods_dir)
             else:
                 for f in cache_path.iterdir():
                     if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
@@ -491,49 +504,17 @@ class DeployService:
         install_type: str,
         detection: "Optional[UE4SSResult]",
     ) -> None:
-        """Deploy an Other-category item (UE4SS or framework binaries).
-
-        Each selected zip is inspected by TOC to determine its install target:
-          "ue4ss"          → extract to platform_dir (Binaries/<arch>/)
-          "framework_bin"  → extract to platform_dir
-          "blueprint_pak"  → copy .pak files to logicmods_dir (Content/Paks/LogicMods/)
-          "unknown"        → extract to platform_dir (safe fallback)
-        """
+        """Deploy an Other-category item (UE4SS or framework binaries)."""
         platform_dir = getattr(detection, "platform_dir", None)
         if not detection or platform_dir is None or not platform_dir.parts:
             raise RuntimeError("Game platform directory not detected")
-        import zipfile
         dest_dir = platform_dir
+        logicmods_dir = getattr(detection, "logicmods_dir", None)
         dest_dir.mkdir(parents=True, exist_ok=True)
         zips = sorted(cache_path.glob("*.zip"))
         if zips:
             for zip_path in zips:
-                # zMapGenBP: UE4SS tool for .usmap generation — root-level contents
-                # go directly into ue4ss/MapGenBP/ (not platform_dir root)
-                if zip_path.stem.lower() == "zmapgenbp":
-                    mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
-                    mapgen_dir.mkdir(parents=True, exist_ok=True)
-                    with zipfile.ZipFile(zip_path, "r") as zf:
-                        zf.extractall(str(mapgen_dir))
-                    continue
-                with zipfile.ZipFile(zip_path, "r") as zf:
-                    kind = _classify_zip(zf)
-                    if kind == "blueprint_pak":
-                        lm_dir = getattr(detection, "logicmods_dir", None)
-                        if lm_dir and lm_dir.parts:
-                            lm_dir.mkdir(parents=True, exist_ok=True)
-                            for info in zf.infolist():
-                                if info.filename.lower().endswith(".pak"):
-                                    zf.extract(info, str(lm_dir))
-                        else:
-                            zf.extractall(str(dest_dir))
-                    elif kind == "unknown":
-                        self._host.log(
-                            f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
-                            "manual installation required (destination picker coming in a future update)"
-                        )
-                    else:
-                        zf.extractall(str(dest_dir))
+                self._dispatch_zip(zip_path, None, dest_dir, logicmods_dir)
         else:
             for f in cache_path.iterdir():
                 if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):

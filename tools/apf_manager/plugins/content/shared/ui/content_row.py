@@ -54,12 +54,16 @@ class ContentRowWidget(BaseContentRow):
         on_expand: Optional[Callable[[bool], None]] = None,
         actions: Optional[list] = None,
         install_record=None,
+        known_mod_ids: Optional[set] = None,
+        detail_widget=None,
         **kwargs,
     ):
         from ..data.content_types import ExternalUrlBinary as _EUB, ManualBinary as _MB
 
         self._content = content
         self._install_record = install_record
+        self._known_mod_ids = known_mod_ids
+        self._detail_widget = detail_widget
 
         # EUB and ManualBinary have no expand; EUB still gets hover for the "Open" button
         _is_eub    = isinstance(content, _EUB)
@@ -182,10 +186,13 @@ class ContentRowWidget(BaseContentRow):
             header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(40)))
 
     def _build_detail_content(self):
+        if self._detail_widget is not None:
+            return self._detail_widget
         from .content_detail import ContentDetailPanel
         return ContentDetailPanel(
             content=self._content,
             install_record=self._install_record,
+            known_mod_ids=self._known_mod_ids,
         )
 
     # ------------------------------------------------------------------

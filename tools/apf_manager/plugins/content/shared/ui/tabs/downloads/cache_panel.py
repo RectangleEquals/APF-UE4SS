@@ -24,9 +24,9 @@ class CachePanelMixin:
 
     def _cache_row(self, ci: "_CacheItem") -> MDBoxLayout:
         from .....shared.ui.content_row import ContentRowWidget
-        from .....shared.ui.content_detail import ContentDetailPanel
         cache_key = str(ci.cache_path)
         expanded  = cache_key in self._expanded_cache
+        cache_detail = self._cache_detail(ci) if expanded else None
 
         container = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
@@ -38,19 +38,16 @@ class CachePanelMixin:
             expanded=expanded,
             on_check=lambda val, k=cache_key: self._on_cache_check(k, val),
             on_expand=lambda *_: self._toggle_cache_expand(cache_key),
+            detail_widget=cache_detail,
         ))
-        if expanded:
-            container.add_widget(self._cache_detail(ci))
         return container
 
     def _cache_detail(self, ci: "_CacheItem") -> MDBoxLayout:
-        from .....shared.ui.content_detail import ContentDetailPanel
         from .....shared.data.content_types import GithubReleaseBinary as _GRB
 
         outer = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,
         )
-        outer.add_widget(ContentDetailPanel(content=ci.content))
 
         # Size label
         size = ci.size_mb

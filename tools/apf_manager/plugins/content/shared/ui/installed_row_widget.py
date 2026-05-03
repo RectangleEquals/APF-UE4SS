@@ -220,7 +220,7 @@ class InstalledRowWidget(MDBoxLayout):
         cache_dir = Path.home() / ".apf_manager" / "cache"
         owner_repo = r.source_repo.replace("/", "+")
         mod_cache = cache_dir / owner_repo / r.folder_name
-        result = ContentSerializer().load_cache(mod_cache)
+        result = ContentSerializer().load_cache(mod_cache, log_fn=_log.warning)
         if not result:
             return ""
         cached_content, _ = result

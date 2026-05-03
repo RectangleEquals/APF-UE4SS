@@ -57,7 +57,6 @@ class ModsSectionMixin:
 
     def _mod_row(self, mod, index: int, indent: bool = False) -> MDBoxLayout:
         from .....shared.ui.content_row import ContentRowWidget
-        from .....shared.ui.content_detail import ContentDetailPanel
         folder = getattr(mod, "folder_name", getattr(mod, "folder", getattr(mod, "mod_id", str(index))))
         key = f"mod:{folder}"
         expanded = key in self._expanded
@@ -111,6 +110,8 @@ class ModsSectionMixin:
             on_check=lambda val, k=key: self._on_check(k, val),
             on_expand=lambda *_: self._toggle_expand(key),
             actions=actions,
+            known_mod_ids=known_ids,
+            install_record=install_record,
         )
         if indent:
             inner = MDBoxLayout(orientation="horizontal", size_hint_y=None, adaptive_height=True)
@@ -120,10 +121,6 @@ class ModsSectionMixin:
             outer.add_widget(inner)
         else:
             outer.add_widget(row_widget)
-        if expanded:
-            outer.add_widget(ContentDetailPanel(
-                content=mod, known_mod_ids=known_ids, install_record=install_record,
-            ))
         return outer
 
     def _open_other_docs(self, docs_path: str, owner: str, repo: str,
@@ -181,6 +178,7 @@ class ModsSectionMixin:
             actions.append({"icon": "file-document-outline", "tooltip": "View Docs",
                             "callback": _open_docs})
 
+        outer_detail = self._other_detail(item, outer_key=key) if expanded else None
         outer = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
         outer.add_widget(ContentRowWidget(
             content=item, row_index=index,
@@ -189,9 +187,8 @@ class ModsSectionMixin:
             on_check=on_check_cb,
             on_expand=lambda *_: self._toggle_expand(key),
             actions=actions,
+            detail_widget=outer_detail,
         ))
-        if expanded:
-            outer.add_widget(self._other_detail(item, outer_key=key))
         return outer
 
     def _other_detail(self, item, outer_key: str = "") -> MDBoxLayout:

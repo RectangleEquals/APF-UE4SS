@@ -605,6 +605,8 @@ class RegistryViewer:
             for mod in mods:
                 if mod.mod_id:
                     id_to_mod[f"mod:{mod.owner}/{mod.repo}:{mod.mod_id}"] = mod
+                if mod.folder and not mod.mod_id:
+                    id_to_mod[f"non_ap:{mod.owner}/{mod.repo}:{mod.folder}"] = mod
                 for tpath in mod.templates_paths:
                     id_to_mod[f"tpl:{mod.owner}/{mod.repo}:{tpath}"] = mod
 
@@ -667,6 +669,12 @@ class RegistryViewer:
 
             if result.get("action") == "confirm":
                 selected_ids: list[str] = result.get("selected", [])
+                dropped = [sid for sid in selected_ids if sid not in id_to_mod]
+                if dropped:
+                    self._host.log(
+                        f"[viewer] WARN: {len(dropped)} selected IDs not found in id_to_mod — "
+                        f"first few: {dropped[:3]}"
+                    )
                 selected_mods = [
                     id_to_mod[sid] for sid in selected_ids if sid in id_to_mod
                 ]

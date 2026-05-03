@@ -307,7 +307,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         from .....shared.data.pipeline_state import ContentSerializer
 
         def _add_item(cache_dir: Path) -> None:
-            result = ContentSerializer().load_cache(cache_dir)
+            result = ContentSerializer().load_cache(cache_dir, log_fn=self._host.log)
             if not result:
                 return
             content, _ = result

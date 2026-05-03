@@ -214,6 +214,10 @@ class RegistryService:
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
                 sc = _build_sc_from_viewer_result(selected_mods, raw_selected_ids)
+                self._host.log(
+                    f"[registry] _build_sc_from_viewer_result: "
+                    f"selected_mods={len(selected_mods)} → sc={sc}"
+                )
                 self._host.config.add_user_registry(url, game_id=derived_game_id,
                                                      selected_content=sc)
                 self._invalidate_mods_cache()
@@ -333,6 +337,10 @@ class RegistryService:
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
                 sc = _build_sc_from_viewer_result(selected_mods, raw_selected_ids)
+                self._host.log(
+                    f"[registry] _build_sc_from_viewer_result: "
+                    f"selected_mods={len(selected_mods)} → sc={sc}"
+                )
                 self._host.config.add_user_registry(url, game_id=derived_game_id,
                                                      selected_content=sc)
                 self._invalidate_mods_cache()
@@ -595,7 +603,7 @@ class RegistryService:
         for subdir in cache_dir.iterdir():
             if not subdir.is_dir():
                 continue
-            result = ContentSerializer().load_cache(subdir)
+            result = ContentSerializer().load_cache(subdir, log_fn=self._host.log)
             if result:
                 desc, _ = result
                 results.append(desc)
