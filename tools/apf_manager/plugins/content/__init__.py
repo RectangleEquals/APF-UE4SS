@@ -3,11 +3,11 @@ Content pipeline plugin — registers the 'mods', 'registry', 'deploy', and 'val
 services, and contributes the Content hub_panel (priority 10).
 """
 
-from .services.mod_service import ModService, ModInfo
-from .services.registry_service import RegistryService
-from .services.deploy_service import DeployService
-from .services.validation_service import ValidationService
-from .panel import ContentPipelinePanel
+from .controllers.mods.service import ModService, ModInfo
+from .controllers.registry.service import RegistryService
+from .controllers.deploy.service import DeployService
+from .controllers.validation.service import ValidationService
+from .views.pipeline_panel import ContentPipelinePanel
 from ...core.plugin_host import PluginContribution
 
 

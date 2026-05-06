@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 from ...core.remote.github_release_manager import RepoRelease
-from ..content.shared import GithubReleaseBinary, ContentAsset, ReleaseSource, GitHubRepo, ContentTags
+from ..content.models.descriptors.types import GithubReleaseBinary, ContentAsset, ReleaseSource, GitHubRepo, ContentTags
 
 
 _WORLDS_DIR      = Path.home() / ".apf_manager" / "worlds"
@@ -528,7 +528,7 @@ class UpdatesService:
         if not game_id:
             return "unknown"
         try:
-            from ..content.shared import InstallStateManager
+            from ..content.models.state.install import InstallStateManager
             state = InstallStateManager(game_id)
             for entry in state.get_all():
                 if entry.get("install_type") == "ue4ss":
@@ -543,7 +543,7 @@ class UpdatesService:
             return "unknown"
         mods_svc = self._host.get_service("mods")
         try:
-            from ..content.utils.registry.resolver import _is_framework_mod_id
+            from ..content.controllers.registry.resolver import _is_framework_mod_id
             for mod in mods_svc.get_ap_mods():
                 if mod.mod_id and _is_framework_mod_id(mod.mod_id):
                     return mod.version or "unknown"
