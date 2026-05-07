@@ -15,7 +15,7 @@ from ..chrome.constants import COL_DIM, COL_WARN, COL_STATUS_OK, COL_STATUS_MISS
 from ..chrome.badges import component_status_chip
 
 if TYPE_CHECKING:
-    from ..data.pipeline_state import InstallRecord
+    from ...models.state.pipeline import InstallRecord
 
 
 _BG_DETAIL = (0.09, 0.10, 0.12, 1)
@@ -77,7 +77,7 @@ class ContentDetailPanel(MDBoxLayout):
     # ------------------------------------------------------------------
 
     def _build(self) -> None:
-        from ..data.content_types import (
+        from ...models.descriptors.types import (
             GithubReleaseBinary as _GRB,
             TemplateDescriptor as _TPL,
             ModDescriptor as _MOD,

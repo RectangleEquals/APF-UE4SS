@@ -25,7 +25,7 @@ from ..chrome.badges import badge_icon, badge_text
 from ..chrome.constants import COL_WARN
 
 if TYPE_CHECKING:
-    from ..data.pipeline_state import InstallRecord
+    from ...models.state.pipeline import InstallRecord
 
 
 _COL_MANAGED = (0.3, 0.8, 0.6, 1)
@@ -86,11 +86,11 @@ class InstalledRowWidget(MDBoxLayout):
     def _build(self) -> None:
         self.clear_widgets()
         from .content_row import ContentRowWidget
-        from ..data.content_types import (
+        from ...models.descriptors.types import (
             APModDescriptor, FrameworkModDescriptor, ThirdPartyModDescriptor,
             ModComponents,
         )
-        from ..data.content_base import RegistrySource, GitHubRepo
+        from ...models.descriptors.base import RegistrySource, GitHubRepo
 
         r = self._record
 
@@ -199,7 +199,7 @@ class InstalledRowWidget(MDBoxLayout):
         # Expanded detail panel (component health chips rendered inside)
         # ------------------------------------------------------------------
         if self._expanded:
-            from .content_detail import ContentDetailPanel
+            from ..panels.content_detail_panel import ContentDetailPanel
             component_status = self._compute_component_status()
             self.add_widget(ContentDetailPanel(
                 content=content,
@@ -216,7 +216,7 @@ class InstalledRowWidget(MDBoxLayout):
         r = self._record
         if not r.source_repo or not r.folder_name:
             return ""
-        from ..data.pipeline_state import ContentSerializer
+        from ...models.state.pipeline import ContentSerializer
         cache_dir = Path.home() / ".apf_manager" / "cache"
         owner_repo = r.source_repo.replace("/", "+")
         mod_cache = cache_dir / owner_repo / r.folder_name

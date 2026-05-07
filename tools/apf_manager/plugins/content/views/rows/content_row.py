@@ -20,12 +20,12 @@ from .base_content_row import BaseContentRow
 from ..chrome.constants import COL_DIM
 
 if TYPE_CHECKING:
-    from ..data.content_types import (
+    from ...models.descriptors.types import (
         ContentDescriptor, ModDescriptor, APModDescriptor, FrameworkModDescriptor,
         TemplateDescriptor, GithubReleaseBinary, ExternalUrlBinary, ManualBinary,
         BinaryDescriptor,
     )
-    from ..data.pipeline_state import InstallRecord
+    from ...models.state.pipeline import InstallRecord
 
 
 class ContentRowWidget(BaseContentRow):
@@ -58,7 +58,7 @@ class ContentRowWidget(BaseContentRow):
         detail_widget=None,
         **kwargs,
     ):
-        from ..data.content_types import ExternalUrlBinary as _EUB, ManualBinary as _MB
+        from ...models.descriptors.types import ExternalUrlBinary as _EUB, ManualBinary as _MB
 
         self._content = content
         self._install_record = install_record
@@ -97,7 +97,7 @@ class ContentRowWidget(BaseContentRow):
     # ------------------------------------------------------------------
 
     def _build_header_content(self, header, info_col) -> None:
-        from ..data.content_types import (
+        from ...models.descriptors.types import (
             GithubReleaseBinary as _GRB,
             ExternalUrlBinary as _EUB,
             ManualBinary as _MB,
@@ -158,7 +158,7 @@ class ContentRowWidget(BaseContentRow):
             ))
 
     def _build_right_side(self, header) -> None:
-        from ..data.content_types import ExternalUrlBinary as _EUB, ManualBinary as _MB
+        from ...models.descriptors.types import ExternalUrlBinary as _EUB, ManualBinary as _MB
         c = self._content
         is_eub    = isinstance(c, _EUB)
         is_manual = isinstance(c, _MB)
@@ -188,7 +188,7 @@ class ContentRowWidget(BaseContentRow):
     def _build_detail_content(self):
         if self._detail_widget is not None:
             return self._detail_widget
-        from .content_detail import ContentDetailPanel
+        from ..panels.content_detail_panel import ContentDetailPanel
         return ContentDetailPanel(
             content=self._content,
             install_record=self._install_record,
@@ -201,7 +201,7 @@ class ContentRowWidget(BaseContentRow):
 
     @staticmethod
     def _type_icon(c, is_grb, is_tpl, is_mod):
-        from ..data.content_types import FrameworkModDescriptor as _FW
+        from ...models.descriptors.types import FrameworkModDescriptor as _FW
         if is_grb:
             return "package-variant", (0.8, 0.55, 0.1, 1)
         if is_tpl:
@@ -214,7 +214,7 @@ class ContentRowWidget(BaseContentRow):
 
     @staticmethod
     def _mod_type_label(c) -> str:
-        from ..data.content_types import FrameworkModDescriptor as _FW, APModDescriptor as _AP
+        from ...models.descriptors.types import FrameworkModDescriptor as _FW, APModDescriptor as _AP
         comps = getattr(c, "components", None)
         types = (
             comps.types if hasattr(comps, "types")
