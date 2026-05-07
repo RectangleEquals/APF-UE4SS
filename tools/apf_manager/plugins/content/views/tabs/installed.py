@@ -23,7 +23,7 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 
-from .....gui.widgets.tip_icon_button import TipIconButton
+from .....core.views.widgets.tip_icon_button import TipIconButton
 from ...controllers.mods.service import _FRAMEWORK_MOD_RE
 from ..chrome.constants import COL_DIM, COL_WARN, COL_STATUS_OK, COL_STATUS_MISS
 from ..rows.installed_row import InstalledRowWidget
@@ -33,8 +33,8 @@ from ..banners.framework_status_banner import FrameworkStatusBanner
 from ..dialogs.uninstall_dialog import UninstallDialog
 
 if TYPE_CHECKING:
-    from .....core.config import GameProfile
-    from .....core.ue4ss import UE4SSResult
+    from .....core.models.config import GameProfile
+    from .....core.models.ue4ss import UE4SSResult
     from ...controllers.mods.service import ModInfo
     from ...models.state.pipeline import InstallRecord
 

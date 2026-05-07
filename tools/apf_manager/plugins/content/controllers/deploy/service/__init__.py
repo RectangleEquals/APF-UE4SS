@@ -16,8 +16,8 @@ from .load_order import DeployLoadOrderMixin
 from .impact import DeployImpactMixin
 
 if TYPE_CHECKING:
-    from ......core.config import GameProfile
-    from ......core.ue4ss import UE4SSResult
+    from ......core.models.config import GameProfile
+    from ......core.models.ue4ss import UE4SSResult
     from ....models.mods.config import ModsTextManager
 
 

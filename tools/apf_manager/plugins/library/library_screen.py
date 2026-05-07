@@ -76,8 +76,8 @@ class _DotBadgeButton(MDBoxLayout):
         self.has_badge = visible
 
 if TYPE_CHECKING:
-    from ...core.plugin_host import PluginHost
-    from ...core.config import APFConfig, GameProfile
+    from ...core.controllers.plugin_host import PluginHost
+    from ...core.models.config import APFConfig, GameProfile
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +102,8 @@ def _tile_color(name: str) -> tuple:
 
 
 # UE4SS badge: uses shared STATUS_ICONS from theme
-from ...gui.theme import STATUS_ICONS as _BADGE_STATUS
-from ...gui.widgets.tip_icon_button import ImageIconButton
+from ...core.views.theme import STATUS_ICONS as _BADGE_STATUS
+from ...core.views.widgets.tip_icon_button import ImageIconButton
 
 _TILE_W = dp(200)
 _TILE_H = dp(150)
@@ -761,7 +761,7 @@ class LibraryScreen(MDBoxLayout):
 
     def _partition_games(self) -> tuple[list, list]:
         """Split all games into (steam_games, custom_games), applying search filter."""
-        from ...core.config import GameProfile
+        from ...core.models.config import GameProfile
 
         config_games = list(self._config.games.values())
         config_app_ids = {p.steam_app_id for p in config_games if p.steam_app_id}
@@ -841,7 +841,7 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _check_ue4ss_badge(self, profile: "GameProfile", tile: GameTile) -> None:
-        from ...core.ue4ss import UE4SSDetector
+        from ...core.controllers.detection import UE4SSDetector
         if not profile.game_root:
             status = "unknown"
         elif not Path(profile.game_root).is_dir():
@@ -861,7 +861,7 @@ class LibraryScreen(MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _on_tile_selected(self, profile: "GameProfile") -> None:
-        from ...core.ue4ss import UE4SSDetector
+        from ...core.controllers.detection import UE4SSDetector
         detection = UE4SSDetector.detect(profile.game_root)
         if detection.valid or detection.content_paks_dir:
             # Navigate even when UE4SS is absent — Tab 1 of Mods panel handles setup.
@@ -1044,7 +1044,7 @@ class LibraryScreen(MDBoxLayout):
         content.add_widget(image_row)
 
         def _confirm(*_):
-            from ...core.config import GameProfile
+            from ...core.models.config import GameProfile
             name = name_field.text.strip() or auto_name
             self._config.add_game(GameProfile.new(
                 display_name=name,

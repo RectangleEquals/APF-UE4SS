@@ -1,13 +1,11 @@
 """
-APFManagerApp — KivyMD root application.
+APFManagerApp — KivyMD root application (view layer).
 
 Startup sequence:
-  1. Load APFConfig from ~/.apf_manager/config.json
-  2. Initialize PluginHost
-  3. Discover + load plugins from lib/plugins/ and custom_plugins/
-  4. Build ScreenManager: GameHubScreen + SettingsScreen
-  5. If plugin failures exist → navigate to SettingsScreen (all screens locked)
-  6. Otherwise → navigate to home_screen contribution (provided by library plugin)
+  1. AppController loads APFConfig and discovers/loads plugins
+  2. Build ScreenManager: GameHubScreen + SettingsScreen + home screen
+  3. If plugin failures exist → navigate to SettingsScreen (all screens locked)
+  4. Otherwise → navigate to home_screen contribution (provided by library plugin)
 """
 
 from __future__ import annotations
@@ -23,32 +21,8 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.screen import MDScreen
 
-from ..core.config import APFConfig, GameProfile
-from ..core.plugin_host import PluginHost
-from ..core.ue4ss import UE4SSDetector
 from .screens.game_hub import GameHubScreen
 from .screens.settings import SettingsScreen
-
-
-def _builtin_plugins_dir() -> Path:
-    """
-    Returns the built-in plugins directory.
-    In development: tools/apf_manager/plugins/ (relative to this file).
-    In frozen build: plugins/ (relative to executable).
-    """
-    if getattr(sys, "frozen", False):
-        # cx_Freeze frozen build — setup.py _post_build and inno_setup.iss both
-        # place plugins at {exe_dir}/plugins/, NOT {exe_dir}/lib/plugins/.
-        return Path(sys.executable).parent / "plugins"
-    else:
-        return Path(__file__).parent.parent / "plugins"
-
-
-def _custom_plugins_dir() -> Path:
-    """User-installed plugins: next to the executable (frozen) or ~/.apf_manager/plugins/."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent / "custom_plugins"
-    return Path.home() / ".apf_manager" / "plugins"
 
 
 class APFManagerApp(MDApp):
@@ -56,7 +30,7 @@ class APFManagerApp(MDApp):
         super().__init__(**kwargs)
         self._devtools_mode = devtools_mode
         try:
-            from ..__version__ import __version__, __build_id__, __is_dev__
+            from ...__version__ import __version__, __build_id__, __is_dev__
         except Exception:
             __version__, __build_id__, __is_dev__ = "?.?.?", "dev", True
         self.title = (
@@ -64,9 +38,8 @@ class APFManagerApp(MDApp):
             if __is_dev__
             else f"APF Manager v{__version__}"
         )
-        self._config = APFConfig()
-        self._host = PluginHost()
-        self._host.set_config(self._config)
+        from ..controllers.app import AppController
+        self._ctrl = AppController(devtools_mode=devtools_mode)
         self._sm: Optional[ScreenManager] = None
         self._game_hub: Optional[GameHubScreen] = None
         self._settings_screen: Optional[SettingsScreen] = None
@@ -83,39 +56,33 @@ class APFManagerApp(MDApp):
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "#607D8B"  # Blue Grey 500
 
-        self._config.load()
+        host = self._ctrl.host
+        config = self._ctrl.config
 
-        # Load plugins
-        builtin = _builtin_plugins_dir()
-        custom = _custom_plugins_dir()
-        self._host.discover_and_load(
-            plugin_dirs=[builtin, custom],
-            disabled_ids=self._config.disabled_plugins,
-            dev_mode=self._config.is_dev,
-            devtools_mode=self._devtools_mode,
+        # Controller loads config and plugins
+        self._ctrl.startup(
+            navigate_fn=self._navigate_to_game,
+            dialog_fn=self._show_dialog,
+            failure_fn=self._on_runtime_failure,
         )
-
-        # Wire host callbacks
-        self._host.set_navigate_fn(self._navigate_to_game)
-        self._host.set_dialog_fn(self._show_dialog)
-        self._host.set_failure_fn(self._on_runtime_failure)
 
         # Build screen manager
         self._sm = ScreenManager(transition=FadeTransition(duration=0.15))
 
         # Build game hub
-        self._game_hub = GameHubScreen(host=self._host, config=self._config)
+        self._game_hub = GameHubScreen(host=host, config=config)
+        host.set_log_fn(self._game_hub.log_panel.append)
         self._game_hub.populate_panels()
         self._sm.add_widget(self._game_hub)
 
         # Build settings screen
-        self._settings_screen = SettingsScreen(host=self._host, config=self._config)
+        self._settings_screen = SettingsScreen(host=host, config=config)
         self._sm.add_widget(self._settings_screen)
 
         # Build home screen from library plugin's home_screen contribution
-        home_contribs = self._host.get_contributions("home_screen")
+        home_contribs = host.get_contributions("home_screen")
         if home_contribs and home_contribs[0].panel_class:
-            home_widget = home_contribs[0].panel_class(host=self._host, config=self._config)
+            home_widget = home_contribs[0].panel_class(host=host, config=config)
             home_screen = MDScreen(name="home")
             home_screen.add_widget(home_widget)
             self._home_screen = home_screen
@@ -136,11 +103,11 @@ class APFManagerApp(MDApp):
         Window.minimum_width = 900
         Window.minimum_height = 600
 
-        w = max(self._config.window_width, 900)
-        h = max(self._config.window_height, 600)
+        w = max(config.window_width, 900)
+        h = max(config.window_height, 600)
         Window.size = (w, h)
 
-        if not self._config.window_maximized:
+        if not config.window_maximized:
             import ctypes
             screen_w = ctypes.windll.user32.GetSystemMetrics(0)
             screen_h = ctypes.windll.user32.GetSystemMetrics(1)
@@ -150,12 +117,12 @@ class APFManagerApp(MDApp):
         Window.bind(on_maximize=self._on_window_maximize)
         Window.bind(on_restore=self._on_window_restore)
 
-        if self._config.window_maximized:
+        if config.window_maximized:
             Window.maximize()
 
         # Navigate: if any failures OR no home screen → settings (locked); otherwise → home
-        if self._host.has_failures or not home_contribs:
-            for info in self._host.get_all_plugins():
+        if host.has_failures or not home_contribs:
+            for info in host.get_all_plugins():
                 if info.status == "failed" and info.error != "Disabled by user.":
                     print(f"[APFManager] Plugin load failure: '{info.name}' — {info.error}", file=sys.stderr)
             self._sm.current = "settings"
@@ -170,12 +137,8 @@ class APFManagerApp(MDApp):
     # Navigation
     # -----------------------------------------------------------------------
 
-    def _navigate_to_game(self, profile: GameProfile) -> None:
-        from ..core.ue4ss import UE4SSDetector
-        detection = UE4SSDetector.detect(profile.game_root)
-        self._host.set_game_context(profile, detection)
-        self._config.last_game_id = profile.game_id
-        self._config.save()
+    def _navigate_to_game(self, profile) -> None:
+        self._ctrl.navigate_to_game(profile)
         self._game_hub.activate_for_game(profile)
         self._previous_screen = self._sm.current
         self._sm.current = "game_hub"
@@ -185,11 +148,12 @@ class APFManagerApp(MDApp):
 
     def on_stop(self) -> None:
         from kivy.core.window import Window
-        self._config.window_maximized = self._is_maximized
+        config = self._ctrl.config
+        config.window_maximized = self._is_maximized
         if not self._is_maximized:
-            self._config.window_width = max(Window.width, 900)
-            self._config.window_height = max(Window.height, 600)
-        self._config.save()
+            config.window_width = max(Window.width, 900)
+            config.window_height = max(Window.height, 600)
+        config.save()
 
     def _on_window_maximize(self, window) -> None:
         self._is_maximized = True
@@ -209,7 +173,7 @@ class APFManagerApp(MDApp):
 
     def _show_dialog(self, dialog_id: str, kwargs: dict) -> None:
         contrib = next(
-            (c for c in self._host.get_contributions("dialog") if c.dialog_id == dialog_id),
+            (c for c in self._ctrl.host.get_contributions("dialog") if c.dialog_id == dialog_id),
             None,
         )
         if contrib and contrib.handler:

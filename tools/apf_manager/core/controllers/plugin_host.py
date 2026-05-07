@@ -16,51 +16,20 @@ import importlib.util
 import json
 import sys
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, TYPE_CHECKING
+
+from ..models.plugin import PluginContribution, PluginInfo
 
 # The apf_manager package root (tools/apf_manager/).
 # Used to detect whether a plugin is a built-in (inside the package)
 # or a user plugin (outside, standalone).
-_APF_PKG_ROOT = Path(__file__).parent.parent
+_APF_PKG_ROOT = Path(__file__).parent.parent.parent
 _APF_PKG_NAME = __name__.split(".")[0]  # e.g. "apf_manager"
 
 if TYPE_CHECKING:
-    from .config import APFConfig, GameProfile
-    from .ue4ss import UE4SSResult
-
-
-# ---------------------------------------------------------------------------
-# Data types
-# ---------------------------------------------------------------------------
-
-@dataclass
-class PluginContribution:
-    type: str                           # "home_screen" | "hub_panel" | "hub_action" | "dialog" | "settings_panel"
-    plugin_id: str
-    label: str = ""
-    icon: str = ""
-    priority: int = 50                  # Lower = earlier in nav rail
-    panel_class: Any = None             # Widget class for hub_panel / home_screen
-    handler: Optional[Callable] = None  # For hub_action / dialog
-    dialog_id: str = ""                 # For dialog contributions
-    panel_instance: Any = None          # Live instance set by hub after panel creation
-
-
-@dataclass
-class PluginInfo:
-    plugin_id: str
-    name: str
-    version: str
-    description: str
-    mode: str                           # "player" | "dev" | "both"
-    requires: list = field(default_factory=list)
-    suggests: list = field(default_factory=list)
-    contributions: list = field(default_factory=list)  # raw dicts from plugin.json
-    directory: Path = field(default_factory=Path)
-    status: str = "pending"            # "pending" | "loaded" | "failed"
-    error: str = ""                    # Human-readable failure reason (if status == "failed")
+    from ..models.config import APFConfig, GameProfile
+    from ..models.ue4ss import UE4SSResult
 
 
 # ---------------------------------------------------------------------------
@@ -374,9 +343,11 @@ class PluginHost:
         if self._navigate_fn:
             self._navigate_fn(profile)
 
-    def get_all_plugins(self) -> list["PluginInfo"]:
-        """Return all discovered plugins (loaded and failed) sorted by name."""
+    def get_all_plugins(self) -> list[PluginInfo]:
         return sorted(self._plugins.values(), key=lambda p: p.name.lower())
+
+    def get_failed_plugins(self) -> list[PluginInfo]:
+        return [p for p in self._plugins.values() if p.status == "failed"]
 
     # -----------------------------------------------------------------------
     # Utilities
@@ -401,7 +372,7 @@ class PluginHost:
         self._state_listeners.setdefault(scope, []).append(callback)
 
     # -----------------------------------------------------------------------
-    # Wiring (set by the GUI app after construction)
+    # Wiring (set by the app after construction)
     # -----------------------------------------------------------------------
 
     def set_log_fn(self, fn: Callable[[str], None]) -> None:
@@ -424,13 +395,3 @@ class PluginHost:
         self.has_failures = True
         if self._failure_fn:
             self._failure_fn()
-
-    # -----------------------------------------------------------------------
-    # Introspection
-    # -----------------------------------------------------------------------
-
-    def get_all_plugins(self) -> list[PluginInfo]:
-        return list(self._plugins.values())
-
-    def get_failed_plugins(self) -> list[PluginInfo]:
-        return [p for p in self._plugins.values() if p.status == "failed"]

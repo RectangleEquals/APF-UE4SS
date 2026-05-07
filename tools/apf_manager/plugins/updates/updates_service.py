@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable
 
-from ...core.remote.github_release_manager import RepoRelease
+from ...core.models.remote.release import RepoRelease
 from ..content.models.descriptors.types import GithubReleaseBinary, ContentAsset, ReleaseSource, GitHubRepo, ContentTags
 
 
@@ -334,7 +334,7 @@ class UpdatesService:
     def _check_manager(self) -> None:
         try:
             from ...__version__ import __version__ as current_version
-            from ...core.semver import SemVer
+            from ...core.models.semver import SemVer
             api = self._make_apf_api()
             latest = api.get_latest_release_typed()
             latest_pre = api.releases.fetch_latest_prerelease()
@@ -372,7 +372,7 @@ class UpdatesService:
 
     def _check_framework_bg(self, game_id: str) -> None:
         try:
-            from ...core.semver import SemVer
+            from ...core.models.semver import SemVer
             detection = self._host.get_detection()
             if not detection or not detection.valid:
                 with self._lock:
@@ -412,7 +412,7 @@ class UpdatesService:
 
     def _check_apworld(self) -> None:
         try:
-            from ...core.semver import SemVer
+            from ...core.models.semver import SemVer
             current_version = self._get_installed_apworld_version()
             api = self._make_apf_api()
             latest = api.get_latest_release_typed()
@@ -460,7 +460,7 @@ class UpdatesService:
 
     def _run_ue4ss_check(self, owner: str, repo: str) -> UpdateInfo:
         try:
-            from ...core.semver import SemVer
+            from ...core.models.semver import SemVer
             api = self._make_ue4ss_api(owner, repo)
             latest = api.get_latest_release_typed()
             latest_pre = api.releases.fetch_latest_prerelease()
@@ -567,7 +567,7 @@ class UpdatesService:
     # -----------------------------------------------------------------------
 
     def _make_apf_api(self):
-        from ...core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+        from ...core.controllers.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
         return GitHubAPI(
             repo_owner="RectangleEquals",
             repo_name="APF-UE4SS",
@@ -577,7 +577,7 @@ class UpdatesService:
 
     def _make_ue4ss_api(self, owner: str = "UE4SS-RE",
                         repo: str = "RE-UE4SS"):
-        from ...core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+        from ...core.controllers.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
         return GitHubAPI(
             repo_owner=owner,
             repo_name=repo,

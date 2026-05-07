@@ -2,7 +2,7 @@
 AP Configuration plugin — registers the 'ap_config' service and Configure panel.
 """
 
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 from .config_service import APConfigService
 from .config_panel import APConfigPanel
 

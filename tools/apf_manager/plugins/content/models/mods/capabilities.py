@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 # Semver helpers — imported from core/semver.py
 # ---------------------------------------------------------------------------
 
-from .....core.semver import _SemVer
+from .....core.models.semver import _SemVer
 
 _DEP_RE = re.compile(
     r"^(?P<mod_id>\S+?)(?:\s+\((?P<op>>=|<=|>|<|==|!=|~=)\s*(?P<ver>[^\)]+)\))?$"

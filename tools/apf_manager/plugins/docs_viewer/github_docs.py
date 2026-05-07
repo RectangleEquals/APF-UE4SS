@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...core.remote.github_api import GitHubAPI
+    from ...core.controllers.remote.github_api import GitHubAPI
 
 
 _PUBLIC_PATH = "docs/public"

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ....core.config import GameProfile
+    from ....core.models.config import GameProfile
 
 
 class PipelineController:

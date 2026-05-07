@@ -1,16 +1,18 @@
 """
-SettingsScreen — global settings and plugin management.
+SettingsScreen — global settings and plugin management (view layer).
 
 Sections:
   - Mode toggle: Player / Dev
   - Plugin Manager: list all plugins, enable/disable, install .apfplugin
   - Steam library path override
-  - Restart Required banner (shown after toggling plugins)
+  - Cache management
+  - Updates (built lazily via UpdatesService)
+
+Business logic delegates to SettingsController.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -26,9 +28,9 @@ from kivymd.uix.screen import MDScreen
 from kivymd.uix.selectioncontrol import MDSwitch
 
 if TYPE_CHECKING:
-    from ...core.plugin_host import PluginHost, PluginInfo
-    from ...core.config import APFConfig
-    from ...plugins.updates.updates_service import UpdatesService
+    from ...controllers.plugin_host import PluginHost, PluginInfo
+    from ...models.config import APFConfig
+    from ....plugins.updates.updates_service import UpdatesService
 
 
 class SettingsScreen(MDScreen):
@@ -40,6 +42,10 @@ class SettingsScreen(MDScreen):
         self._original_mode = config.mode
         self._original_disabled = set(config.disabled_plugins)
         self._updates_section = None   # built lazily in on_pre_enter
+
+        from ...controllers.screens.settings import SettingsController
+        self._ctrl = SettingsController(host, config)
+
         self._build()
 
     # -----------------------------------------------------------------------
@@ -325,19 +331,15 @@ class SettingsScreen(MDScreen):
     # -----------------------------------------------------------------------
 
     def _on_mode_toggle(self, widget, value: bool) -> None:
-        self._config.mode = "dev" if value else "player"
-        self._config.save()
+        self._ctrl.toggle_mode(value)
         self._update_restart_banner()
 
     def _on_plugin_toggle(self, plugin_id: str, enabled: bool) -> None:
-        if not enabled:
-            # Block disabling the sole home_screen provider
-            home_contribs = self._host.get_contributions("home_screen")
-            if home_contribs and all(c.plugin_id == plugin_id for c in home_contribs):
-                self._show_snackbar("Library plugin is required. Enable another library plugin first.")
-                self._refresh_plugin_list()  # revert switch visually
-                return
-        self._config.set_plugin_disabled(plugin_id, not enabled)
+        ok = self._ctrl.toggle_plugin(plugin_id, enabled)
+        if not ok:
+            self._show_snackbar("Library plugin is required. Enable another library plugin first.")
+            self._refresh_plugin_list()  # revert switch visually
+            return
         self._update_restart_banner()
         self._refresh_plugin_list()
 
@@ -366,20 +368,13 @@ class SettingsScreen(MDScreen):
             self._restart_banner_widget.opacity = 0
 
     def _restart_app(self, *_) -> None:
-        """Close and relaunch the application."""
-        import subprocess
-        if getattr(sys, "frozen", False):
-            os.execv(sys.executable, [sys.executable])
-        else:
-            tools_dir = Path(__file__).parent.parent.parent
-            subprocess.Popen([sys.executable, "-m", "apf_manager"], cwd=str(tools_dir))
-            from kivymd.app import MDApp
-            MDApp.get_running_app().stop()
+        from kivymd.app import MDApp
+        app = MDApp.get_running_app()
+        stop_fn = app.stop if app else None
+        self._ctrl.restart_app(stop_fn=stop_fn)
 
     def _save_steam_override(self, *_) -> None:
-        val = self._steam_path_field.text.strip() or None
-        self._config.steam_library_override = val
-        self._config.save()
+        self._ctrl.save_steam_override(self._steam_path_field.text)
 
     def _install_plugin(self, *_) -> None:
         from kivymd.uix.dialog import (
@@ -421,7 +416,9 @@ class SettingsScreen(MDScreen):
 
         def _do_clear(*_):
             _close()
-            self._run_clear_cache()
+            msg = self._ctrl.clear_download_cache()
+            self._show_snackbar(msg)
+            self._ctrl.notify_downloads_stale()
 
         dlg = MDDialog(
             MDDialogHeadlineText(text="Clear Download Cache?"),
@@ -439,33 +436,6 @@ class SettingsScreen(MDScreen):
         )
         dlg_ref[0] = dlg
         dlg.open()
-
-    def _run_clear_cache(self) -> None:
-        import shutil
-        cache_dir = Path.home() / ".apf_manager" / "cache"
-        try:
-            if cache_dir.is_dir():
-                for child in cache_dir.iterdir():
-                    if child.is_dir():
-                        shutil.rmtree(child, ignore_errors=True)
-                    else:
-                        child.unlink(missing_ok=True)
-            self._show_snackbar("Download cache cleared.")
-            # Notify the Downloads tab to re-scan next time it's visible
-            self._notify_downloads_stale()
-        except Exception as exc:
-            self._show_snackbar(f"Error clearing cache: {exc}")
-
-    def _notify_downloads_stale(self) -> None:
-        """Mark the Downloads tab cache as stale so it re-scans on next activation."""
-        try:
-            for contrib in self._host.get_contributions("hub_panel"):
-                panel = getattr(contrib, "panel_instance", None)
-                if panel and hasattr(panel, "mark_downloads_stale"):
-                    panel.mark_downloads_stale()
-                    break
-        except Exception:
-            pass
 
     def _confirm_reset_app_data(self, *_) -> None:
         from kivymd.uix.dialog import (
@@ -515,7 +485,12 @@ class SettingsScreen(MDScreen):
 
         def _do_reset(*_):
             _close()
-            self._run_reset_app_data()
+            msg = self._ctrl.schedule_reset_app_data()
+            if msg:
+                self._show_snackbar(msg)
+                return
+            # Restart; APFConfig.__init__ will perform the actual deletion on next launch
+            self._restart_app()
 
         dlg = MDDialog(
             MDDialogHeadlineText(text="Delete Everything?"),
@@ -534,18 +509,6 @@ class SettingsScreen(MDScreen):
         )
         dlg_ref[0] = dlg
         dlg.open()
-
-    def _run_reset_app_data(self) -> None:
-        app_data_dir = Path.home() / ".apf_manager"
-        marker = app_data_dir / "_pending_reset"
-        try:
-            app_data_dir.mkdir(parents=True, exist_ok=True)
-            marker.write_text("1", encoding="utf-8")
-        except Exception as exc:
-            self._show_snackbar(f"Error scheduling reset: {exc}")
-            return
-        # Restart; APFConfig.__init__ will perform the actual deletion on next launch
-        self._restart_app()
 
     def _go_back(self, *_) -> None:
         from kivymd.app import MDApp
@@ -721,6 +684,7 @@ class SettingsScreen(MDScreen):
         ok: bool,
     ) -> None:
         """Swap the button to Install or View depending on component."""
+        import os as _os
         btn.disabled = False
         if not ok:
             if btn_text:
@@ -753,6 +717,6 @@ class SettingsScreen(MDScreen):
             action["folder"] = str(Path(dest_path).parent)
 
             def _on_release_view(*_):
-                os.startfile(action.get("folder", "."))
+                _os.startfile(action.get("folder", "."))
 
             btn.bind(on_release=_on_release_view)

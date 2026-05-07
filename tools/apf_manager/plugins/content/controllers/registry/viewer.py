@@ -33,7 +33,7 @@ def _is_framework_mod_id(mod_id: str) -> bool:
     return bool(_FRAMEWORK_MOD_RE.match(mod_id or ""))
 
 if TYPE_CHECKING:
-    from .....core.plugin_host import PluginHost
+    from .....core.controllers.plugin_host import PluginHost
     from .resolver import DiscoveredMod, FolderTreeNode
 
 _EXTERNAL_URL_PATTERNS = {

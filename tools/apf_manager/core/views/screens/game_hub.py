@@ -1,5 +1,5 @@
 """
-GameHubScreen — the per-game screen.
+GameHubScreen — the per-game screen (view layer).
 
 Layout:
   ┌─ Top bar (game name, hub_action buttons, Settings) ──────────────────────┐
@@ -12,18 +12,16 @@ Layout:
   └───────────────────────────────────────────────────────────────────────────┘
 
 The NavigationRail is populated from all registered hub_panel contributions.
+Business logic is delegated to GameHubController.
 """
 
 from __future__ import annotations
 
-import shutil
 import sys
-import threading
 import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.behaviors import ButtonBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
@@ -36,19 +34,19 @@ from ..widgets.plugin_panel import PluginPanel
 from ..widgets.tip_icon_button import TipIconButton, ImageIconButton
 
 if TYPE_CHECKING:
-    from ...core.plugin_host import PluginHost, PluginContribution
-    from ...core.config import APFConfig, GameProfile
-    from ...core.ue4ss import UE4SSResult
+    from ...controllers.plugin_host import PluginHost, PluginContribution
+    from ...models.config import APFConfig, GameProfile
+    from ...models.ue4ss import UE4SSResult
 
 _HERE = Path(__file__).parent
 _DISCORD_ICON = (
     Path(sys.executable).parent / "data" / "Discord_Symbol_White.png"
     if getattr(sys, "frozen", False)
-    else _HERE.parent.parent / "data" / "Discord_Symbol_White.png"
+    else _HERE.parent.parent.parent / "data" / "Discord_Symbol_White.png"
 )
-# game_hub.py is in gui/screens/ which is INSIDE library.zip in frozen builds.
+# game_hub.py is in core/views/screens/ which is INSIDE library.zip in frozen builds.
 # __file__ is a zip path in frozen mode; use sys.executable instead.
-# Dev: _HERE.parent.parent = apf_manager/ → data/  ✓
+# Dev: _HERE.parent.parent.parent = apf_manager/ → data/  ✓
 # Frozen: exe_dir/data/  ✓
 
 
@@ -107,8 +105,10 @@ class GameHubScreen(MDScreen):
         self._nav_buttons: dict[str, _NavRailButton] = {}
         self._log_panel = LogPanel()
         self._current_profile: Optional["GameProfile"] = None
-        self._current_detection: Optional["UE4SSResult"] = None
         self._pending_nav_label: Optional[str] = None
+
+        from ...controllers.screens.game_hub import GameHubController
+        self._ctrl = GameHubController(host)
 
         # Wire host log to our panel
         host.set_log_fn(self._log_panel.append)
@@ -282,23 +282,22 @@ class GameHubScreen(MDScreen):
             panel.on_activate(profile)
 
     def activate_for_game(self, profile: "GameProfile") -> None:
-        """Called when the user navigates to this game."""
+        """Called when the user navigates to this game. Updates UI only — no detection cache."""
         self._current_profile = profile
-        self._current_detection = self._host.get_detection()
         self._game_name_lbl.text = profile.display_name
         if self._active_panel and profile:
             self._active_panel.on_activate(profile)
 
     # -----------------------------------------------------------------------
-    # Remove game
+    # Remove game — delegates to controller
     # -----------------------------------------------------------------------
 
     def _on_remove_game(self) -> None:
         if not self._current_profile:
             return
-        self._show_remove_checklist(self._current_profile, self._current_detection)
+        self._show_remove_checklist(self._current_profile)
 
-    def _show_remove_checklist(self, profile: "GameProfile", detection: Optional["UE4SSResult"]) -> None:
+    def _show_remove_checklist(self, profile: "GameProfile") -> None:
         from kivymd.uix.button import MDButton, MDButtonText
         from kivymd.uix.dialog import (
             MDDialog, MDDialogHeadlineText,
@@ -307,6 +306,9 @@ class GameHubScreen(MDScreen):
         from kivymd.uix.selectioncontrol import MDSwitch
         from kivy.uix.widget import Widget
 
+        # Use current detection state for UI availability checks only
+        detection = self._host.get_detection()
+
         is_steam_game = bool(getattr(profile, "steam_app_id", None))
 
         # Determine which options are available
@@ -314,8 +316,8 @@ class GameHubScreen(MDScreen):
         has_sessions_svc = self._host.has_service("sessions")
         has_ue4ss = (
             detection is not None
-            and detection.ue4ss_dir
-            and Path(str(detection.ue4ss_dir)).is_dir()
+            and detection.ue4ss_dir is not None
+            and detection.ue4ss_dir.is_dir()
         )
 
         switches: dict[str, MDSwitch] = {}
@@ -355,9 +357,6 @@ class GameHubScreen(MDScreen):
 
         if has_mods_svc:
             _add_row("mods", "Remove deployed AP mods")
-        # Session removal is split into two separate switches:
-        #   "deployed_session" — deletes output/session_state.json
-        #   "sessions"         — deletes all backups from ~/.apf_manager/sessions/<game_id>/
         if has_sessions_svc:
             deployed_session_sw = _add_row("deployed_session", "Remove deployed session")
             sessions_sw = _add_row("sessions", "Remove session history (backups)")
@@ -385,7 +384,13 @@ class GameHubScreen(MDScreen):
 
         def _on_remove(*_):
             _dismiss()
-            self._execute_remove(profile, detection, switches)
+            # Collect switch states and delegate to controller
+            states = {k: sw.active for k, sw in switches.items()}
+            self._ctrl.execute_remove(
+                profile, states,
+                after_remove_cb=self._after_remove,
+                after_partial_cb=self._after_partial_remove,
+            )
 
         dialog[0] = MDDialog(
             MDDialogHeadlineText(text=f'Remove "{profile.display_name}"?'),
@@ -398,65 +403,6 @@ class GameHubScreen(MDScreen):
             ),
         )
         dialog[0].open()
-
-    def _execute_remove(
-        self,
-        profile: "GameProfile",
-        detection: Optional["UE4SSResult"],
-        switches: dict,
-    ) -> None:
-        errors: list[str] = []
-
-        def _run() -> None:
-            # 1. Remove deployed AP mods
-            if switches.get("mods") and switches["mods"].active:
-                mods_svc = self._host.get_service("mods")
-                deploy_svc = self._host.get_service("deploy")
-                if mods_svc and deploy_svc:
-                    try:
-                        for mod in mods_svc.scan():
-                            if mod.is_ap_mod:
-                                deploy_svc.undeploy_mod(mod, detection)
-                    except Exception as exc:
-                        errors.append(str(exc))
-
-            # 2a. Remove deployed session file
-            if switches.get("deployed_session") and switches["deployed_session"].active:
-                if detection and detection.mods_dir:
-                    state_path = (
-                        Path(str(detection.mods_dir))
-                        / "APFrameworkMod" / "output" / "session_state.json"
-                    )
-                    try:
-                        state_path.unlink(missing_ok=True)
-                    except Exception as exc:
-                        errors.append(f"Could not remove deployed session: {exc}")
-
-            # 2b. Remove session history (backups)
-            if switches.get("sessions") and switches["sessions"].active:
-                sessions_svc = self._host.get_service("sessions")
-                if sessions_svc:
-                    try:
-                        sessions_svc.clear_sessions(profile.game_id)
-                    except Exception as exc:
-                        errors.append(str(exc))
-
-            # 3. Uninstall UE4SS
-            if switches.get("ue4ss") and switches["ue4ss"].active:
-                if detection and detection.ue4ss_dir:
-                    try:
-                        shutil.rmtree(str(detection.ue4ss_dir))
-                    except Exception as exc:
-                        errors.append(f"Could not remove UE4SS: {exc}")
-
-            # 4. Remove from library only if that switch is checked
-            if switches.get("library") and switches["library"].active:
-                self._config.remove_game(profile.game_id)
-                Clock.schedule_once(lambda dt: self._after_remove(errors), 0)
-            else:
-                Clock.schedule_once(lambda dt: self._after_partial_remove(errors), 0)
-
-        threading.Thread(target=_run, daemon=True).start()
 
     def _after_remove(self, errors: list[str]) -> None:
         app = self._get_app()

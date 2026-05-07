@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...core.plugin_host import PluginHost
+    from ...core.controllers.plugin_host import PluginHost
 
 _HERE = Path(__file__).parent
 _REPO_ROOT = _HERE.parent.parent.parent.parent  # tools/apf_manager/plugins/docs_viewer → ipc_2/
@@ -217,7 +217,7 @@ class DocsPanel:
                 return  # "(cached)" will appear in title bar instead
             self._on_api_status(level, msg)
 
-        from ...core.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+        from ...core.controllers.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
         _api = GitHubAPI(
             repo_owner=r_owner,
             repo_name=r_repo,
@@ -512,11 +512,11 @@ class DocsPanel:
 
     def _get_api(self):
         if self._api is None:
-            from ...core.remote.github_api import GitHubAPI
+            from ...core.controllers.remote.github_api import GitHubAPI
 
             repo_owner = self._meta.get("repo_owner", "")
             repo_name = self._meta.get("repo_name", "")
-            from ...core.remote.github_api import _BUNDLED_TOKEN_PATH
+            from ...core.controllers.remote.github_api import _BUNDLED_TOKEN_PATH
             self._api = GitHubAPI(
                 repo_owner=repo_owner,
                 repo_name=repo_name,

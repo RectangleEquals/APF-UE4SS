@@ -8,7 +8,7 @@ from .controllers.registry.service import RegistryService
 from .controllers.deploy.service import DeployService
 from .controllers.validation.service import ValidationService
 from .views.pipeline_panel import ContentPipelinePanel
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 
 
 def setup(host):

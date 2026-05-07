@@ -50,7 +50,7 @@ HERE = Path(__file__).parent
 ROOT = HERE.parent.parent  # ipc_2/
 
 # Add tools/ to sys.path so cx_Freeze can resolve 'apf_manager' as a package.
-# apf_manager_entry.py uses 'from apf_manager.gui.app' (absolute, not relative).
+# apf_manager_entry.py uses 'from apf_manager.core.views.app' (absolute, not relative).
 # Without this, cx_Freeze cannot find tools/apf_manager/ as a named package.
 sys.path.insert(0, str(HERE.parent))
 
@@ -110,7 +110,7 @@ EXCLUDES = [
 PACKAGES = [
     # Force-include entire apf_manager package — plugins are loaded dynamically
     # via importlib so cx_Freeze's static tracer misses modules only reachable
-    # through plugin code (e.g. apf_manager.gui.theme).
+    # through plugin code (e.g. apf_manager.core.views.theme).
     "apf_manager",
     "kivy",
     "kivymd",

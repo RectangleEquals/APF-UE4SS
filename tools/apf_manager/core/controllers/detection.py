@@ -14,28 +14,11 @@ Path structure (typical):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..models.ue4ss import UE4SSResult
+
 MAX_SCAN_DEPTH = 6
-
-
-@dataclass
-class UE4SSResult:
-    valid: bool = False
-    game_root: Path = field(default_factory=Path)
-    binaries_dir: Path = field(default_factory=Path)   # Actual Binaries/ folder
-    platform_dir: Path = field(default_factory=Path)   # Arch dir (e.g. Win64/) — parent of ue4ss/
-    ue4ss_dir: Path = field(default_factory=Path)
-    mods_dir: Path = field(default_factory=Path)
-    mods_txt: Path = field(default_factory=Path)
-    content_paks_dir: Path = field(default_factory=Path)
-    logicmods_dir: Path = field(default_factory=Path)
-    missing: list = field(default_factory=list)
-
-    @property
-    def is_valid(self) -> bool:
-        return self.valid
 
 
 def _find_file_ci(directory: Path, name: str) -> Path | None:

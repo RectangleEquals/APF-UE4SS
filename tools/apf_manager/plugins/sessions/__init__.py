@@ -2,7 +2,7 @@
 Session Manager plugin — registers 'sessions' service and Sessions panel.
 """
 
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 from .session_manager import SessionManager
 from .sessions_panel import SessionsPanel
 

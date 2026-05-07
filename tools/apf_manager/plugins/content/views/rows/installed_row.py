@@ -228,7 +228,7 @@ class InstalledRowWidget(MDBoxLayout):
         if not cached_ver or cached_ver == r.version:
             return ""
         try:
-            from .....core.semver import SemVer
+            from .....core.models.semver import SemVer
             if SemVer(cached_ver) > SemVer(r.version or "0.0.0"):
                 return cached_ver
         except Exception as exc:

@@ -177,7 +177,7 @@ class GitHubAuth:
         if not token:
             return False
         try:
-            from ...core.remote.github_api import GitHubAPI
+            from ...core.controllers.remote.github_api import GitHubAPI
             api = GitHubAPI(repo_owner, repo_name, direct_token=token)
 
             username = api.get_authenticated_user()

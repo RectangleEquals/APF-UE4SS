@@ -30,10 +30,10 @@ from kivymd.uix.dialog import (
 )
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
-from ...gui.widgets.plugin_panel import PluginPanel
+from ...core.views.widgets.plugin_panel import PluginPanel
 
 if TYPE_CHECKING:
-    from ...core.config import GameProfile
+    from ...core.models.config import GameProfile
     from .session_manager import SessionBackup, SessionManager
 
 

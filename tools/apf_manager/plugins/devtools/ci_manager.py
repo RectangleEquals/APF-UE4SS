@@ -29,7 +29,7 @@ class CIManager:
 
     def _api(self, token: str):
         """Return a GitHubAPI instance using the given token directly."""
-        from ...core.remote.github_api import GitHubAPI
+        from ...core.controllers.remote.github_api import GitHubAPI
         return GitHubAPI(self._owner, self._repo, direct_token=token)
 
     # -----------------------------------------------------------------------

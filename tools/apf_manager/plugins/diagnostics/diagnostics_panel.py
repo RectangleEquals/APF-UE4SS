@@ -22,11 +22,11 @@ from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 
-from ...gui.theme import STATUS_ICONS
-from ...gui.widgets.plugin_panel import PluginPanel
+from ...core.views.theme import STATUS_ICONS
+from ...core.views.widgets.plugin_panel import PluginPanel
 
 if TYPE_CHECKING:
-    from ...core.config import GameProfile
+    from ...core.models.config import GameProfile
 
 
 class _ResultRow(MDBoxLayout):

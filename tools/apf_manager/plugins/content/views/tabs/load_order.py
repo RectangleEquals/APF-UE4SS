@@ -22,15 +22,15 @@ from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.selectioncontrol import MDSwitch
 
-from .....gui.widgets.tip_icon_button import TipIconButton
+from .....core.views.widgets.tip_icon_button import TipIconButton
 from ...controllers.mods.service import _SCAN_EXCLUDE, _FRAMEWORK_MOD_RE
 from ..rows.load_order_row import LoadOrderHeaderRow, LoadOrderModRow
 
 if TYPE_CHECKING:
     from ...controllers.mods.service import ModInfo
     from ...models.mods.config import ModsTextManager
-    from .....core.config import GameProfile
-    from .....core.ue4ss import UE4SSResult
+    from .....core.models.config import GameProfile
+    from .....core.models.ue4ss import UE4SSResult
 
 
 class LoadOrderTab(MDBoxLayout):

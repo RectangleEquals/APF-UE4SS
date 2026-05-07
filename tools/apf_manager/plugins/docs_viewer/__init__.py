@@ -8,7 +8,7 @@ Or as a service:
     host.get_service("docs_viewer").open(path="...")
 """
 
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 from .docs_panel import DocsPanel
 
 

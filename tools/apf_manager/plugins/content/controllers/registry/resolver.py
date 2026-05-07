@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 # Bundled PAT — use centralized path from github_api.py
-from .....core.remote.github_api import _BUNDLED_TOKEN_PATH as _BUNDLED_PAT
+from .....core.controllers.remote.github_api import _BUNDLED_TOKEN_PATH as _BUNDLED_PAT
 
 # Blacklist is fetched from this repo's own source tree (never cached)
 _BLACKLIST_OWNER = "RectangleEquals"
@@ -901,7 +901,7 @@ class RegistryResolver:
     # -----------------------------------------------------------------------
 
     def _make_api(self, owner: str, repo: str):
-        from .....core.remote.github_api import GitHubAPI
+        from .....core.controllers.remote.github_api import GitHubAPI
         token_path = _BUNDLED_PAT if _BUNDLED_PAT.exists() else None
         return GitHubAPI(
             repo_owner=owner,

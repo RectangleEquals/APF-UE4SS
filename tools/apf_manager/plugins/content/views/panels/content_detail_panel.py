@@ -248,7 +248,7 @@ class ContentDetailPanel(MDBoxLayout):
         reg_ver = getattr(self._content, "version", "")
         if reg_ver and rec_ver and reg_ver != rec_ver:
             try:
-                from .....core.semver import SemVer
+                from .....core.models.semver import SemVer
                 if SemVer.parse(reg_ver) > SemVer.parse(rec_ver):
                     self._row_colored("Registry Ver.", reg_ver, _COL_UPDATE)
             except Exception as exc:

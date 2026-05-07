@@ -4,7 +4,7 @@ Manifesto Editor plugin (dev only) — stub panel.
 Full implementation is deferred. See plan for scope.
 """
 
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 from .manifesto_panel import ManifestoPanel
 
 

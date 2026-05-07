@@ -2,8 +2,8 @@
 Frozen entry point for cx_Freeze.
 
 cx_Freeze processes __main__.py as a standalone entry script with no package
-context, so the relative import 'from .gui.app import APFManagerApp' cannot be
-resolved — gui.app and all its dependencies are NOT bundled.
+context, so the relative import 'from .core.views.app import APFManagerApp' cannot be
+resolved — core.views.app and all its dependencies are NOT bundled.
 
 This wrapper uses absolute imports so cx_Freeze can trace and bundle the full
 apf_manager package. setup.py adds tools/ to sys.path so 'apf_manager' is
@@ -41,7 +41,7 @@ def main():
     # freeze_support() can intercept and exit. Import APFManagerApp here so the
     # child process exits cleanly without ever touching Kivy.
     multiprocessing.freeze_support()
-    from apf_manager.gui.app import APFManagerApp
+    from apf_manager.core.views.app import APFManagerApp
     APFManagerApp(devtools_mode=devtools_mode).run()
 
 

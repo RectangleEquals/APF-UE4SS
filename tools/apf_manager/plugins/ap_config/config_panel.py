@@ -19,7 +19,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
-from ...gui.widgets.tip_icon_button import TipIconButton
+from ...core.views.widgets.tip_icon_button import TipIconButton
 from kivymd.uix.dialog import (
     MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
     MDDialogButtonContainer,
@@ -29,10 +29,10 @@ from kivymd.uix.menu import MDDropdownMenu
 from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.textfield import MDTextField
 
-from ...gui.widgets.plugin_panel import PluginPanel
+from ...core.views.widgets.plugin_panel import PluginPanel
 
 if TYPE_CHECKING:
-    from ...core.config import GameProfile
+    from ...core.models.config import GameProfile
     from .config_service import APConfigService
 
 

@@ -24,12 +24,12 @@ from githubkit import GitHub, TokenAuthStrategy
 from githubkit.exception import RequestFailed, RateLimitExceeded, RequestTimeout
 import httpx as _httpx
 
-from .github_cache import GitHubCache, TTL_CONTENTS, TTL_FILES, TTL_RELEASES
+from ...models.remote.cache import GitHubCache, TTL_CONTENTS, TTL_FILES, TTL_RELEASES
 
 _USER_AGENT = "APFManager/1.0"
 
 # Bundled PAT — centralized location for all plugins that need GitHub auth
-_BUNDLED_TOKEN_PATH = Path(__file__).parent.parent.parent / "data" / ".github_token"
+_BUNDLED_TOKEN_PATH = Path(__file__).parent.parent.parent.parent / "data" / ".github_token"
 
 # Module-level cache so any plugin can read the most recent rate limit state
 # without holding a reference to a specific GitHubAPI instance.
@@ -83,7 +83,7 @@ class GitHubAPI:
         Constructed lazily on first access to avoid import-time circularity.
         """
         if self._release_manager is None:
-            from .github_release_manager import GitHubReleaseManager
+            from .github_release import GitHubReleaseManager
             self._release_manager = GitHubReleaseManager(self)
         return self._release_manager
 

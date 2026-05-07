@@ -22,8 +22,8 @@ from ....models.descriptors.base import GitHubRepo, RegistrySource
 from ....models.descriptors.types import RegistryDescriptor
 
 if TYPE_CHECKING:
-    from ......core.config import GameProfile
-    from ......core.plugin_host import PluginHost
+    from ......core.models.config import GameProfile
+    from ......core.controllers.plugin_host import PluginHost
     from ..resolver import DiscoveredMod
     from ..cache import RegistryCache
 
@@ -553,7 +553,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
         return self._resolver
 
     def _make_api(self, owner: str, repo: str):
-        from ......core.remote.github_api import GitHubAPI
+        from ......core.controllers.remote.github_api import GitHubAPI
         from ..resolver import _BUNDLED_PAT
         token_path = _BUNDLED_PAT if _BUNDLED_PAT.exists() else None
         return GitHubAPI(

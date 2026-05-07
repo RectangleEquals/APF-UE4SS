@@ -2,7 +2,7 @@
 Diagnostics plugin — validation + log packaging.
 """
 
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 from .diagnostics_panel import DiagnosticsPanel
 
 

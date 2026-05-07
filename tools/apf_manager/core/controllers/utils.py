@@ -1,4 +1,4 @@
-"""core/utils.py — plugin asset path resolver."""
+"""core/controllers/utils.py — plugin asset path resolver."""
 
 from pathlib import Path
 

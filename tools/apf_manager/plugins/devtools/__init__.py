@@ -4,7 +4,7 @@ Developer Tools plugin — version management, CI, and release tools.
 Only loaded in dev mode when launched with --devtools.
 """
 
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 from .devtools_panel import DevToolsPanel
 
 

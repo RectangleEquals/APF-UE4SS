@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from kivymd.uix.boxlayout import MDBoxLayout
 
 if TYPE_CHECKING:
-    from ...core.config import GameProfile
+    from ...models.config import GameProfile
 
 
 class PluginPanel(MDBoxLayout):

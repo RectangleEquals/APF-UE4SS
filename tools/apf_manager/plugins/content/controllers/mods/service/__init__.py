@@ -16,8 +16,8 @@ from .scanner import ModScannerMixin
 from .capabilities import ModCapabilitiesMixin
 
 if TYPE_CHECKING:
-    from ......core.plugin_host import PluginHost
-    from ......core.config import GameProfile
+    from ......core.controllers.plugin_host import PluginHost
+    from ......core.models.config import GameProfile
 
 
 # ---------------------------------------------------------------------------

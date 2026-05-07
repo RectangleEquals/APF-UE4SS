@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ......core.ue4ss import UE4SSResult
+    from ......core.models.ue4ss import UE4SSResult
 
 
 class DeployLoadOrderMixin:

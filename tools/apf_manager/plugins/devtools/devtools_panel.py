@@ -41,14 +41,14 @@ from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 from kivymd.uix.tab import MDTabsPrimary, MDTabsItem, MDTabsItemIcon, MDTabsItemText, MDTabsCarousel
 from kivymd.uix.textfield import MDTextField
 
-from ...gui.widgets.plugin_panel import PluginPanel
-from ...gui.widgets.tip_icon_button import ImageTextButton
+from ...core.views.widgets.plugin_panel import PluginPanel
+from ...core.views.widgets.tip_icon_button import ImageTextButton
 from .github_auth import GitHubAuth
 from .ci_manager import CIManager
 from . import version_manager as vm
 
 if TYPE_CHECKING:
-    from ...core.config import GameProfile
+    from ...core.models.config import GameProfile
 
 _HERE = Path(__file__).parent
 _DISCORD_ICON = _HERE.parent.parent / "data" / "Discord_Symbol_White.png"
@@ -561,7 +561,7 @@ class DevToolsPanel(PluginPanel):
     # -----------------------------------------------------------------------
 
     def _build_rate_limit_section(self, box: MDBoxLayout) -> None:
-        from ...core.remote.github_api import (
+        from ...core.controllers.remote.github_api import (
             GitHubAPI, _format_reset_time,
         )
 

@@ -8,7 +8,7 @@ from kivy.metrics import dp
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 
-from ...gui.widgets.plugin_panel import PluginPanel
+from ...core.views.widgets.plugin_panel import PluginPanel
 
 
 class ManifestoPanel(PluginPanel):

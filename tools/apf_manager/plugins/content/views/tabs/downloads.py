@@ -31,7 +31,7 @@ from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
-from .....gui.widgets.tip_icon_button import TipIconButton
+from .....core.views.widgets.tip_icon_button import TipIconButton
 from ..chrome.constants import COL_DIM
 from ..chrome.section_header import make_section_header
 from ..panels.queue_panel import QueuePanelMixin
@@ -39,7 +39,7 @@ from ...controllers.download.service import _CACHE_DIR
 from ..panels.cache_panel import CachePanelMixin
 
 if TYPE_CHECKING:
-    from .....core.ue4ss import UE4SSResult
+    from .....core.models.ue4ss import UE4SSResult
 
 
 _BG_SECTION   = (0.10, 0.12, 0.15, 1)

@@ -122,7 +122,7 @@ class CacheController:
             profile = self._host.get_game_context()
             if profile:
                 try:
-                    from ......core.ue4ss import UE4SSDetector
+                    from ......core.controllers.detection import UE4SSDetector
                     new_detection = UE4SSDetector.detect(profile.game_root)
                     self._host.set_game_context(profile, new_detection)
                 except Exception as exc:

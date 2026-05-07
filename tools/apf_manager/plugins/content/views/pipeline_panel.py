@@ -24,7 +24,7 @@ from kivymd.uix.divider import MDDivider
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.tab import MDTabsPrimary, MDTabsCarousel, MDTabsItem, MDTabsItemIcon, MDTabsItemText
 
-from ....gui.widgets.plugin_panel import PluginPanel
+from ....core.views.widgets.plugin_panel import PluginPanel
 
 from .tabs.registries import RegistriesTab
 from .tabs.content import ContentTab
@@ -35,7 +35,7 @@ from .tabs.load_order import LoadOrderTab
 from ..controllers.pipeline import PipelineController
 
 if TYPE_CHECKING:
-    from ....core.config import GameProfile
+    from ....core.models.config import GameProfile
 
 
 _TABS = [

@@ -2,7 +2,7 @@
 Game Library plugin — provides the home_screen contribution.
 """
 
-from ...core.plugin_host import PluginContribution
+from ...core.models.plugin import PluginContribution
 from .library_screen import LibraryScreen
 
 

@@ -26,7 +26,7 @@ def main():
     # freeze_support() can intercept and exit. Import APFManagerApp here so the
     # child process exits cleanly without ever touching Kivy.
     multiprocessing.freeze_support()
-    from .gui.app import APFManagerApp
+    from .core.views.app import APFManagerApp
     APFManagerApp(devtools_mode=devtools_mode).run()
 
 
