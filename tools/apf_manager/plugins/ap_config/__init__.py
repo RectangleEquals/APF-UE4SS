@@ -3,8 +3,8 @@ AP Configuration plugin — registers the 'ap_config' service and Configure pane
 """
 
 from ...core.models.plugin import PluginContribution
-from .config_service import APConfigService
-from .config_panel import APConfigPanel
+from .controllers.service import APConfigService
+from .views.config_panel import APConfigPanel
 
 
 def setup(host):

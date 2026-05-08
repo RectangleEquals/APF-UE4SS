@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ......core.models.ue4ss import UE4SSResult
+    from ......core.models.ue.result import DetectionResult
 
 
 class DeployLoadOrderMixin:
@@ -49,16 +49,16 @@ class DeployLoadOrderMixin:
         with self._lock:
             self._reload_mods_txt()
 
-    def on_game_changed(self, profile, detection: "Optional[UE4SSResult]") -> None:
+    def on_game_changed(self, profile, detection: "Optional[DetectionResult]") -> None:
         with self._lock:
             self._profile = profile
             self._detection = detection
             self._reload_mods_txt()
 
     def _reload_mods_txt(self) -> None:
-        if self._detection and self._detection.mods_txt:
+        if self._detection and self._detection.ue4ss and self._detection.ue4ss.mods_txt:
             from ....models.mods.config import ModsTextManager
-            self._mods_txt = ModsTextManager(self._detection.mods_txt)
+            self._mods_txt = ModsTextManager(self._detection.ue4ss.mods_txt)
             self._mods_txt.load()
         else:
             self._mods_txt = None

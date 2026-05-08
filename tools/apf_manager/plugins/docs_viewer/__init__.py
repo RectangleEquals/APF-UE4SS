@@ -9,16 +9,14 @@ Or as a service:
 """
 
 from ...core.models.plugin import PluginContribution
-from .docs_panel import DocsPanel
+from .views.docs_panel import DocsPanel
 
 
 def setup(host):
     _panel = DocsPanel(host)
 
-    # Register as a service so other plugins can call .open(path=...)
     host.register_service("docs_viewer", _panel)
 
-    # hub_action: toolbar "Docs" button in GameHubScreen
     host.register_contribution("apf.builtin.docs_viewer.action", PluginContribution(
         type="hub_action",
         plugin_id="apf.builtin.docs_viewer",
@@ -27,7 +25,6 @@ def setup(host):
         handler=lambda: _panel.open(),
     ))
 
-    # dialog: invocable via host.show_dialog("docs_viewer", path=...)
     host.register_contribution("apf.builtin.docs_viewer.dialog", PluginContribution(
         type="dialog",
         plugin_id="apf.builtin.docs_viewer",

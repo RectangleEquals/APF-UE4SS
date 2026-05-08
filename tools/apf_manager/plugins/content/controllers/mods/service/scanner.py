@@ -17,9 +17,9 @@ class ModScannerMixin:
             return
         self._game_id = getattr(profile, "game_id", None)
         detection = self._host.get_detection()
-        if detection and detection.mods_dir:
-            self._mods_dir = detection.mods_dir
-            self._mods = self._scan_with_state(detection.mods_dir, self._game_id)
+        if detection and detection.ue4ss and detection.ue4ss.mods_dir:
+            self._mods_dir = detection.ue4ss.mods_dir
+            self._mods = self._scan_with_state(detection.ue4ss.mods_dir, self._game_id)
 
     def scan(self) -> list:
         """Return cached mod list. Call rescan() to refresh."""
@@ -39,6 +39,13 @@ class ModScannerMixin:
 
     def get_mod_by_id(self, mod_id: str):
         return next((m for m in self._mods if m.mod_id == mod_id), None)
+
+    def get_framework_mod_version(self) -> str:
+        from . import _FRAMEWORK_MOD_RE
+        for mod in self._mods:
+            if mod.mod_id and _FRAMEWORK_MOD_RE.match(mod.mod_id):
+                return mod.version or "unknown"
+        return "unknown"
 
     @staticmethod
     def _scan_with_state(mods_dir: Path, game_id: Optional[str]) -> list:

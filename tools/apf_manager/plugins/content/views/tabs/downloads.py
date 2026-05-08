@@ -39,7 +39,7 @@ from ...controllers.download.service import _CACHE_DIR
 from ..panels.cache_panel import CachePanelMixin
 
 if TYPE_CHECKING:
-    from .....core.models.ue4ss import UE4SSResult
+    from .....core.models.ue.result import DetectionResult
 
 
 _BG_SECTION   = (0.10, 0.12, 0.15, 1)

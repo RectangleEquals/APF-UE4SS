@@ -5,7 +5,7 @@ Only loaded in dev mode when launched with --devtools.
 """
 
 from ...core.models.plugin import PluginContribution
-from .devtools_panel import DevToolsPanel
+from .views.devtools_panel import DevToolsPanel
 
 
 def setup(host):

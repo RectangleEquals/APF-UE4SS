@@ -1,9 +1,8 @@
 """
 Diagnostics plugin — validation + log packaging.
 """
-
 from ...core.models.plugin import PluginContribution
-from .diagnostics_panel import DiagnosticsPanel
+from .views.diagnostics_panel import DiagnosticsPanel
 
 
 def setup(host):

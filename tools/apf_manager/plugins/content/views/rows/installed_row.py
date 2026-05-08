@@ -42,7 +42,7 @@ class InstalledRowWidget(MDBoxLayout):
     Parameters
     ----------
     install_record  : InstallRecord — primary data source
-    detection       : UE4SSResult or None — for filesystem health checks
+    detection       : DetectionResult or None — for filesystem health checks
     deploy_svc      : DeployService or None — reserved for future inline actions
     row_index       : int — alternating background
     expanded        : bool — initial expanded state

@@ -6,8 +6,12 @@ Other plugins can use it via:
     svc.show("My Doc Title", full_html_string)
 """
 
-from .html_viewer_service import HTMLViewerService
+from .controllers.service import HTMLViewerService
+from .views.viewer_overlay import ViewerOverlay
 
 
 def setup(host) -> None:
-    host.register_service("html_viewer", HTMLViewerService())
+    svc = HTMLViewerService()
+    overlay = ViewerOverlay()
+    svc.register_overlay(overlay)
+    host.register_service("html_viewer", svc)

@@ -34,7 +34,7 @@ from ..dialogs.uninstall_dialog import UninstallDialog
 
 if TYPE_CHECKING:
     from .....core.models.config import GameProfile
-    from .....core.models.ue4ss import UE4SSResult
+    from .....core.models.ue.result import DetectionResult
     from ...controllers.mods.service import ModInfo
     from ...models.state.pipeline import InstallRecord
 
@@ -53,7 +53,7 @@ class InstalledTab(MDBoxLayout):
         from ...controllers.tabs.installed.controller import InstalledController
         self._ctrl = InstalledController(host)
         self._profile: Optional["GameProfile"] = None
-        self._detection: Optional["UE4SSResult"] = None
+        self._detection: Optional["DetectionResult"] = None
         # Framework state — updated by mods_panel via set_framework_state()
         self._fw_mod_dir = None   # Path or None — framework lua mod directory
         self._fw_conflict: list = []  # non-empty if multiple framework mods detected

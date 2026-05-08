@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ......core.models.ue4ss import UE4SSResult
+    from ......core.models.ue.result import DetectionResult
 
 
 @dataclass
@@ -32,7 +32,7 @@ class ValidationService:
     def validate_installed(
         self,
         mods: list,
-        detection: Optional["UE4SSResult"],
+        detection: Optional["DetectionResult"],
     ) -> list[ValidationResult]:
         results: list[ValidationResult] = []
 
@@ -114,8 +114,8 @@ class ValidationService:
                 seen_ids[mod.mod_id] = mod.folder_name
 
         has_bp_mods = any("blueprint" in getattr(m, "components", []) for m in ap_mods)
-        if has_bp_mods and detection.mods_dir:
-            bpml_dir = detection.mods_dir / "BPModLoaderMod"
+        if has_bp_mods and detection.ue4ss and detection.ue4ss.mods_dir:
+            bpml_dir = detection.ue4ss.mods_dir / "BPModLoaderMod"
             bpml_exists = bpml_dir.is_dir()
             deploy_svc = self._host.get_service("deploy")
             bpml_enabled = (
@@ -134,8 +134,8 @@ class ValidationService:
         for mod in ap_mods:
             if "blueprint" in getattr(mod, "components", []):
                 for pak in getattr(mod, "bp_pak_files", []):
-                    if detection.logicmods_dir:
-                        if not (detection.logicmods_dir / pak).exists():
+                    if detection.ue4ss and detection.ue4ss.logicmods_dir:
+                        if not (detection.ue4ss.logicmods_dir / pak).exists():
                             results.append(ValidationResult(
                                 label=f"Missing pak: {pak}",
                                 detail=f"Expected in Content/Paks/LogicMods/ for {mod.display_name}.",
@@ -152,8 +152,8 @@ class ValidationService:
                         break
 
         for mod in ap_mods:
-            if "cpp" in getattr(mod, "components", []) and detection.mods_dir:
-                dll_path = detection.mods_dir / mod.folder_name / "dlls" / "main.dll"
+            if "cpp" in getattr(mod, "components", []) and detection.ue4ss and detection.ue4ss.mods_dir:
+                dll_path = detection.ue4ss.mods_dir / mod.folder_name / "dlls" / "main.dll"
                 if not dll_path.exists():
                     results.append(ValidationResult(
                         label="C++ dll not found",
@@ -251,10 +251,10 @@ class ValidationService:
     def validate_cached(
         self,
         cached: list,
-        detection: Optional["UE4SSResult"],
+        detection: Optional["DetectionResult"],
     ) -> list[ValidationResult]:
         installed_mod_ids: set = set()
-        if detection and detection.mods_dir:
+        if detection and detection.ue4ss and detection.ue4ss.mods_dir:
             mods_svc = self._host.get_service("mods")
             if mods_svc:
                 installed_mod_ids = {m.mod_id for m in mods_svc.get_ap_mods() if m.mod_id}
@@ -273,10 +273,10 @@ class ValidationService:
 
         results = self.validate_staged(cached, game_id, installed_mod_ids)
 
-        if detection and detection.mods_dir:
+        if detection and detection.ue4ss and detection.ue4ss.mods_dir:
             import shutil as _shutil
             try:
-                drive = detection.mods_dir.anchor
+                drive = detection.ue4ss.mods_dir.anchor
                 _, _, free = _shutil.disk_usage(drive)
                 if free < 100 * 1024 * 1024:
                     results.append(ValidationResult(

@@ -122,8 +122,8 @@ class CacheController:
             profile = self._host.get_game_context()
             if profile:
                 try:
-                    from ......core.controllers.detection import UE4SSDetector
-                    new_detection = UE4SSDetector.detect(profile.game_root)
+                    from ......core.controllers.ue import UEDetector
+                    new_detection = UEDetector.detect(profile.game_root)
                     self._host.set_game_context(profile, new_detection)
                 except Exception as exc:
                     self._host.log(f"[downloads] WARN: re-detect UE4SS failed: {exc}")

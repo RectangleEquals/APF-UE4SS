@@ -76,9 +76,9 @@ class AppController:
             self._host.set_log_fn(log_fn)
 
     def navigate_to_game(self, profile: "GameProfile") -> None:
-        """Run UE4SS detection and update host game context. View handles UI navigation."""
-        from .detection import UE4SSDetector
-        detection = UE4SSDetector.detect(profile.game_root)
+        """Run UE detection and update host game context. View handles UI navigation."""
+        from .ue import UEDetector
+        detection = UEDetector.detect(profile.game_root)
         self._host.set_game_context(profile, detection)
         self._config.last_game_id = profile.game_id
         self._config.save()

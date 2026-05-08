@@ -14,7 +14,7 @@ from typing import Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...models.config import GameProfile
-    from ...models.ue4ss import UE4SSResult
+    from ...models.ue.result import DetectionResult
     from ..plugin_host import PluginHost
 
 
@@ -47,7 +47,7 @@ class GameHubController:
     def _run_remove(
         self,
         profile: "GameProfile",
-        detection: Optional["UE4SSResult"],
+        detection: Optional["DetectionResult"],
         switch_states: dict,
         after_remove_cb: Callable,
         after_partial_cb: Callable,
@@ -69,9 +69,9 @@ class GameHubController:
 
         # 2a. Remove deployed session file
         if switch_states.get("deployed_session"):
-            if detection and detection.mods_dir:
+            if detection and detection.ue4ss and detection.ue4ss.mods_dir:
                 state_path = (
-                    Path(str(detection.mods_dir))
+                    Path(str(detection.ue4ss.mods_dir))
                     / "APFrameworkMod" / "output" / "session_state.json"
                 )
                 try:
@@ -90,7 +90,8 @@ class GameHubController:
 
         # 3. Uninstall UE4SS — validate path before rmtree (Bug 8C)
         if switch_states.get("ue4ss"):
-            ue4ss_path = detection.ue4ss_dir if detection else None
+            ue4ss_path = (detection.ue4ss.ue4ss_dir
+                          if (detection and detection.ue4ss) else None)
             if self._validate_removal_path(ue4ss_path, profile):
                 try:
                     shutil.rmtree(str(ue4ss_path))

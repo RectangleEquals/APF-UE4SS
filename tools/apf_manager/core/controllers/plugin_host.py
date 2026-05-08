@@ -29,7 +29,7 @@ _APF_PKG_NAME = __name__.split(".")[0]  # e.g. "apf_manager"
 
 if TYPE_CHECKING:
     from ..models.config import APFConfig, GameProfile
-    from ..models.ue4ss import UE4SSResult
+    from ..models.ue.result import DetectionResult
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ class PluginHost:
         self._contributions: list[PluginContribution] = []
         self._services: dict[str, Any] = {}
         self._game_context: Optional["GameProfile"] = None
-        self._detection: Optional["UE4SSResult"] = None
+        self._detection: Optional["DetectionResult"] = None
         self._config: Optional["APFConfig"] = None
         self._log_fn: Optional[Callable[[str], None]] = None
         self._navigate_fn: Optional[Callable[["GameProfile"], None]] = None
@@ -313,7 +313,7 @@ class PluginHost:
     def get_game_context(self) -> Optional["GameProfile"]:
         return self._game_context
 
-    def get_detection(self) -> Optional["UE4SSResult"]:
+    def get_detection(self) -> Optional["DetectionResult"]:
         return self._detection
 
     def set_config(self, config: "APFConfig") -> None:
@@ -323,7 +323,7 @@ class PluginHost:
     def config(self) -> Optional["APFConfig"]:
         return self._config
 
-    def set_game_context(self, profile: Optional["GameProfile"], detection: Optional["UE4SSResult"] = None) -> None:
+    def set_game_context(self, profile: Optional["GameProfile"], detection: Optional["DetectionResult"] = None) -> None:
         self._game_context = profile
         self._detection = detection
         # Notify all services that have an on_game_changed callback.

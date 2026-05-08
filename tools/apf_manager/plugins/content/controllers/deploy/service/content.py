@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ......core.models.ue4ss import UE4SSResult
+    from ......core.models.ue.result import DetectionResult
     from ....models.descriptors.base import ContentDescriptor
     from ....models.state.pipeline import InstallRecord
 
@@ -23,7 +23,7 @@ class DeployContentMixin:
         self,
         cache_path: "Path",
         content: "ContentDescriptor",
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
         game_id: str = "",
     ) -> "InstallRecord":
         """Content-aware dispatch. Routes by content type, saves InstallRecord for mods."""
@@ -51,9 +51,9 @@ class DeployContentMixin:
         self,
         cache_path: "Path",
         content,
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
     ) -> None:
-        if not detection or not detection.mods_dir:
+        if not detection or not (detection.ue4ss and detection.ue4ss.mods_dir):
             raise RuntimeError("UE4SS mods directory not detected")
         components = content.components.types if content.components else ["lua"]
         bp_pak_files = content.components.bp_pak_files if content.components else []
@@ -62,7 +62,7 @@ class DeployContentMixin:
 
         try:
             if any(c in components for c in ("lua", "cpp")):
-                dest = detection.mods_dir / folder_name
+                dest = detection.ue4ss.mods_dir / folder_name
                 self._host.log(
                     f"[deploy] Deploying {content.content_type} '{folder_name}' "
                     f"from {cache_path} \u2192 {dest}"
@@ -84,7 +84,7 @@ class DeployContentMixin:
                         self._host.log(f"[deploy] mods.txt updated for '{folder_name}'")
 
             if "blueprint" in components and bp_pak_files:
-                lm_dir = detection.logicmods_dir
+                lm_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
                 if lm_dir:
                     lm_dir.mkdir(parents=True, exist_ok=True)
                     lm_src = cache_path / "LogicMods"
@@ -190,14 +190,14 @@ class DeployContentMixin:
         self,
         cache_path: "Path",
         content,
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
     ) -> None:
-        platform_dir = getattr(detection, "platform_dir", None)
+        platform_dir = detection.platform.platform_dir if (detection and detection.platform) else None
         if not detection or platform_dir is None or not platform_dir.parts:
             raise RuntimeError("Game platform directory not detected")
         dest_dir = platform_dir
         install_type = getattr(content, "install_type", "")
-        logicmods_dir = getattr(detection, "logicmods_dir", None)
+        logicmods_dir = detection.ue4ss.logicmods_dir if (detection and detection.ue4ss) else None
         self._host.log(
             f"[deploy] Deploying binary '{content.name}' install_type={install_type} "
             f"from {cache_path}"
@@ -224,7 +224,7 @@ class DeployContentMixin:
     def undeploy_content(
         self,
         record: "InstallRecord",
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
     ) -> None:
         """Content-aware uninstall. Routes by content_type from InstallRecord."""
         if record.content_type in ("ap_mod", "third_party_mod", "framework_mod"):
@@ -243,23 +243,23 @@ class DeployContentMixin:
     def _undeploy_mod_record(
         self,
         record: "InstallRecord",
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
     ) -> None:
         if not detection:
             return
         components = record.components or ["lua"]
         if any(c in components for c in ("lua", "cpp")):
-            if detection.mods_dir:
-                folder_path = detection.mods_dir / record.folder_name
+            if detection.ue4ss and detection.ue4ss.mods_dir:
+                folder_path = detection.ue4ss.mods_dir / record.folder_name
                 shutil.rmtree(str(folder_path), ignore_errors=True)
             with self._lock:
                 if self._mods_txt:
                     self._mods_txt.remove_entry(record.folder_name)
                     self._mods_txt.save()
-        if "blueprint" in components and detection.logicmods_dir:
+        if "blueprint" in components and detection.ue4ss and detection.ue4ss.logicmods_dir:
             for pak in (record.bp_pak_files_deployed or []):
                 try:
-                    (detection.logicmods_dir / pak).unlink(missing_ok=True)
+                    (detection.ue4ss.logicmods_dir / pak).unlink(missing_ok=True)
                 except Exception as exc:
                     self._host.log(f"[deploy] WARN: failed to remove pak '{pak}': {exc}")
 
@@ -272,7 +272,7 @@ class DeployContentMixin:
     def _undeploy_binary_record(
         self,
         record: "InstallRecord",
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
     ) -> None:
         self._host.log(
             f"[deploy] Uninstall of binary '{record.name}' (type={record.install_type}) "
@@ -289,15 +289,15 @@ class DeployContentMixin:
         folder_name: str,
         components: list,
         bp_pak_files: list,
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
         game_id: str = "",
         metadata: "Optional[dict]" = None,
     ) -> None:
         """Copy cached mod to mods_dir, register in mods.txt, save install state."""
-        if not detection or not detection.mods_dir:
+        if not detection or not (detection.ue4ss and detection.ue4ss.mods_dir):
             raise RuntimeError("UE4SS mods directory not detected")
         if any(c in components for c in ("lua", "cpp")):
-            dest = detection.mods_dir / folder_name
+            dest = detection.ue4ss.mods_dir / folder_name
             if dest.exists():
                 shutil.rmtree(str(dest))
             shutil.copytree(str(cache_path), str(dest),
@@ -307,7 +307,7 @@ class DeployContentMixin:
                     self._mods_txt.ensure_entry(folder_name, enabled=True)
                     self._mods_txt.save()
         if "blueprint" in components and bp_pak_files:
-            lm_dir = detection.logicmods_dir
+            lm_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
             if lm_dir:
                 lm_dir.mkdir(parents=True, exist_ok=True)
                 lm_src = cache_path / "LogicMods"
@@ -341,14 +341,14 @@ class DeployContentMixin:
         self,
         cache_path: "Path",
         install_type: str,
-        detection: "Optional[UE4SSResult]",
+        detection: "Optional[DetectionResult]",
     ) -> None:
         """Deploy an Other-category item (UE4SS or framework binaries)."""
-        platform_dir = getattr(detection, "platform_dir", None)
+        platform_dir = detection.platform.platform_dir if (detection and detection.platform) else None
         if not detection or platform_dir is None or not platform_dir.parts:
             raise RuntimeError("Game platform directory not detected")
         dest_dir = platform_dir
-        logicmods_dir = getattr(detection, "logicmods_dir", None)
+        logicmods_dir = detection.ue4ss.logicmods_dir if (detection and detection.ue4ss) else None
         dest_dir.mkdir(parents=True, exist_ok=True)
         zips = sorted(cache_path.glob("*.zip"))
         if zips:
@@ -359,7 +359,7 @@ class DeployContentMixin:
                 if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
                     shutil.copy2(str(f), str(dest_dir / f.name))
 
-    def undeploy_mod(self, mod_info, detection: "Optional[UE4SSResult]") -> None:
+    def undeploy_mod(self, mod_info, detection: "Optional[DetectionResult]") -> None:
         """
         Remove all deployed components for a mod from the install target.
         Does not touch the download cache. Does not remove dependency DLLs.
@@ -373,9 +373,9 @@ class DeployContentMixin:
                 if self._mods_txt:
                     self._mods_txt.remove_entry(mod_info.folder_name)
                     self._mods_txt.save()
-        if "blueprint" in components and detection.logicmods_dir:
+        if "blueprint" in components and detection.ue4ss and detection.ue4ss.logicmods_dir:
             for pak in getattr(mod_info, "bp_pak_files", []):
-                pak_path = detection.logicmods_dir / pak
+                pak_path = detection.ue4ss.logicmods_dir / pak
                 try:
                     pak_path.unlink(missing_ok=True)
                 except Exception as exc:

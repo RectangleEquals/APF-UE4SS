@@ -8,7 +8,7 @@ No UI contribution (no hub_action) — update notifications surface via:
 """
 
 from kivy.clock import Clock
-from .updates_service import UpdatesService
+from .controllers.service import UpdatesService
 
 
 def setup(host):

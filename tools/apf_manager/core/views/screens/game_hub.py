@@ -36,7 +36,7 @@ from ..widgets.tip_icon_button import TipIconButton, ImageIconButton
 if TYPE_CHECKING:
     from ...controllers.plugin_host import PluginHost, PluginContribution
     from ...models.config import APFConfig, GameProfile
-    from ...models.ue4ss import UE4SSResult
+    from ...models.ue.result import DetectionResult
 
 _HERE = Path(__file__).parent
 _DISCORD_ICON = (
@@ -316,8 +316,9 @@ class GameHubScreen(MDScreen):
         has_sessions_svc = self._host.has_service("sessions")
         has_ue4ss = (
             detection is not None
-            and detection.ue4ss_dir is not None
-            and detection.ue4ss_dir.is_dir()
+            and detection.ue4ss is not None
+            and detection.ue4ss.ue4ss_dir is not None
+            and detection.ue4ss.ue4ss_dir.is_dir()
         )
 
         switches: dict[str, MDSwitch] = {}

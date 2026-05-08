@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ......core.models.ue4ss import UE4SSResult
+    from ......core.models.ue.result import DetectionResult
     from ....models.state.pipeline import InstallRecord
 
 
@@ -69,32 +69,34 @@ class DeployImpactMixin:
             "template_dirs_removed": template_dirs,
         }
 
-    def get_component_status(self, mod_info, detection: "Optional[UE4SSResult]") -> dict:
+    def get_component_status(self, mod_info, detection: "Optional[DetectionResult]") -> dict:
         """
         Return per-component presence status for a deployed mod.
         Keys: "lua", "cpp", "blueprint" — values: bool.
         """
-        if not detection:
+        if not detection or not detection.ue4ss:
             return {}
 
         components = getattr(mod_info, "components", ["lua"])
         bp_pak_files = getattr(mod_info, "bp_pak_files", [])
         status = {}
+        mods_dir = detection.ue4ss.mods_dir
 
         if "lua" in components:
-            status["lua"] = (
-                detection.mods_dir / mod_info.folder_name / "scripts" / "main.lua"
-            ).exists()
+            status["lua"] = bool(mods_dir and (
+                mods_dir / mod_info.folder_name / "scripts" / "main.lua"
+            ).exists())
 
         if "cpp" in components:
-            status["cpp"] = (
-                detection.mods_dir / mod_info.folder_name / "dlls" / "main.dll"
-            ).exists()
+            status["cpp"] = bool(mods_dir and (
+                mods_dir / mod_info.folder_name / "dlls" / "main.dll"
+            ).exists())
 
         if "blueprint" in components:
-            if bp_pak_files and detection.logicmods_dir:
+            lm_dir = detection.ue4ss.logicmods_dir
+            if bp_pak_files and lm_dir:
                 status["blueprint"] = all(
-                    (detection.logicmods_dir / f).exists() for f in bp_pak_files
+                    (lm_dir / f).exists() for f in bp_pak_files
                 )
             else:
                 status["blueprint"] = False

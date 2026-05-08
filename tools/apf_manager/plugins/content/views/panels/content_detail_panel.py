@@ -45,7 +45,7 @@ class ContentDetailPanel(MDBoxLayout):
     - ModDescriptor:     author, components, path, registry, tags
     - APModDescriptor:   + mod_id (highlighted), dependencies (coloured), capabilities_includes
     - TemplateDescriptor: template_path, conflict sources list
-    - GithubReleaseBinary: source repo/tag, published_at, changelog excerpt, asset list w/ sizes
+    - GithubReleaseBinary: source repo/tag, published_at, asset list w/ sizes
     - install_record present: deployed_at, installed version, update-available cue
     """
 
@@ -228,14 +228,6 @@ class ContentDetailPanel(MDBoxLayout):
                     theme_text_color="Custom", text_color=COL_DIM,
                 ))
             self.add_widget(asset_col)
-        if _src and _src.changelog:
-            self.add_widget(MDLabel(
-                text=_src.changelog[:300],
-                font_style="Label", role="small",
-                size_hint_y=None, height=dp(48),
-                theme_text_color="Custom", text_color=COL_DIM,
-            ))
-
     def _build_install_record(self, record) -> None:
         if getattr(record, "deployed_at", ""):
             self._row("Installed", record.deployed_at[:10])

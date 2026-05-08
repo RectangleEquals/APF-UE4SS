@@ -1,10 +1,9 @@
 """
 Session Manager plugin — registers 'sessions' service and Sessions panel.
 """
-
 from ...core.models.plugin import PluginContribution
-from .session_manager import SessionManager
-from .sessions_panel import SessionsPanel
+from .controllers.service import SessionManager
+from .views.sessions_panel import SessionsPanel
 
 
 def setup(host):

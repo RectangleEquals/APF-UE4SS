@@ -563,10 +563,164 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
             on_status=self._on_status,
         )
 
+    # -----------------------------------------------------------------------
+    # Release descriptor builders (called by updates service via service API)
+    # -----------------------------------------------------------------------
+
+    def get_framework_releases_for_content(self) -> list:
+        """Return up to 3 GithubReleaseBinary objects for framework binary releases."""
+        from ....models.descriptors.types import (
+            GithubReleaseBinary, ContentAsset, ReleaseSource, ContentTags,
+        )
+        from ....models.descriptors.base import GitHubRepo
+        try:
+            api = self._make_apf_api_for_releases()
+            releases = api.list_releases(tag_prefix="framework/")
+            entries = []
+            for release in releases[:3]:
+                full_tag = release.get("tag_name", "")
+                asset = _find_release_asset(release, ".zip")
+                if not asset:
+                    continue
+                ver = (full_tag[len("framework/"):]
+                       if full_tag.startswith("framework/") else full_tag)
+                body = (release.get("body") or "")
+                _assets = [
+                    ContentAsset(
+                        name=a.get("name", ""),
+                        url=a.get("browser_download_url", ""),
+                        size_bytes=a.get("size", 0),
+                        selected=False,
+                    )
+                    for a in release.get("assets", [])
+                    if not (
+                        a.get("name", "").endswith(".exe") or
+                        a.get("name", "").endswith(".apworld")
+                    )
+                ]
+                _hash = _hash_release("RectangleEquals", "APF-UE4SS", full_tag, "framework_binary")
+                source = ReleaseSource(
+                    repo=GitHubRepo(owner="RectangleEquals", repo="APF-UE4SS"),
+                    tag=full_tag,
+                    published_at=release.get("published_at", ""),
+                    changelog=body[:2000],
+                    is_prerelease=False,
+                )
+                entries.append(GithubReleaseBinary(
+                    name=f"APF Framework • {ver}",
+                    version=ver,
+                    game_id="",
+                    install_type="framework_binary",
+                    assets=_assets,
+                    source=source,
+                    tags=ContentTags(content_hash=_hash),
+                ))
+            return entries
+        except Exception:
+            return []
+
+    def get_ue4ss_releases_for_content(self, owner: str = "UE4SS-RE",
+                                        repo: str = "RE-UE4SS") -> list:
+        """Return stable + experimental GithubReleaseBinary objects for UE4SS."""
+        from ....models.descriptors.types import (
+            GithubReleaseBinary, ContentAsset, ReleaseSource, ContentTags,
+        )
+        from ....models.descriptors.base import GitHubRepo
+        _UE4SS_STABLE_COUNT = 1
+        try:
+            api = self._make_api(owner, repo)
+            typed_releases = api.releases.fetch_all()
+
+            stable       = [r for r in typed_releases if not r.prerelease and not r.draft]
+            experimental = [r for r in typed_releases if r.prerelease and not r.draft]
+
+            entries = []
+            for r in stable[:_UE4SS_STABLE_COUNT]:
+                _assets = [
+                    ContentAsset(
+                        name=a.name,
+                        url=a.browser_download_url,
+                        size_bytes=getattr(a, "size", 0),
+                        selected=False,
+                    )
+                    for a in r.assets
+                ]
+                _hash = _hash_release(owner, repo, r.tag_name, "ue4ss")
+                source = ReleaseSource(
+                    repo=GitHubRepo(owner=owner, repo=repo),
+                    tag=r.tag_name,
+                    published_at=r.published_at.isoformat() if r.published_at else "",
+                    changelog=(r.body or "")[:2000],
+                    is_prerelease=False,
+                )
+                entries.append(GithubReleaseBinary(
+                    name=f"{repo} • {r.tag_name}",
+                    version=r.tag_name.lstrip("v"),
+                    game_id="",
+                    install_type="ue4ss",
+                    assets=_assets,
+                    source=source,
+                    tags=ContentTags(content_hash=_hash),
+                ))
+
+            if experimental:
+                r = experimental[0]
+                _assets = [
+                    ContentAsset(
+                        name=a.name,
+                        url=a.browser_download_url,
+                        size_bytes=getattr(a, "size", 0),
+                        selected=False,
+                    )
+                    for a in r.assets
+                ]
+                _hash = _hash_release(owner, repo, r.tag_name, "ue4ss")
+                source = ReleaseSource(
+                    repo=GitHubRepo(owner=owner, repo=repo),
+                    tag=r.tag_name,
+                    published_at=r.published_at.isoformat() if r.published_at else "",
+                    changelog=(r.body or "")[:2000],
+                    is_prerelease=True,
+                )
+                entries.append(GithubReleaseBinary(
+                    name=f"{repo} • {r.tag_name}",
+                    version=r.tag_name.lstrip("v"),
+                    game_id="",
+                    install_type="ue4ss",
+                    assets=_assets,
+                    source=source,
+                    tags=ContentTags(content_hash=_hash),
+                ))
+            return entries
+        except Exception:
+            return []
+
+    def _make_apf_api_for_releases(self):
+        from ......core.controllers.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
+        return GitHubAPI(
+            repo_owner="RectangleEquals",
+            repo_name="APF-UE4SS",
+            token_file_path=_BUNDLED_TOKEN_PATH if _BUNDLED_TOKEN_PATH.exists() else None,
+            on_status=lambda level, msg: None,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+def _hash_release(owner: str, repo: str, tag: str, install_type: str) -> str:
+    import hashlib
+    fingerprint = "|".join([owner, repo, tag, install_type, "", "", "github_release"])
+    return hashlib.sha256(fingerprint.encode()).hexdigest()[:20]
+
+
+def _find_release_asset(release_dict: dict, suffix: str) -> Optional[dict]:
+    for asset in release_dict.get("assets", []):
+        if asset.get("name", "").endswith(suffix):
+            return asset
+    return None
+
 
 def _build_sc_from_viewer_result(selected_mods, raw_selected_ids) -> Optional[list]:
     """Build selected_content list from viewer result."""

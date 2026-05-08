@@ -3,9 +3,8 @@ Manifesto Editor plugin (dev only) — stub panel.
 
 Full implementation is deferred. See plan for scope.
 """
-
 from ...core.models.plugin import PluginContribution
-from .manifesto_panel import ManifestoPanel
+from .views.manifesto_panel import ManifestoPanel
 
 
 def setup(host):

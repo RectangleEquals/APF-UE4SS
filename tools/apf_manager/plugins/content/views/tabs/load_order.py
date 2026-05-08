@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from ...controllers.mods.service import ModInfo
     from ...models.mods.config import ModsTextManager
     from .....core.models.config import GameProfile
-    from .....core.models.ue4ss import UE4SSResult
+    from .....core.models.ue.result import DetectionResult
 
 
 class LoadOrderTab(MDBoxLayout):
@@ -42,7 +42,7 @@ class LoadOrderTab(MDBoxLayout):
         from ...controllers.tabs.load_order.controller import LoadOrderController
         self._ctrl = LoadOrderController(host)
         self._profile: Optional["GameProfile"] = None
-        self._detection: Optional["UE4SSResult"] = None
+        self._detection: Optional["DetectionResult"] = None
         self._rows: list[LoadOrderModRow] = []
         self._show_all: bool = False
         self._build_ui()

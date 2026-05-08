@@ -32,7 +32,7 @@ class PipelineController:
           fw_conflict        list[Path]
           fw_dir             Optional[Path]
           fw_conflict_names  str   (comma-separated folder names)
-          detection          UE4SSResult | None
+          detection          DetectionResult | None
         """
         detection = self._host.get_detection()
         ue4ss_ok = bool(detection and detection.valid)
