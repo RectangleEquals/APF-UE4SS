@@ -12,10 +12,10 @@ Path structure (typical):
                            ^binaries_dir   ^platform_dir  ^ue4ss_dir
 """
 
+
 from __future__ import annotations
-
+import sys
 from pathlib import Path
-
 from ..models.ue4ss import UE4SSResult
 
 MAX_SCAN_DEPTH = 6
@@ -29,7 +29,7 @@ def _find_file_ci(directory: Path, name: str) -> Path | None:
             if entry.name.lower() == name_lower:
                 return entry
     except (PermissionError, OSError):
-        pass
+        print(f"[APFManager] Failed to find '{name}' file from '{directory}'", file=sys.stderr)
     return None
 
 
@@ -41,7 +41,7 @@ def _find_dir_ci(directory: Path, name: str) -> Path | None:
             if entry.is_dir() and entry.name.lower() == name_lower:
                 return entry
     except (PermissionError, OSError):
-        pass
+        print(f"[APFManager] Failed to find '{name}' directory from '{directory}'", file=sys.stderr)
     return None
 
 
@@ -108,6 +108,7 @@ class UE4SSDetector:
         containing UE4SS.dll — the universal presence marker for all UE4SS versions.
         """
         def scan(directory: Path, depth: int) -> Path | None:
+            print(f"[APFManager] Scanning '{directory}' for UE4SS... (depth='{depth}')", file=sys.stderr)
             if depth > MAX_SCAN_DEPTH:
                 return None
             candidate = _find_dir_ci(directory, "ue4ss")
@@ -120,7 +121,7 @@ class UE4SSDetector:
                         if found:
                             return found
             except (PermissionError, OSError):
-                pass
+                print(f"[APFManager] Failed to detect UE4SS directory from '{directory}' (root='{root}', depth='{depth}')", file=sys.stderr)
             return None
 
         return scan(root, 0)
@@ -129,6 +130,7 @@ class UE4SSDetector:
     def _find_platform_dir(root: Path) -> Path | None:
         """Find Binaries/<arch>/ even when ue4ss/ is absent (fresh install)."""
         def scan(directory: Path, depth: int) -> Path | None:
+            print(f"[APFManager] Scanning '{directory}' for UE binaries/platform path... (depth='{depth}')", file=sys.stderr)
             if depth > MAX_SCAN_DEPTH:
                 return None
             binaries = _find_dir_ci(directory, "Binaries")
@@ -142,7 +144,7 @@ class UE4SSDetector:
                         if entry.is_dir():
                             return entry
                 except (PermissionError, OSError):
-                    pass
+                    print(f"[APFManager] Failed to detect UE platform path from '{directory}' (root='{root}', binaries='{binaries}', depth='{depth}')", file=sys.stderr)
             try:
                 for entry in directory.iterdir():
                     if entry.is_dir() and entry.name.lower() != "binaries":
@@ -150,7 +152,7 @@ class UE4SSDetector:
                         if found:
                             return found
             except (PermissionError, OSError):
-                pass
+                print(f"[APFManager] Failed to detect UE binaries path from '{directory}' (root='{root}', depth='{depth}')", file=sys.stderr)
             return None
 
         return scan(root, 0)
@@ -159,6 +161,7 @@ class UE4SSDetector:
     def _find_content_paks(root: Path) -> Path | None:
         """Find the Content/Paks directory (UE4/UE5 packaging marker)."""
         def scan(directory: Path, depth: int) -> Path | None:
+            print(f"[APFManager] Scanning '{directory}' for Content/Paks path... (depth='{depth}')", file=sys.stderr)
             if depth > MAX_SCAN_DEPTH:
                 return None
             content = _find_dir_ci(directory, "Content")
@@ -173,7 +176,7 @@ class UE4SSDetector:
                         if found:
                             return found
             except (PermissionError, OSError):
-                pass
+                print(f"[APFManager] Failed to detect Content/Paks path from '{directory}' (root='{root}', depth='{depth}')", file=sys.stderr)
             return None
 
         return scan(root, 0)
