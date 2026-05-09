@@ -4,18 +4,17 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from kivy.animation import Animation
-from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
-from kivy.uix.behaviors import ButtonBehavior
+from kivymd.uix.behaviors import HoverBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 
 
-class DevDataRow(MDBoxLayout):
+class DevDataRow(HoverBehavior, MDBoxLayout):
     """
     Horizontal data row base class for DevTools tabs.
 
-    Provides consistent spacing/padding, optional hover highlight,
+    Provides consistent spacing/padding, animated hover highlight (via HoverBehavior),
     and optional on_press callback. Subclasses add typed cells via add_cell().
     """
 
@@ -34,11 +33,6 @@ class DevDataRow(MDBoxLayout):
         )
         self._hover_enabled = hover
         self._on_press_cb = on_press
-        self._hover_alpha = 0.0
-        self._rect: Optional[Rectangle] = None
-        self._color_instr: Optional[Color] = None
-        if hover:
-            self._setup_hover_canvas()
 
     # -----------------------------------------------------------------------
     # Public helpers
@@ -58,42 +52,32 @@ class DevDataRow(MDBoxLayout):
         self.add_widget(widget)
 
     # -----------------------------------------------------------------------
-    # Hover
+    # HoverBehavior callbacks
     # -----------------------------------------------------------------------
 
-    def _setup_hover_canvas(self) -> None:
-        with self.canvas.before:
-            self._color_instr = Color(1, 1, 1, 0)
-            self._rect = Rectangle(pos=self.pos, size=self.size)
-        self.bind(pos=self._update_rect, size=self._update_rect)
+    def on_enter(self):
+        if not self._hover_enabled:
+            return
+        Animation(md_bg_color=(1, 1, 1, 0.06), duration=0.10).start(self)
 
-    def _update_rect(self, *_) -> None:
-        if self._rect:
-            self._rect.pos = self.pos
-            self._rect.size = self.size
+    def on_leave(self):
+        if not self._hover_enabled:
+            return
+        Animation(md_bg_color=(0, 0, 0, 0), duration=0.10).start(self)
 
-    def on_touch_move(self, touch):
-        if self._hover_enabled and self.collide_point(*touch.pos):
-            self._set_hover(True)
-        else:
-            self._set_hover(False)
-        return super().on_touch_move(touch)
+    def on_parent(self, widget, parent):
+        if parent is None:
+            Animation.cancel_all(self, "md_bg_color")
+            self.md_bg_color = (0, 0, 0, 0)
+
+    # -----------------------------------------------------------------------
+    # Press
+    # -----------------------------------------------------------------------
 
     def on_touch_down(self, touch):
-        if self.collide_point(*touch.pos):
-            if self._on_press_cb:
-                self._set_hover(False)
-                self._on_press_cb()
+        if self.collide_point(*touch.pos) and self._on_press_cb:
+            self._on_press_cb()
         return super().on_touch_down(touch)
-
-    def _set_hover(self, active: bool) -> None:
-        if not self._hover_enabled or not self._color_instr:
-            return
-        target = 0.06 if active else 0.0
-        if abs(self._hover_alpha - target) < 0.01:
-            return
-        self._hover_alpha = target
-        Animation(a=target, duration=0.12).start(self._color_instr)
 
 
 class DevHeaderRow(MDBoxLayout):

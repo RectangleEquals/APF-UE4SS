@@ -110,9 +110,6 @@ class GameHubScreen(MDScreen):
         from ...controllers.screens.game_hub import GameHubController
         self._ctrl = GameHubController(host)
 
-        # Wire host log to our panel
-        host.set_log_fn(self._log_panel.append)
-
         self._build()
 
     # -----------------------------------------------------------------------

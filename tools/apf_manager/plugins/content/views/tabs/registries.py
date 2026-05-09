@@ -317,7 +317,12 @@ class RegistriesTab(MDBoxLayout):
             size_hint_y=None,
             height=dp(32),
         ))
-        self._ctrl.search_github(self._game_id, on_done=self._on_search_results)
+        self._ctrl.search_github(
+            self._game_id,
+            on_done=lambda results: Clock.schedule_once(
+                lambda dt: self._on_search_results(results), 0
+            ),
+        )
 
     def _on_search_results(self, results: list) -> None:
         self._search_results.clear_widgets()

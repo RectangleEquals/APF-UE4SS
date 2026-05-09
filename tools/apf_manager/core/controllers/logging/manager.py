@@ -24,9 +24,9 @@ class APFLogManager:
         root.setLevel(config.log_level)
         root.propagate = False
 
-        fmt = logging.Formatter("[%(levelname)s] %(name)s — %(message)s")
+        fmt = logging.Formatter("[%(levelname)s] %(name)s -- %(message)s")
         ts_fmt = logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+            "%(asctime)s [%(levelname)s] %(name)s -- %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
