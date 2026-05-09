@@ -8,6 +8,9 @@ from typing import Callable, Optional, TYPE_CHECKING
 from ..auth import GitHubAuth
 from ..ci import CIManager
 from .. import version as vm
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from .....core.controllers.plugin_host import PluginHost
@@ -40,9 +43,9 @@ class SourceControlController:
             url += f"&title={title.replace(' ', '+')}"
         try:
             webbrowser.open(url)
-            self._host.log(f"[devtools] Opened PR page for branch '{branch}'.")
+            logger.info(f"Opened PR page for branch '{branch}'.")
         except Exception as exc:
-            self._host.log(f"[devtools] Could not open browser ({exc}). URL: {url}")
+            logger.warning(f"Could not open browser ({exc}). URL: {url}")
 
     def refresh_branches(
         self,
@@ -57,7 +60,7 @@ class SourceControlController:
                 branches = self._ci.list_branches(token)
                 on_done(branches, None)
             except Exception as exc:
-                self._host.log(f"[devtools] Failed to fetch branches: {exc}")
+                logger.error(f"Failed to fetch branches: {exc}")
                 on_done(None, str(exc))
 
         threading.Thread(target=_fetch, daemon=True).start()
@@ -80,7 +83,7 @@ class SourceControlController:
                 ok = self._ci.create_branch(name, sha, token)
                 on_done(ok, name)
             except Exception as exc:
-                self._host.log(f"[devtools] Error creating branch '{name}': {exc}")
+                logger.error(f"Error creating branch '{name}': {exc}")
                 on_done(False, str(exc))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -99,7 +102,7 @@ class SourceControlController:
                 ok = self._ci.delete_branch(name, token)
                 on_done(ok, name)
             except Exception as exc:
-                self._host.log(f"[devtools] Error deleting branch '{name}': {exc}")
+                logger.error(f"Error deleting branch '{name}': {exc}")
                 on_done(False, str(exc))
 
         threading.Thread(target=_run, daemon=True).start()

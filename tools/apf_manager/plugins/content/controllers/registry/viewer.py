@@ -32,6 +32,10 @@ def _is_framework_mod_id(mod_id: str) -> bool:
     """Return True only for exact archipelago.<game>.framework mod IDs."""
     return bool(_FRAMEWORK_MOD_RE.match(mod_id or ""))
 
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 if TYPE_CHECKING:
     from .....core.controllers.plugin_host import PluginHost
     from .resolver import DiscoveredMod, FolderTreeNode
@@ -574,7 +578,7 @@ class RegistryViewer:
         """
         viewer = self._html_viewer()
         if viewer is None:
-            self._host.log("[repo_viewer] html_viewer service not available")
+            logger.warning("html_viewer service not available")
             if on_cancel:
                 on_cancel()
             return
@@ -639,7 +643,7 @@ class RegistryViewer:
         try:
             spa_template = _SPA_PATH.read_text(encoding="utf-8")
         except Exception as exc:
-            self._host.log(f"[registry_viewer] Could not read SPA template: {exc}")
+            logger.error(f"Could not read SPA template: {exc}")
             if on_cancel:
                 on_cancel()
             return
@@ -664,7 +668,7 @@ class RegistryViewer:
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump({"action": "cancel", "selected": []}, f)
         except Exception as exc:
-            self._host.log(f"[registry_viewer] WARN: failed to seed output sentinel file: {exc}")
+            logger.warning(f"Failed to seed viewer output sentinel file: {exc}")
 
         label = repo_url or "Review Repository"
 
@@ -675,7 +679,7 @@ class RegistryViewer:
                 with open(output_file, encoding="utf-8") as f:
                     result = json.load(f)
             except Exception as exc:
-                self._host.log(f"[registry_viewer] WARN: failed to read viewer result file: {exc}")
+                logger.warning(f"Failed to read viewer result file: {exc}")
             try:
                 os.unlink(output_file)
             except OSError:
@@ -685,9 +689,8 @@ class RegistryViewer:
                 selected_ids: list[str] = result.get("selected", [])
                 dropped = [sid for sid in selected_ids if sid not in id_to_mod]
                 if dropped:
-                    self._host.log(
-                        f"[viewer] WARN: {len(dropped)} selected IDs not found in id_to_mod — "
-                        f"first few: {dropped[:3]}"
+                    logger.warning(
+                        f"{len(dropped)} selected IDs not found in id_to_mod -- first few: {dropped[:3]}"
                     )
                 selected_mods = [
                     id_to_mod[sid] for sid in selected_ids if sid in id_to_mod

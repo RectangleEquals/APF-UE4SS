@@ -5,6 +5,10 @@ import threading
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 if TYPE_CHECKING:
     from ....models.descriptors.types import RegistryDescriptor
 
@@ -54,9 +58,9 @@ class DiscoveryMixin:
                     api = self._make_api(_src.repo.owner, _src.repo.repo)
                     api.fetch_text(url, force_refresh=False)
                 except Exception as exc:
-                    self._host.log(f"[registry] WARN: prefetch doc failed for {url}: {exc}")
+                    logger.warning(f"Prefetch doc failed for {url}: {exc}")
         except Exception as exc:
-            self._host.log(f"[registry] WARN: _prefetch_docs_bg failed: {exc}")
+            logger.warning(f"_prefetch_docs_bg failed: {exc}")
 
     def _load_mods(self, game_id: str) -> list:
         from ....models.descriptors.filter import ContentFilter
@@ -69,7 +73,7 @@ class DiscoveryMixin:
             try:
                 discovered = resolver.traverse(entry.url, cache)
             except Exception as exc:
-                self._host.log(f"[registry] Traversal error for {entry.url}: {exc}")
+                logger.error(f"Traversal error for {entry.url}: {exc}")
                 continue
 
             sc = entry.selected_content
@@ -108,7 +112,7 @@ class DiscoveryMixin:
             try:
                 discovered = resolver.traverse(entry.url, cache)
             except Exception as exc:
-                self._host.log(f"[registry] WARN: traversal failed for {entry.url}: {exc}")
+                logger.warning(f"Traversal failed for {entry.url}: {exc}")
                 continue
             for mod in discovered:
                 for tpath in mod.templates_paths:
@@ -159,9 +163,9 @@ class DiscoveryMixin:
                 if entry_descriptors:
                     self._save_grb_descriptors(entry, game_id, entry_descriptors)
             except Exception as exc:
-                self._host.log(
-                    f"[registry] get_other_content traversal failed for {entry.url}: {exc} "
-                    "— falling back to cached descriptors"
+                logger.error(
+                    f"get_other_content traversal failed for {entry.url}: {exc} "
+                    "-- falling back to cached descriptors"
                 )
                 entry_descriptors = self._load_grb_descriptors(entry, game_id)
             results.extend(entry_descriptors)
@@ -190,7 +194,7 @@ class DiscoveryMixin:
                 dest.mkdir(parents=True, exist_ok=True)
                 ContentSerializer().save_cache(dest, desc)
         except Exception as exc:
-            self._host.log(f"[registry] _save_grb_descriptors failed: {exc}")
+            logger.error(f"_save_grb_descriptors failed: {exc}")
 
     def _load_grb_descriptors(self, entry, game_id: str) -> list:
         """Load persisted binary descriptors from disk (K-8 Fix D)."""
@@ -220,7 +224,7 @@ class DiscoveryMixin:
             if cache_dir.exists():
                 shutil.rmtree(str(cache_dir))
         except Exception as exc:
-            self._host.log(f"[registry] invalidate_other_cache failed: {exc}")
+            logger.warning(f"invalidate_other_cache failed: {exc}")
 
     def get_framework_candidates(self, game_id: str) -> list:
         """Return scored framework mod candidates from all registered registries."""
@@ -234,7 +238,7 @@ class DiscoveryMixin:
             try:
                 discovered = resolver.traverse(entry.url, cache)
             except Exception as exc:
-                self._host.log(f"[registry] WARN: traversal failed for {entry.url}: {exc}")
+                logger.warning(f"Traversal failed for {entry.url}: {exc}")
                 continue
             for mod in discovered:
                 if _is_framework_mod_id(getattr(mod, "mod_id", "")):
@@ -279,7 +283,7 @@ class DiscoveryMixin:
             try:
                 discovered = resolver.traverse(entry.url, cache)
             except Exception as exc:
-                self._host.log(f"[registry] WARN: traversal failed for {entry.url}: {exc}")
+                logger.warning(f"Traversal failed for {entry.url}: {exc}")
                 continue
             for mod in discovered:
                 if mod.ue4ss_info and _is_framework_mod_id(getattr(mod, "mod_id", "")):

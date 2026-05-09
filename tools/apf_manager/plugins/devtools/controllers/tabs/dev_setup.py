@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Callable, Optional, TYPE_CHECKING
 
 from .. import version as vm
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from .....core.controllers.plugin_host import PluginHost
@@ -86,7 +89,7 @@ class DevSetupController:
                 else:
                     on_complete(False, None)
             except Exception as exc:
-                self._host.log(f"[devtools] Clone failed: {exc}")
+                logger.error(f"Clone failed: {exc}")
                 on_complete(False, None)
 
         threading.Thread(target=_run, daemon=True).start()
@@ -95,7 +98,7 @@ class DevSetupController:
         try:
             svc = self._host.get_service("docs_viewer")
             if svc is None:
-                self._host.log("[devtools] docs_viewer service not available.")
+                logger.warning("docs_viewer service not available")
                 return
             svc.open(
                 initial_path="docs/public/dev/dev_setup.md",
@@ -104,4 +107,4 @@ class DevSetupController:
                 show_mode_toggle=False,
             )
         except Exception as exc:
-            self._host.log(f"[devtools] Could not open setup guide: {exc}")
+            logger.error(f"Could not open setup guide: {exc}")

@@ -17,6 +17,7 @@ from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 from kivymd.uix.textfield import MDTextField
 
 from ...controllers.tabs.source_control import SourceControlController
+from ..widgets.branch_row import BranchRow, make_branch_header
 
 
 def _write_tier_placeholder() -> MDBoxLayout:
@@ -159,6 +160,7 @@ class SourceControlTab(MDBoxLayout):
             text="Manages remote branches on GitHub. Deletions cannot be undone.",
             adaptive_height=True, theme_text_color="Secondary", font_style="Body",
         ))
+        self.add_widget(make_branch_header())
 
         self._branches_list = MDBoxLayout(
             orientation="vertical", adaptive_height=True, spacing=dp(4))
@@ -196,30 +198,8 @@ class SourceControlTab(MDBoxLayout):
                 self._set_status(f"Error: {error}", ok=False)
                 return
             for br in (branches or []):
-                bname     = br.get("name", "?")
-                protected = br.get("protected", False)
-                row = MDBoxLayout(
-                    orientation="horizontal", adaptive_height=True,
-                    spacing=dp(8), padding=(0, dp(2), 0, dp(2)),
-                )
-                row.add_widget(MDLabel(
-                    text=bname, adaptive_height=True, size_hint_x=0.6))
-                if protected or bname in ("master", "main"):
-                    row.add_widget(MDLabel(
-                        text="protected" if protected else "default",
-                        adaptive_height=True, size_hint_x=0.3,
-                        theme_text_color="Secondary",
-                    ))
-                else:
-                    del_btn = MDButton(
-                        MDButtonIcon(icon="delete-outline"),
-                        MDButtonText(text="Delete"),
-                        style="text", size_hint_x=None,
-                    )
-                    del_btn.bind(
-                        on_release=lambda *_, n=bname: self._confirm_delete_branch(n))
-                    row.add_widget(del_btn)
-                self._branches_list.add_widget(row)
+                self._branches_list.add_widget(
+                    BranchRow(br, on_delete=self._confirm_delete_branch))
             self._set_status(f"{len(branches or [])} branch(es).", ok=True)
         Clock.schedule_once(_upd)
 

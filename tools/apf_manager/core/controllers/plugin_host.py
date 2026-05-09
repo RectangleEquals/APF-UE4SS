@@ -44,7 +44,6 @@ class PluginHost:
         self._game_context: Optional["GameProfile"] = None
         self._detection: Optional["DetectionResult"] = None
         self._config: Optional["APFConfig"] = None
-        self._log_fn: Optional[Callable[[str], None]] = None
         self._navigate_fn: Optional[Callable[["GameProfile"], None]] = None
         self._dialog_fn: Optional[Callable[[str, dict], None]] = None
         self._failure_fn: Optional[Callable[[], None]] = None
@@ -357,9 +356,11 @@ class PluginHost:
         if self._dialog_fn:
             self._dialog_fn(dialog_id, kwargs)
 
-    def log(self, msg: str) -> None:
-        if self._log_fn:
-            self._log_fn(msg)
+    def log(self, msg: str, component: str = "", level: int = 20) -> None:
+        from .logging.manager import APFLogManager
+        import logging as _logging
+        logger = APFLogManager.get_logger(component or "host")
+        logger.log(level if level else _logging.INFO, msg)
 
     def notify_state_change(self, scope: str) -> None:
         """Notify all subscribers that state in the given scope has changed."""
@@ -374,9 +375,6 @@ class PluginHost:
     # -----------------------------------------------------------------------
     # Wiring (set by the app after construction)
     # -----------------------------------------------------------------------
-
-    def set_log_fn(self, fn: Callable[[str], None]) -> None:
-        self._log_fn = fn
 
     def set_navigate_fn(self, fn: Callable) -> None:
         self._navigate_fn = fn

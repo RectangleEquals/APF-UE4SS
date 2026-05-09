@@ -16,3 +16,4 @@ class DiagValidationItem:
 class PackageResult:
     out_path: Path
     included: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)

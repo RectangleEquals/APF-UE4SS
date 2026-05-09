@@ -2,8 +2,8 @@
 ; Mirrors Archipelago's inno_setup.iss structure
 ;
 ; Build steps:
-;   1. python setup.py build_exe   (produces build/APFManager/)
-;   2. iscc inno_setup.iss          (produces APFManager-Setup.exe)
+;   1. python setup/setup.py build_exe   (produces build/APFManager/)
+;   2. iscc setup/inno_setup.iss         (produces build/Output/APFManager-Setup.exe)
 
 #define MyAppName "APF Manager"
 #ifndef MyAppVersion
@@ -12,7 +12,7 @@
 #define MyAppPublisher "AP Framework"
 #define MyAppExeName "APFManager.exe"
 #define MyAppDebugExeName "APFManagerDebug.exe"
-#define BuildDir "build\APFManager"
+#define BuildDir "..\build\APFManager"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -22,6 +22,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
+OutputDir=..\build\Output
 OutputBaseFilename=APFManager-Setup-{#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -59,8 +60,8 @@ Source: "{#BuildDir}\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recurs
 ; WebView2 bootstrapper — optional; only bundled if redist\MicrosoftEdgeWebview2Setup.exe is present.
 ; Download the Evergreen Bootstrapper from Microsoft and place it at redist\ before running ISCC.
 ; See redist\README.txt for instructions.
-#if FileExists("redist\MicrosoftEdgeWebview2Setup.exe")
-Source: "redist\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsWebView2
+#if FileExists("..\redist\MicrosoftEdgeWebview2Setup.exe")
+Source: "..\redist\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsWebView2
 #endif
 
 [Dirs]
@@ -75,7 +76,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 ; Install WebView2 runtime silently before app launches (only if not already present)
-#if FileExists("redist\MicrosoftEdgeWebview2Setup.exe")
+#if FileExists("..\redist\MicrosoftEdgeWebview2Setup.exe")
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; \
   Description: "Installing WebView2 Runtime..."; \
   Flags: runhidden waituntilterminated; Check: NeedsWebView2

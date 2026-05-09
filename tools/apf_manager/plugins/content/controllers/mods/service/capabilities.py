@@ -4,6 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 
 class ModCapabilitiesMixin:
     """Mixin for ModService: build_capabilities, framework mod directory helpers."""
@@ -61,7 +65,7 @@ class ModCapabilitiesMixin:
                 if _FRAMEWORK_MOD_RE.match(raw.get("mod_id", "")):
                     results.append(entry)
             except Exception as exc:
-                self._host.log(f"[mods] WARN: failed to read manifest at {manifest_path}: {exc}")
+                logger.warning(f"Failed to read manifest at {manifest_path}: {exc}")
         return results
 
     def get_framework_mod_dir(self) -> Optional[Path]:

@@ -59,7 +59,6 @@ class AppController:
         navigate_fn: Callable,
         dialog_fn: Callable,
         failure_fn: Callable,
-        log_fn: Optional[Callable] = None,
     ) -> None:
         """Load config and plugins; wire host callbacks."""
         self._config.load()
@@ -72,8 +71,6 @@ class AppController:
         self._host.set_navigate_fn(navigate_fn)
         self._host.set_dialog_fn(dialog_fn)
         self._host.set_failure_fn(failure_fn)
-        if log_fn:
-            self._host.set_log_fn(log_fn)
 
     def navigate_to_game(self, profile: "GameProfile") -> None:
         """Run UE detection and update host game context. View handles UI navigation."""

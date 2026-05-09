@@ -59,6 +59,10 @@ class APFManagerApp(MDApp):
         host = self._ctrl.host
         config = self._ctrl.config
 
+        from ..controllers.logging.manager import APFLogManager
+        from ..models.logging.config import LogConfig
+        APFLogManager.setup(LogConfig(dev_mode=host.dev_mode))
+
         # Controller loads config and plugins
         self._ctrl.startup(
             navigate_fn=self._navigate_to_game,
@@ -71,7 +75,7 @@ class APFManagerApp(MDApp):
 
         # Build game hub
         self._game_hub = GameHubScreen(host=host, config=config)
-        host.set_log_fn(self._game_hub.log_panel.append)
+        APFLogManager.attach_panel(self._game_hub.log_panel.append)
         self._game_hub.populate_panels()
         self._sm.add_widget(self._game_hub)
 

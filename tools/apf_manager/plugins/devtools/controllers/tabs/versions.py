@@ -6,6 +6,9 @@ from typing import Callable, Optional, TYPE_CHECKING
 from ..auth import GitHubAuth
 from ..ci import CIManager
 from .. import version as vm
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 _COMPONENTS = ("framework", "manager", "apworld")
 
@@ -52,7 +55,7 @@ class VersionsController:
                     remote[component] = comp_tags[-1].removeprefix(prefix) if comp_tags else None
                 on_done(remote, None)
             except Exception as exc:
-                self._host.log(f"[devtools] Failed to fetch remote tags: {exc}")
+                logger.error(f"Failed to fetch remote tags: {exc}")
                 on_done(None, str(exc))
 
         threading.Thread(target=_fetch, daemon=True).start()
@@ -74,7 +77,7 @@ class VersionsController:
             return
 
         self._local_versions[component] = new_ver
-        self._host.log(f"[devtools] {component}: {current} → {new_ver} — committing...")
+        logger.info(f"{component}: {current} -> {new_ver} -- committing...")
 
         def _run():
             try:

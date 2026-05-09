@@ -29,7 +29,7 @@ from kivymd.uix.button import MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.screen import MDScreen
 
-from ..widgets.log_panel import LogPanel
+from ..logging.log_panel import LogPanel
 from ..widgets.plugin_panel import PluginPanel
 from ..widgets.tip_icon_button import TipIconButton, ImageIconButton
 

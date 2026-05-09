@@ -9,6 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 if TYPE_CHECKING:
     from ......core.models.ue.result import DetectionResult
 
@@ -286,6 +290,6 @@ class ValidationService:
                         source="Disk",
                     ))
             except Exception as exc:
-                self._host.log(f"[validation] WARN: disk_usage check failed: {exc}")
+                logger.warning(f"disk_usage check failed: {exc}")
 
         return results

@@ -16,6 +16,8 @@ from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 
 from ...controllers.tabs.ci_ctrl import CITabController
+from ..widgets.workflow_row import WorkflowRow, make_workflow_header
+from ..widgets.release_row import ReleaseRow, make_release_header
 
 import webbrowser
 
@@ -84,6 +86,7 @@ class CITab(MDBoxLayout):
         refresh_wf.bind(on_release=lambda *_: self.refresh_workflows())
         wf_hdr.add_widget(refresh_wf)
         self.add_widget(wf_hdr)
+        self.add_widget(make_workflow_header())
 
         self._workflows_list = MDBoxLayout(
             orientation="vertical", adaptive_height=True, spacing=dp(4))
@@ -112,6 +115,7 @@ class CITab(MDBoxLayout):
         create_rel.bind(on_release=lambda *_: self._show_create_release_dialog())
         rel_hdr.add_widget(create_rel)
         self.add_widget(rel_hdr)
+        self.add_widget(make_release_header())
 
         self._releases_list = MDBoxLayout(
             orientation="vertical", adaptive_height=True, spacing=dp(4))
@@ -130,6 +134,13 @@ class CITab(MDBoxLayout):
     def _on_workflows_loaded(
         self, workflows: Optional[list], error: Optional[str]
     ) -> None:
+        def _on_wf_run(wf_id, wf_name, status_lbl):
+            branch = self._ctrl.get_current_branch()
+            status_lbl.text = "Dispatching..."
+            def _on_status(s: str, lbl=status_lbl):
+                Clock.schedule_once(lambda dt: setattr(lbl, "text", s))
+            self._ctrl.dispatch_workflow(str(wf_id), branch, _on_status)
+
         def _upd(dt):
             if not self._workflows_list:
                 return
@@ -145,50 +156,10 @@ class CITab(MDBoxLayout):
                 self._set_wf_status("")
                 return
             for wf in workflows:
-                self._workflows_list.add_widget(self._make_workflow_row(wf))
+                self._workflows_list.add_widget(
+                    WorkflowRow(wf, on_run=_on_wf_run, on_view=self._open_url))
             self._set_wf_status(f"{len(workflows)} workflow(s) loaded.", ok=True)
         Clock.schedule_once(_upd)
-
-    def _make_workflow_row(self, wf: dict) -> MDBoxLayout:
-        row = MDBoxLayout(
-            orientation="horizontal", adaptive_height=True,
-            spacing=dp(8), padding=(0, dp(4), 0, dp(4)),
-        )
-        wf_id    = wf.get("id")
-        wf_name  = wf.get("name", "Unknown")
-        html_url = wf.get("html_url", "")
-
-        name_lbl   = MDLabel(text=wf_name, adaptive_height=True, size_hint_x=0.4)
-        status_lbl = MDLabel(
-            text="", adaptive_height=True, size_hint_x=0.3,
-            theme_text_color="Secondary")
-        run_btn = MDButton(
-            MDButtonIcon(icon="play"),
-            MDButtonText(text="Run"),
-            size_hint_x=None,
-        )
-        view_btn = MDIconButton(icon="open-in-new", size_hint_x=None, width=dp(36))
-
-        def _on_run(*args, _id=wf_id, _name=wf_name, _lbl=status_lbl):
-            branch = self._ctrl.get_current_branch()
-            _lbl.text = "Dispatching..."
-
-            def _on_status(s: str, lbl=_lbl):
-                Clock.schedule_once(lambda dt: setattr(lbl, "text", s))
-
-            self._ctrl.dispatch_workflow(str(_id), branch, _on_status)
-
-        run_btn.bind(on_release=_on_run)
-
-        if html_url:
-            view_btn.bind(
-                on_release=lambda *_, u=html_url: self._open_url(u))
-        else:
-            view_btn.disabled = True
-
-        for w in (name_lbl, run_btn, status_lbl, view_btn):
-            row.add_widget(w)
-        return row
 
     # -----------------------------------------------------------------------
     # Releases
@@ -212,27 +183,7 @@ class CITab(MDBoxLayout):
                 self._set_rel_status("")
                 return
             for rel in releases[:5]:
-                row = MDBoxLayout(
-                    orientation="horizontal", adaptive_height=True,
-                    spacing=dp(8), padding=(0, dp(2), 0, dp(2)),
-                )
-                row.add_widget(MDLabel(
-                    text=rel.get("tag_name", "?"),
-                    adaptive_height=True, size_hint_x=0.3,
-                ))
-                row.add_widget(MDLabel(
-                    text=rel.get("name", ""),
-                    adaptive_height=True, size_hint_x=0.5,
-                    theme_text_color="Secondary",
-                ))
-                view_btn = MDIconButton(
-                    icon="open-in-new", size_hint_x=None, width=dp(36))
-                url = rel.get("html_url", "")
-                if url:
-                    view_btn.bind(
-                        on_release=lambda *_, u=url: self._open_url(u))
-                row.add_widget(view_btn)
-                self._releases_list.add_widget(row)
+                self._releases_list.add_widget(ReleaseRow(rel, on_view=self._open_url))
             self._set_rel_status(f"{len(releases)} release(s).", ok=True)
         Clock.schedule_once(_upd)
 

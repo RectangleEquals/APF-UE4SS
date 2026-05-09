@@ -5,6 +5,10 @@ import base64
 import json
 from typing import Callable, TYPE_CHECKING
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 
 class SharingMixin:
     """Mixin for RegistryService: search_github, export/import base64, is_share_payload."""
@@ -37,7 +41,7 @@ class SharingMixin:
                 return []
             return data.get("registries", [])
         except Exception as exc:
-            self._host.log(f"[registry] WARN: import_registries_b64 decode failed: {exc}")
+            logger.warning(f"import_registries_b64 decode failed: {exc}")
             return []
 
     @staticmethod

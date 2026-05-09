@@ -5,6 +5,10 @@ import shutil
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 if TYPE_CHECKING:
     from ......core.models.ue.result import DetectionResult
     from ....models.state.pipeline import InstallRecord
@@ -151,7 +155,7 @@ class DeployImpactMixin:
             try:
                 full.unlink(missing_ok=True)
             except Exception as exc:
-                self._host.log(f"[deploy] WARN: failed to remove template file '{rel_path}': {exc}")
+                logger.warning(f"Failed to remove template file '{rel_path}': {exc}")
         # Prune empty directories left behind
         for dirpath in sorted(target.rglob("*"), reverse=True):
             if dirpath.is_dir():

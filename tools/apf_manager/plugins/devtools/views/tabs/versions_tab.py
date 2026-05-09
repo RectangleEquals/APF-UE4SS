@@ -6,12 +6,12 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText
 from kivymd.uix.divider import MDDivider
 from kivymd.uix.label import MDLabel
 from kivymd.uix.menu import MDDropdownMenu
 
 from ...controllers.tabs.versions import VersionsController
+from ..widgets.version_row import VersionRow, make_version_header
 
 _COMPONENTS = ("framework", "manager", "apworld")
 _COMPONENT_LABELS = {"framework": "Framework", "manager": "Manager", "apworld": "Apworld"}
@@ -40,7 +40,7 @@ class VersionsTab(MDBoxLayout):
             **kwargs,
         )
         self._ctrl = ctrl
-        self._version_rows: dict[str, dict] = {}
+        self._version_rows: dict[str, VersionRow] = {}
         self._bump_menus: dict[str, MDDropdownMenu] = {}
         self._status_lbl: Optional[MDLabel] = None
 
@@ -59,8 +59,8 @@ class VersionsTab(MDBoxLayout):
         for component, ver in versions.items():
             row = self._version_rows.get(component)
             if row:
-                row["local_lbl"].text = ver or "?"
-                row["status_lbl"].text = ""
+                row.local_lbl.text = ver or "?"
+                row.status_lbl.text = ""
         self._ctrl.refresh_remote_versions(on_done=self._on_remote_loaded)
 
     # -----------------------------------------------------------------------
@@ -90,65 +90,24 @@ class VersionsTab(MDBoxLayout):
             font_style="Body",
         ))
         self.add_widget(MDDivider())
-
-        hdr_row = MDBoxLayout(
-            orientation="horizontal", adaptive_height=True, spacing=dp(8))
-        for txt, sx in [("Component", 0.15), ("Local", 0.18), ("Remote", 0.18),
-                        ("Status", 0.15), ("Bump", 0.18), ("Action", 0.16)]:
-            hdr_row.add_widget(MDLabel(
-                text=txt, size_hint_x=sx, adaptive_height=True,
-                theme_text_color="Secondary", font_style="Body",
-            ))
-        self.add_widget(hdr_row)
+        self.add_widget(make_version_header())
 
         for component in _COMPONENTS:
-            self.add_widget(self._make_version_row(component))
+            row = VersionRow(
+                component=component,
+                label=_COMPONENT_LABELS[component],
+                bump_part=self._ctrl.get_bump_part(component),
+                on_bump_menu=self._open_bump_menu,
+                on_commit_tag=self._on_commit_tag,
+            )
+            self._version_rows[component] = row
+            self.add_widget(row)
 
         self._status_lbl = MDLabel(
             text="", adaptive_height=True,
             font_style="Body", theme_text_color="Secondary",
         )
         self.add_widget(self._status_lbl)
-
-    def _make_version_row(self, component: str) -> MDBoxLayout:
-        row = MDBoxLayout(
-            orientation="horizontal", adaptive_height=True,
-            spacing=dp(8), padding=(0, dp(2), 0, dp(2)),
-        )
-        label      = MDLabel(
-            text=_COMPONENT_LABELS[component], size_hint_x=0.15, adaptive_height=True)
-        local_lbl  = MDLabel(
-            text="—", size_hint_x=0.18, adaptive_height=True,
-            theme_text_color="Secondary")
-        remote_lbl = MDLabel(
-            text="—", size_hint_x=0.18, adaptive_height=True,
-            theme_text_color="Secondary")
-        status_lbl = MDLabel(text="", size_hint_x=0.15, adaptive_height=True)
-        bump_btn   = MDButton(
-            MDButtonIcon(icon="chevron-up"),
-            MDButtonText(text=self._ctrl.get_bump_part(component)),
-            size_hint_x=0.18,
-        )
-        bump_btn.bind(
-            on_release=lambda btn, c=component: self._open_bump_menu(btn, c))
-        commit_btn = MDButton(
-            MDButtonIcon(icon="tag-check"),
-            MDButtonText(text="Commit & Tag"),
-            size_hint_x=0.16,
-        )
-        commit_btn.bind(
-            on_release=lambda *_, c=component: self._on_commit_tag(c))
-
-        self._version_rows[component] = {
-            "local_lbl":  local_lbl,
-            "remote_lbl": remote_lbl,
-            "status_lbl": status_lbl,
-            "bump_btn":   bump_btn,
-            "commit_btn": commit_btn,
-        }
-        for w in (label, local_lbl, remote_lbl, status_lbl, bump_btn, commit_btn):
-            row.add_widget(w)
-        return row
 
     # -----------------------------------------------------------------------
     # Bump menu
@@ -170,10 +129,7 @@ class VersionsTab(MDBoxLayout):
         self._ctrl.set_bump_part(component, part)
         row = self._version_rows.get(component)
         if row:
-            for child in row["bump_btn"].walk(restrict=True):
-                if isinstance(child, MDButtonText):
-                    child.text = part
-                    break
+            row.set_bump_label(part)
         menu = self._bump_menus.get(component)
         if menu:
             menu.dismiss()
@@ -219,11 +175,11 @@ class VersionsTab(MDBoxLayout):
                 if not row:
                     continue
                 local_ver = self._ctrl._local_versions.get(component)
-                row["remote_lbl"].text = rem_ver or "—"
-                slbl = row["status_lbl"]
+                row.remote_lbl.text = rem_ver or "--"
+                slbl = row.status_lbl
                 if local_ver and rem_ver:
                     if local_ver == rem_ver:
-                        slbl.text = "✓ Current"
+                        slbl.text = "Current"
                         slbl.theme_text_color = "Custom"
                         slbl.text_color = (0.2, 0.8, 0.2, 1)
                     elif local_ver > rem_ver:

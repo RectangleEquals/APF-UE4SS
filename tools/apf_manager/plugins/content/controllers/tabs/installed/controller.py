@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 
 class InstalledController:
     """Non-Kivy controller for InstalledTab."""
@@ -47,7 +51,7 @@ class InstalledController:
                 if d.get("folder_name")
             }
         except Exception as exc:
-            self._host.log(f"[installed_ctrl] WARN: get_install_map failed: {exc}")
+            logger.warning(f"get_install_map failed: {exc}")
             return {}
 
     def get_install_record(self, folder_name: str, game_id: str):

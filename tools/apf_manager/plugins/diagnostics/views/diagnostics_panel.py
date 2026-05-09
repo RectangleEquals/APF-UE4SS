@@ -282,7 +282,12 @@ class DiagnosticsPanel(PluginPanel):
 
     def _do_save_logs(self, folder: str) -> None:
         result = self._ctrl.package_logs(self._profile, self._detection, folder)
-        log_msg = f"Log package saved: {result.out_path}\n  Included: {', '.join(result.included)}"
+        lines = [f"Log package saved: {result.out_path}"]
+        if result.included:
+            lines.append(f"  Included ({len(result.included)}): {', '.join(result.included)}")
+        if result.skipped:
+            lines.append(f"  Skipped ({len(result.skipped)}): {', '.join(result.skipped)}")
+        log_msg = "\n".join(lines)
         Clock.schedule_once(lambda dt, m=log_msg: self._host.log(m), 0)
         Clock.schedule_once(lambda dt: self._show_save_snackbar(result.out_path.name), 0)
 

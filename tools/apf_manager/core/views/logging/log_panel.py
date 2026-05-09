@@ -1,24 +1,38 @@
 """
-LogPanel — scrollable, timestamped log widget shared across all hub panels.
+LogPanel — scrollable log widget. Receives pre-formatted records from APFPanelHandler.
 
-Keeps the last MAX_LINES lines. Has a collapse/expand toggle.
+Level-based coloring: DEBUG=gray · INFO=white · WARNING=amber · ERROR=red
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.metrics import dp
-from kivy.properties import BooleanProperty, StringProperty
+from kivy.properties import BooleanProperty
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.button import MDIconButton
 from kivymd.uix.label import MDLabel
 from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.snackbar import MDSnackbar, MDSnackbarText
 
-MAX_LINES = 500
+_LEVEL_COLORS: dict[int, tuple] = {
+    logging.DEBUG:    (0.5,  0.5,  0.5,  1),
+    logging.INFO:     (0.9,  0.9,  0.9,  1),
+    logging.WARNING:  (1.0,  0.75, 0.0,  1),
+    logging.ERROR:    (1.0,  0.35, 0.35, 1),
+    logging.CRITICAL: (1.0,  0.2,  0.2,  1),
+}
+
+
+def _color_for_level(level: int) -> tuple:
+    for threshold in (logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG):
+        if level >= threshold:
+            return _LEVEL_COLORS[threshold]
+    return _LEVEL_COLORS[logging.DEBUG]
 
 
 class LogPanel(MDBoxLayout):
@@ -30,7 +44,6 @@ class LogPanel(MDBoxLayout):
         self._build()
 
     def _build(self):
-        # Header bar
         header = MDBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
@@ -62,7 +75,6 @@ class LogPanel(MDBoxLayout):
         header.add_widget(toggle_btn)
         self.add_widget(header)
 
-        # Scroll area
         self._scroll = MDScrollView(size_hint_y=None, height="120dp")
         self._content = MDBoxLayout(
             orientation="vertical",
@@ -90,29 +102,27 @@ class LogPanel(MDBoxLayout):
         self.collapsed = not self.collapsed
         self._update_height()
 
-    def append(self, message: str) -> None:
-        """Add a log line (or multiple lines for multiline messages). Thread-safe."""
+    def append(self, message: str, level: int = logging.INFO) -> None:
+        """Add a pre-formatted log record. Thread-safe via Clock.schedule_once."""
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        color = _color_for_level(level)
         lines = message.split("\n")
-        Clock.schedule_once(lambda dt: self._add_line(f"[{ts}] {lines[0]}"))
+        Clock.schedule_once(lambda dt: self._add_line(f"[{ts}] {lines[0]}", color))
         for cont in lines[1:]:
             stripped = cont.strip()
             if stripped:
-                Clock.schedule_once(lambda dt, l=stripped: self._add_line(f"  {l}"))
+                Clock.schedule_once(lambda dt, l=stripped, c=color: self._add_line(f"  {l}", c))
 
-    def _add_line(self, line: str) -> None:
+    def _add_line(self, line: str, color: tuple) -> None:
         self._lines.append(line)
-        if len(self._lines) > MAX_LINES:
-            self._lines.pop(0)
-            if self._content.children:
-                self._content.remove_widget(self._content.children[-1])
-
         lbl = MDLabel(
             text=line,
             font_style="Label", role="small",
             size_hint_y=None,
             height="16dp",
             halign="left",
+            theme_text_color="Custom",
+            text_color=color,
         )
         self._content.add_widget(lbl)
         Clock.schedule_once(lambda dt: self._scroll_to_bottom())

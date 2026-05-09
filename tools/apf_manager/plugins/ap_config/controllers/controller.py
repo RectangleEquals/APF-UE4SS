@@ -49,5 +49,20 @@ class APConfigController:
         ok = svc.load()
         return (ok, svc.load_error)
 
+    @property
+    def has_framework_mod(self) -> bool:
+        svc = self._svc()
+        return svc.has_framework_mod if svc else False
+
+    @property
+    def framework_mod_name(self) -> Optional[str]:
+        svc = self._svc()
+        return svc.framework_mod_name if svc else None
+
+    @property
+    def config_exists(self) -> bool:
+        svc = self._svc()
+        return svc.config_exists if svc else False
+
     def has_service(self) -> bool:
         return self._svc() is not None

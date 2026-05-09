@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 
 def _get_dep_info(mod, mod_by_id: dict) -> Tuple[str, str]:
     """Return (status, label) — status is 'error', 'warn', or 'ok'."""
@@ -133,7 +137,7 @@ class LoadOrderController:
             mods_txt.set_order(new_order)
             mods_txt.save()
         except Exception as exc:
-            self._host.log(f"[load_order_ctrl] WARN: fix_load_order save failed: {exc}")
+            logger.warning(f"fix_load_order save failed: {exc}")
 
     # -----------------------------------------------------------------------
     # Error count (for pipeline panel badge)

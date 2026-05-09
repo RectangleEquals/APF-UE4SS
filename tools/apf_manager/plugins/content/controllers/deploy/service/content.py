@@ -1,10 +1,15 @@
 """DeployContentMixin — deploy/undeploy logic for DeployService."""
 from __future__ import annotations
 
+import logging
 import shutil
 import time
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
+
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from ......core.models.ue.result import DetectionResult
@@ -63,25 +68,25 @@ class DeployContentMixin:
         try:
             if any(c in components for c in ("lua", "cpp")):
                 dest = detection.ue4ss.mods_dir / folder_name
-                self._host.log(
-                    f"[deploy] Deploying {content.content_type} '{folder_name}' "
-                    f"from {cache_path} \u2192 {dest}"
+                logger.info(
+                    f"Deploying {content.content_type} '{folder_name}' "
+                    f"from {cache_path} -> {dest}"
                 )
                 if dest.exists():
                     shutil.rmtree(str(dest))
-                    self._host.log(f"[deploy] Removed existing install at {dest}")
+                    logger.debug(f"Removed existing install at {dest}")
                 # K-7: exclude .apf_cache; K-8 Fix B: exclude ue4ss.json
                 shutil.copytree(
                     str(cache_path), str(dest),
                     ignore=shutil.ignore_patterns("enabled.txt", ".apf_cache", "ue4ss.json"),
                 )
                 n_files = sum(1 for _ in dest.rglob("*") if _.is_file())
-                self._host.log(f"[deploy] Copied mod tree \u2192 {dest}  ({n_files} files)")
+                logger.debug(f"Copied mod tree -> {dest}  ({n_files} files)")
                 with self._lock:
                     if self._mods_txt:
                         self._mods_txt.ensure_entry(folder_name, enabled=True)
                         self._mods_txt.save()
-                        self._host.log(f"[deploy] mods.txt updated for '{folder_name}'")
+                        logger.debug(f"mods.txt updated for '{folder_name}'")
 
             if "blueprint" in components and bp_pak_files:
                 lm_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
@@ -92,12 +97,12 @@ class DeployContentMixin:
                         src_pak = lm_src / pak
                         if src_pak.exists():
                             shutil.copy2(str(src_pak), str(lm_dir / pak))
-                            self._host.log(f"[deploy] Copied pak '{pak}' \u2192 {lm_dir}")
+                            logger.debug(f"Copied pak '{pak}' -> {lm_dir}")
 
             elapsed = time.monotonic() - t0
-            self._host.log(f"[deploy] DONE '{folder_name}' ({elapsed:.2f}s)")
+            logger.info(f"Deploy complete: '{folder_name}' ({elapsed:.2f}s)")
         except Exception as exc:
-            self._host.log(f"[deploy] ERROR deploying '{folder_name}': {exc}")
+            logger.error(f"Deploy failed for '{folder_name}': {exc}")
             raise
 
     def _deploy_template_content(self, cache_path: "Path", content) -> None:
@@ -106,7 +111,7 @@ class DeployContentMixin:
         if not target:
             raise RuntimeError("Cannot deploy template: framework mod not found or in conflict state")
         template_path = getattr(content, "template_path", game_name)
-        self._host.log(f"[deploy] Deploying template '{template_path}' \u2192 {target}")
+        logger.info(f"Deploying template '{template_path}' -> {target}")
         try:
             target.mkdir(parents=True, exist_ok=True)
             n = 0
@@ -118,9 +123,9 @@ class DeployContentMixin:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(src), str(dst))
                 n += 1
-            self._host.log(f"[deploy] Template deployed ({n} files copied)")
+            logger.info(f"Template deployed ({n} files copied)")
         except Exception as exc:
-            self._host.log(f"[deploy] ERROR deploying template '{template_path}': {exc}")
+            logger.error(f"Deploy failed for template '{template_path}': {exc}")
             raise
 
     # -----------------------------------------------------------------------
@@ -148,7 +153,7 @@ class DeployContentMixin:
                     if ctrl.classify(zf):
                         return ctrl
         except zipfile.BadZipFile as exc:
-            self._host.log(f"[deploy] WARN: corrupt zip '{zip_path.name}': {exc}")
+            logger.warning(f"Corrupt zip '{zip_path.name}': {exc}")
         return None
 
     def _dispatch_zip(
@@ -168,21 +173,19 @@ class DeployContentMixin:
         if zip_path.stem.lower() == "zmapgenbp":
             mapgen_dir = dest_dir / "ue4ss" / "MapGenBP"
             mapgen_dir.mkdir(parents=True, exist_ok=True)
-            self._host.log(f"[deploy] Extracting {zip_path.name} as MapGenBP \u2192 {mapgen_dir}")
+            logger.debug(f"Extracting {zip_path.name} as MapGenBP -> {mapgen_dir}")
             with zipfile.ZipFile(zip_path, "r") as zf:
                 zf.extractall(str(mapgen_dir))
             return
         ctrl = self._find_zip_controller(zip_path, content)
         if ctrl is None:
-            self._host.log(
-                f"[deploy] Skipped '{zip_path.name}': unknown zip layout — "
-                "manual installation required"
+            logger.warning(
+                f"Skipped '{zip_path.name}': unknown zip layout — manual installation required"
             )
             return
         install_ctrl = ctrl.create_install_controller()
-        self._host.log(
-            f"[deploy] Extracting {zip_path.name} via "
-            f"{type(install_ctrl).__name__} \u2192 {dest_dir}"
+        logger.debug(
+            f"Extracting {zip_path.name} via {type(install_ctrl).__name__} -> {dest_dir}"
         )
         install_ctrl.deploy(zip_path, dest_dir, logicmods_dir=logicmods_dir)
 
@@ -198,9 +201,8 @@ class DeployContentMixin:
         dest_dir = platform_dir
         install_type = getattr(content, "install_type", "")
         logicmods_dir = detection.ue4ss.logicmods_dir if (detection and detection.ue4ss) else None
-        self._host.log(
-            f"[deploy] Deploying binary '{content.name}' install_type={install_type} "
-            f"from {cache_path}"
+        logger.info(
+            f"Deploying binary '{content.name}' install_type={install_type} from {cache_path}"
         )
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -212,9 +214,9 @@ class DeployContentMixin:
                 for f in cache_path.iterdir():
                     if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
                         shutil.copy2(str(f), str(dest_dir / f.name))
-            self._host.log(f"[deploy] DONE binary '{content.name}'")
+            logger.info(f"Deploy complete: binary '{content.name}'")
         except Exception as exc:
-            self._host.log(f"[deploy] ERROR deploying binary '{content.name}': {exc}")
+            logger.error(f"Deploy failed for binary '{content.name}': {exc}")
             raise
 
     # -----------------------------------------------------------------------
@@ -261,7 +263,7 @@ class DeployContentMixin:
                 try:
                     (detection.ue4ss.logicmods_dir / pak).unlink(missing_ok=True)
                 except Exception as exc:
-                    self._host.log(f"[deploy] WARN: failed to remove pak '{pak}': {exc}")
+                    logger.warning(f"Failed to remove pak '{pak}': {exc}")
 
     def _undeploy_template_record(self, record: "InstallRecord") -> None:
         target = self.get_templates_dir(record.game_id or record.name)
@@ -274,8 +276,8 @@ class DeployContentMixin:
         record: "InstallRecord",
         detection: "Optional[DetectionResult]",
     ) -> None:
-        self._host.log(
-            f"[deploy] Uninstall of binary '{record.name}' (type={record.install_type}) "
+        logger.warning(
+            f"Uninstall of binary '{record.name}' (type={record.install_type}) "
             "requires manual removal — automatic binary uninstall is not supported."
         )
 
@@ -379,7 +381,7 @@ class DeployContentMixin:
                 try:
                     pak_path.unlink(missing_ok=True)
                 except Exception as exc:
-                    self._host.log(f"[deploy] WARN: failed to remove pak '{pak}': {exc}")
+                    logger.warning(f"Failed to remove pak '{pak}' during undeploy: {exc}")
         if self._profile:
             from ....models.state.install import InstallStateManager
             InstallStateManager(self._profile.game_id).remove(mod_info.folder_name)

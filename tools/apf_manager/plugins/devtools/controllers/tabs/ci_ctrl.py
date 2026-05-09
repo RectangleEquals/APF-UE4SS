@@ -6,6 +6,9 @@ from typing import Callable, Optional, TYPE_CHECKING
 from ..auth import GitHubAuth
 from ..ci import CIManager
 from .. import version as vm
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from .....core.controllers.plugin_host import PluginHost
@@ -27,16 +30,15 @@ class CITabController:
         token = self._auth.token
         if not token:
             return
-        self._host.log("[devtools] Fetching workflows...")
+        logger.info("Fetching workflows...")
 
         def _fetch():
             try:
                 workflows = self._ci.list_workflows(token)
-                self._host.log(
-                    f"[devtools] list_workflows returned {len(workflows)} item(s).")
+                logger.info(f"list_workflows returned {len(workflows)} item(s).")
                 on_done(workflows, None)
             except Exception as exc:
-                self._host.log(f"[devtools] Failed to fetch workflows: {exc}")
+                logger.error(f"Failed to fetch workflows: {exc}")
                 on_done(None, str(exc))
 
         threading.Thread(target=_fetch, daemon=True).start()
@@ -59,14 +61,14 @@ class CITabController:
         token = self._auth.token
         if not token:
             return
-        self._host.log("[devtools] Fetching releases...")
+        logger.info("Fetching releases...")
 
         def _fetch():
             try:
                 releases = self._ci.list_releases(token)
                 on_done(releases, None)
             except Exception as exc:
-                self._host.log(f"[devtools] Failed to fetch releases: {exc}")
+                logger.error(f"Failed to fetch releases: {exc}")
                 on_done(None, str(exc))
 
         threading.Thread(target=_fetch, daemon=True).start()
@@ -78,7 +80,7 @@ class CITabController:
         token = self._auth.token
         if not token:
             return
-        self._host.log("[devtools] Fetching tags for release dialog...")
+        logger.info("Fetching tags for release dialog...")
 
         def _fetch():
             try:
@@ -88,7 +90,7 @@ class CITabController:
                 unreleased = [t for t in tags if t not in released]
                 on_done(unreleased, None)
             except Exception as exc:
-                self._host.log(f"[devtools] Failed to fetch tags: {exc}")
+                logger.error(f"Failed to fetch tags: {exc}")
                 on_done(None, str(exc))
 
         threading.Thread(target=_fetch, daemon=True).start()
@@ -103,7 +105,7 @@ class CITabController:
         token = self._auth.token
         if not token:
             return
-        self._host.log(f"[devtools] Creating release for tag '{tag}'...")
+        logger.info(f"Creating release for tag '{tag}'...")
 
         def _run():
             try:
@@ -111,7 +113,7 @@ class CITabController:
                 url = rel.get("html_url", "")
                 on_done(True, "", url)
             except Exception as exc:
-                self._host.log(f"[devtools] Failed to create release '{tag}': {exc}")
+                logger.error(f"Failed to create release '{tag}': {exc}")
                 on_done(False, str(exc), "")
 
         threading.Thread(target=_run, daemon=True).start()

@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 
 class CacheController:
     """
@@ -93,26 +97,23 @@ class CacheController:
             try:
                 if ci.category == "template":
                     if not (ue4ss_detected and framework_detected):
-                        self._host.log(
-                            f"[downloads] Skipped template '{ci.display_name}': "
-                            "framework mod required"
+                        logger.warning(
+                            f"Skipped template '{ci.display_name}': framework mod required"
                         )
                         continue
                 elif ci.category == "mod":
                     if not ue4ss_detected:
-                        self._host.log(
-                            f"[downloads] Skipped mod '{ci.display_name}': UE4SS required"
-                        )
+                        logger.warning(f"Skipped mod '{ci.display_name}': UE4SS required")
                         continue
                 deploy_svc.deploy_content(ci.cache_path, ci.content, detection, game_id)
-                self._host.log(f"[downloads] Installed {ci.display_name}")
+                logger.info(f"Installed '{ci.display_name}'")
 
                 from ....models.descriptors.types import BinaryDescriptor
                 if isinstance(ci.content, BinaryDescriptor) and ci.install_type == "ue4ss":
                     ue4ss_was_installed = True
 
             except Exception as exc:
-                self._host.log(f"[downloads] Install failed for {ci.display_name}: {exc}")
+                logger.error(f"Install failed for '{ci.display_name}': {exc}")
 
         mods_svc = self._host.get_service("mods")
         if mods_svc:
@@ -126,7 +127,7 @@ class CacheController:
                     new_detection = UEDetector.detect(profile.game_root)
                     self._host.set_game_context(profile, new_detection)
                 except Exception as exc:
-                    self._host.log(f"[downloads] WARN: re-detect UE4SS failed: {exc}")
+                    logger.warning(f"Re-detect UE4SS failed after install: {exc}")
             # X-4: Notify pipeline panel so it refreshes the warning bar
             self._host.notify_state_change("detection")
 
@@ -164,7 +165,7 @@ class CacheController:
             result += [ci for ci in items if id(ci) not in seen]
             return result
         except Exception as exc:
-            self._host.log(f"[cache] WARN: dependency sort failed, using original order: {exc}")
+            logger.warning(f"Dependency sort failed, using original order: {exc}")
             return items
 
     def delete(self, ci) -> None:
@@ -173,7 +174,7 @@ class CacheController:
         try:
             shutil.rmtree(ci.cache_path, ignore_errors=True)
         except Exception as exc:
-            self._host.log(f"[cache] WARN: failed to remove cached item {ci.cache_path}: {exc}")
+            logger.warning(f"Failed to remove cached item {ci.cache_path}: {exc}")
         self._on_refresh()
 
     def delete_items(self, items: list) -> None:
@@ -183,5 +184,5 @@ class CacheController:
             try:
                 shutil.rmtree(ci.cache_path, ignore_errors=True)
             except Exception as exc:
-                self._host.log(f"[cache] WARN: failed to remove {ci.cache_path}: {exc}")
+                logger.warning(f"Failed to remove {ci.cache_path}: {exc}")
         self._on_refresh()

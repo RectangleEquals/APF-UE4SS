@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from typing import Callable, Optional, Tuple
 
+from ......core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 
 class ContentController:
     """Non-Kivy controller for ContentTab."""
@@ -115,15 +119,13 @@ class ContentController:
                     if d.get("mod_id")
                 }
         except Exception as exc:
-            self._host.log(
-                f"[content_ctrl] WARN: failed to load registry/install state for dep sort: {exc}"
-            )
+            logger.warning(f"Failed to load registry/install state for dependency sort: {exc}")
 
         staged = mods + templates + other
         try:
             ordered, missing, _ = resolve_install_order(staged, available, installed)
         except Exception as exc:
-            self._host.log(f"[content_ctrl] WARN: resolve_install_order failed: {exc}")
+            logger.warning(f"resolve_install_order failed: {exc}")
             ordered, missing = staged, []
 
         o_mods      = [x for x in ordered if not isinstance(x, (TemplateDescriptor, BinaryDescriptor))]

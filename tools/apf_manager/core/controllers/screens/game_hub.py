@@ -12,6 +12,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional, TYPE_CHECKING
 
+_FALLBACK_MOD_NAME = "APFrameworkMod"
+
 if TYPE_CHECKING:
     from ...models.config import GameProfile
     from ...models.ue.result import DetectionResult
@@ -70,10 +72,11 @@ class GameHubController:
         # 2a. Remove deployed session file
         if switch_states.get("deployed_session"):
             if detection and detection.ue4ss and detection.ue4ss.mods_dir:
-                state_path = (
-                    Path(str(detection.ue4ss.mods_dir))
-                    / "APFrameworkMod" / "output" / "session_state.json"
-                )
+                if detection.framework_mod:
+                    mod_dir = detection.framework_mod.mod_dir
+                else:
+                    mod_dir = detection.ue4ss.mods_dir / _FALLBACK_MOD_NAME
+                state_path = mod_dir / "output" / "session_state.json"
                 try:
                     state_path.unlink(missing_ok=True)
                 except Exception as exc:

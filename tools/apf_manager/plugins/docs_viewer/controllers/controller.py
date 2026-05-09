@@ -11,6 +11,10 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 if TYPE_CHECKING:
     from ....core.controllers.plugin_host import PluginHost
 
@@ -81,7 +85,7 @@ class DocsController:
     ) -> None:
         viewer = self._html_viewer()
         if viewer is None:
-            self._host.log("[docs_viewer] html_viewer service not available")
+            logger.warning("html_viewer service not available")
             return
 
         if path is not None:
@@ -110,7 +114,7 @@ class DocsController:
     ) -> None:
         viewer = self._html_viewer()
         if viewer is None:
-            self._host.log("[docs_viewer] html_viewer service not available")
+            logger.warning("html_viewer service not available")
             return
 
         from ..models.html_builder import convert_body
@@ -120,7 +124,7 @@ class DocsController:
         try:
             md_text = p.read_text(encoding="utf-8")
         except Exception as exc:
-            self._host.log(f"[docs_viewer] Failed to read {path}: {exc}")
+            logger.error(f"Failed to read {path}: {exc}")
             md_text = f"_Could not load `{path}`: {exc}_"
 
         doc_key = str(p)
@@ -160,7 +164,7 @@ class DocsController:
 
         viewer = self._html_viewer()
         if viewer is None:
-            self._host.log("[docs_viewer] html_viewer service not available")
+            logger.warning("html_viewer service not available")
             return
 
         try:
@@ -232,7 +236,7 @@ class DocsController:
     ) -> None:
         viewer = self._html_viewer()
         if viewer is None:
-            self._host.log("[docs_viewer] html_viewer service not available")
+            logger.warning("html_viewer service not available")
             return
         from ..models.html_builder import convert_body
         body_html = convert_body(content or "_No content available._")
@@ -264,7 +268,7 @@ class DocsController:
         try:
             md_text = path.read_text(encoding="utf-8")
         except Exception as exc:
-            self._host.log(f"[docs_viewer] Failed to read local file: {exc}")
+            logger.error(f"Failed to read local file {path}: {exc}")
             md_text = f"_Could not load `{path}`: {exc}_"
         title = path.stem.replace("_", " ").title()
         html = convert(md_text, title=title)
@@ -278,7 +282,7 @@ class DocsController:
             docs_svc.get_tree(force_refresh=True)
             entry = docs_svc.get_entry_by_path(repo_path)
         if entry is None:
-            self._host.log(f"[docs_viewer] Entry not found: {repo_path}")
+            logger.warning(f"Entry not found: {repo_path}")
             return
         md_text = docs_svc.fetch_content(entry)
         title = entry.display_name
@@ -305,7 +309,7 @@ class DocsController:
         try:
             tree = docs_svc.get_tree()
         except Exception as exc:
-            self._host.log(f"[docs_viewer] Failed to fetch doc tree: {exc}")
+            logger.error(f"Failed to fetch doc tree: {exc}")
             tree = []
 
         docs_html: dict[str, str] = {}
@@ -314,7 +318,7 @@ class DocsController:
                 md_text = docs_svc.fetch_content(entry)
                 docs_html[entry.path] = convert_body(md_text) if md_text else ""
             except Exception as exc:
-                self._host.log(f"[docs_viewer] Failed to render {entry.path}: {exc}")
+                logger.error(f"Failed to render {entry.path}: {exc}")
                 docs_html[entry.path] = (
                     '<div class="state-msg error">Failed to load this document.</div>'
                 )
@@ -427,4 +431,9 @@ class DocsController:
         )
 
     def _on_api_status(self, level: str, message: str) -> None:
-        self._host.log(f"[docs_viewer] [{level.upper()}] {message}")
+        if level in ("debug",):
+            logger.debug(message)
+        elif level in ("error", "rate_limit_exceeded", "rate_limit_exceeded_search"):
+            logger.warning(f"[{level.upper()}] {message}")
+        else:
+            logger.info(f"[{level.upper()}] {message}")

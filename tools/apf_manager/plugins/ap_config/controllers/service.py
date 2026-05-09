@@ -1,8 +1,9 @@
 """
 APConfigService — read/write framework_config.json.
 
-The config file lives at:
-    <mods_dir>/APFrameworkMod/framework_config.json
+The config file lives at the path reported by the detected framework mod
+(DetectionResult.framework_mod.framework_config_path). If that mod is not
+installed, the service has no active path and the panel shows a placeholder.
 
 Registered as the "ap_config" service.
 """
@@ -23,17 +24,31 @@ if TYPE_CHECKING:
 class APConfigService:
     def __init__(self) -> None:
         self._path: Optional[Path] = None
+        self._framework_mod_dir: Optional[Path] = None
         self._data: dict = {}
         self._load_ok: bool = False
         self._load_error: str = ""
 
     def on_game_changed(self, profile, detection: Optional["DetectionResult"]) -> None:
-        if detection and detection.ue4ss and detection.ue4ss.mods_dir:
-            self._path = detection.ue4ss.mods_dir / "APFrameworkMod" / "framework_config.json"
+        self._path = None
+        self._framework_mod_dir = None
+        self._data = {}
+        self._load_ok = False
+        self._load_error = ""
+
+        if not (detection and detection.framework_mod):
+            return
+
+        mod = detection.framework_mod
+        self._framework_mod_dir = mod.mod_dir
+        # Use the detected path if available; otherwise derive where we would save it
+        self._path = mod.framework_config_path or (mod.mod_dir / "framework_config.json")
+
+        if self._path.exists():
             self.load()
         else:
-            self._path = None
-            self._data = {}
+            # Config doesn't exist yet — start from defaults so the panel has something to show
+            self._data = copy.deepcopy(DEFAULT_CONFIG)
 
     def load(self) -> bool:
         self._load_ok = False
@@ -61,6 +76,18 @@ class APConfigService:
     @property
     def load_error(self) -> str:
         return self._load_error
+
+    @property
+    def has_framework_mod(self) -> bool:
+        return self._framework_mod_dir is not None
+
+    @property
+    def framework_mod_name(self) -> Optional[str]:
+        return self._framework_mod_dir.name if self._framework_mod_dir else None
+
+    @property
+    def config_exists(self) -> bool:
+        return self._path is not None and self._path.exists()
 
     def save(self) -> bool:
         if not self._path:
@@ -95,7 +122,3 @@ class APConfigService:
     @property
     def config_path(self) -> Optional[Path]:
         return self._path
-
-    @property
-    def has_config(self) -> bool:
-        return bool(self._data)

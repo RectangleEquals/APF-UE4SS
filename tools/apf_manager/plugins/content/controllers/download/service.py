@@ -4,6 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Optional
 
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
+
 _CACHE_DIR = Path.home() / ".apf_manager" / "cache"
 
 # Registry metadata files that must never be downloaded into the mod cache.
@@ -83,8 +87,8 @@ class DownloadService:
                 _opt_owner = _mod.source.repo.owner if _mod.source else ""
                 _opt_repo  = _mod.source.repo.repo if _mod.source else ""
                 _opt_tag   = _mod.source.tag if _mod.source else ""
-                self._host.log(
-                    f"[downloads] other-download: owner={_opt_owner!r} repo={_opt_repo!r} "
+                logger.info(
+                    f"Downloading binary: owner={_opt_owner!r} repo={_opt_repo!r} "
                     f"tag={_opt_tag!r} name={_mod.name!r}"
                 )
                 api = GitHubAPI(
@@ -93,7 +97,7 @@ class DownloadService:
                     on_status=lambda lvl, msg: None,
                 )
                 selected_assets = [a for a in (_mod.assets or []) if getattr(a, "selected", False)]
-                self._host.log(f"[downloads] selected_assets count={len(selected_assets)}")
+                logger.debug(f"Selected assets count: {len(selected_assets)}")
                 if not selected_assets:
                     raise RuntimeError("No assets selected for download")
                 n = len(selected_assets)
@@ -101,7 +105,7 @@ class DownloadService:
                     asset_url  = getattr(asset, "url", "")
                     asset_name = getattr(asset, "name", asset_url.split("/")[-1])
                     dest_file  = dest / asset_name
-                    self._host.log(f"[downloads] downloading asset {idx+1}/{n}: {asset_name!r}")
+                    logger.info(f"Downloading asset {idx+1}/{n}: {asset_name!r}")
                     if on_progress:
                         on_progress(idx / n * 0.1)
                     dl_ok = api.download_asset(
@@ -109,8 +113,8 @@ class DownloadService:
                         progress_cb=lambda p, i=idx: on_progress((i + 0.1 + p * 0.9) / n)
                         if on_progress else None,
                     )
-                    self._host.log(
-                        f"[downloads] download_asset returned {dl_ok!r} "
+                    logger.debug(
+                        f"download_asset returned {dl_ok!r} "
                         f"exists={dest_file.exists()} "
                         f"size={dest_file.stat().st_size if dest_file.exists() else 'N/A'}"
                     )
@@ -120,11 +124,9 @@ class DownloadService:
                         try:
                             with _zipfile.ZipFile(dest_file) as zf:
                                 bad = zf.testzip()
-                                self._host.log(
-                                    f"[downloads] zipfile.testzip() {asset_name!r} → {bad!r}"
-                                )
+                                logger.debug(f"zipfile.testzip() {asset_name!r} -> {bad!r}")
                         except _zipfile.BadZipFile as zexc:
-                            self._host.log(f"[downloads] BadZipFile {asset_name!r}: {zexc}")
+                            logger.warning(f"BadZipFile {asset_name!r}: {zexc}")
                             dest_file.unlink(missing_ok=True)
                             raise ValueError(f"Downloaded file is not a valid zip: {asset_name}")
 
@@ -154,7 +156,7 @@ class DownloadService:
         try:
             ContentSerializer().save_cache(dest, item.mod)
         except Exception as exc:
-            self._host.log(f"[downloads] WARN: failed to save descriptor cache at {dest}: {exc}")
+            logger.warning(f"Failed to save descriptor cache at {dest}: {exc}")
 
 
 # ---------------------------------------------------------------------------

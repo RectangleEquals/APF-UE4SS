@@ -14,6 +14,7 @@ from typing import Optional, TYPE_CHECKING
 
 from kivy.clock import Clock
 from kivy.metrics import dp
+from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
 from kivymd.uix.boxlayout import MDBoxLayout
@@ -38,6 +39,13 @@ if TYPE_CHECKING:
 _LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"]
 
 
+class _ClickableRow(ButtonBehavior, MDBoxLayout):
+    """Full-width clickable row. Only this widget's on_release is bound to _toggle();
+    the child chevron MDIconButton has no on_release, so there is exactly one call
+    regardless of where in the header the user clicks."""
+    pass
+
+
 class _SectionHeader(MDLabel):
     def __init__(self, text: str, **kwargs):
         super().__init__(
@@ -60,19 +68,19 @@ class _CollapsibleSection(MDBoxLayout):
         super().__init__(orientation="vertical", size_hint=(1, None), height=dp(40), **kwargs)
         self._collapsed = collapsed
 
-        header = MDBoxLayout(
+        header = _ClickableRow(
             orientation="horizontal",
             size_hint=(1, None),
             height=dp(40),
             md_bg_color=(0.1, 0.14, 0.18, 1),
             padding=(dp(4), 0),
             spacing=dp(4),
+            on_release=lambda *_: self._toggle(),
         )
         self._chevron = MDIconButton(
             icon="chevron-right" if collapsed else "chevron-down",
             size_hint_x=None,
             width=dp(32),
-            on_release=lambda *_: self._toggle(),
         )
         header.add_widget(self._chevron)
         header.add_widget(MDLabel(
@@ -157,16 +165,34 @@ class APConfigPanel(PluginPanel):
         for menu in self._menus.values():
             menu.dismiss()
         if self._ctrl.has_service():
-            ok = self._ctrl.activate(game_profile)
-            load_ok, load_error, config_path = self._ctrl.get_load_status()
-            self._host.log(
-                f"[Configure] load()={ok}  path={config_path}"
-                + (f"  error={load_error!r}" if not ok else "")
+            self._ctrl.activate(game_profile)
+        Clock.schedule_once(lambda dt: self._set_framework_state(), 0)
+
+    def _set_framework_state(self) -> None:
+        ctrl = self._ctrl
+        has_mod = ctrl.has_framework_mod
+        has_cfg = ctrl.config_exists
+
+        self._mod_subtitle.text = ctrl.framework_mod_name or ""
+
+        if not has_mod:
+            self._save_btn.disabled = True
+            self._reload_btn.disabled = True
+            self._set_status(
+                "Framework mod not installed — deploy the framework from the Content hub."
             )
-            if not self._dirty:
-                Clock.schedule_once(lambda dt: self._populate(), 0)
-        else:
-            self._host.log("ap_config service not available.")
+            return
+
+        self._save_btn.disabled = False
+        self._reload_btn.disabled = not has_cfg
+
+        if not self._dirty:
+            self._populate()
+
+        if not has_cfg:
+            self._set_status(
+                "No existing config — defaults shown. Save to create framework_config.json."
+            )
 
     def on_deactivate(self) -> None:
         for menu in self._menus.values():
@@ -187,12 +213,21 @@ class APConfigPanel(PluginPanel):
 
         toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
                               md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
-        toolbar.add_widget(MDLabel(text="Configure", font_style="Title", role="large",
-                                   size_hint_x=1, halign="left"))
-        toolbar.add_widget(TipIconButton(icon="content-save", tooltip_text="Save config",
-                                         on_release=lambda *_: self._on_save()))
-        toolbar.add_widget(TipIconButton(icon="refresh", tooltip_text="Reload from disk",
-                                         on_release=lambda *_: self._on_reload()))
+        title_box = MDBoxLayout(orientation="vertical", size_hint_x=1, spacing=0,
+                                padding=(0, dp(4), 0, dp(4)))
+        title_box.add_widget(MDLabel(text="Configure", font_style="Title", role="large",
+                                     size_hint_y=None, height=dp(28), halign="left"))
+        self._mod_subtitle = MDLabel(text="", font_style="Body", role="small",
+                                     size_hint_y=None, height=dp(16), halign="left",
+                                     theme_text_color="Secondary")
+        title_box.add_widget(self._mod_subtitle)
+        toolbar.add_widget(title_box)
+        self._save_btn = TipIconButton(icon="content-save", tooltip_text="Save config",
+                                       on_release=lambda *_: self._on_save())
+        self._reload_btn = TipIconButton(icon="refresh", tooltip_text="Reload from disk",
+                                         on_release=lambda *_: self._on_reload())
+        toolbar.add_widget(self._save_btn)
+        toolbar.add_widget(self._reload_btn)
         self._toolbar = toolbar
         self.add_widget(toolbar)
 
@@ -472,6 +507,7 @@ class APConfigPanel(PluginPanel):
     def _on_save(self) -> None:
         if self._ctrl.save(self._collect()):
             self._dirty = False
+            self._reload_btn.disabled = False
             self._set_status("Saved.")
             self._host.log("framework_config.json saved.")
         else:

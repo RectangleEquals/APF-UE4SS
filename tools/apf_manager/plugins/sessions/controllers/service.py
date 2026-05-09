@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 _SESSIONS_ROOT = Path.home() / ".apf_manager" / "sessions"
 _SESSION_STATE_FILENAME = "session_state.json"
+_FALLBACK_MOD_NAME = "APFrameworkMod"
 
 
 class SessionManager:
@@ -37,9 +38,11 @@ class SessionManager:
     ) -> None:
         if profile and detection and detection.ue4ss and detection.ue4ss.mods_dir:
             self._game_id = profile.game_id
-            self._state_path = (
-                detection.ue4ss.mods_dir / "APFrameworkMod" / "output" / _SESSION_STATE_FILENAME
-            )
+            if detection.framework_mod:
+                mod_dir = detection.framework_mod.mod_dir
+            else:
+                mod_dir = detection.ue4ss.mods_dir / _FALLBACK_MOD_NAME
+            self._state_path = mod_dir / "output" / _SESSION_STATE_FILENAME
         else:
             self._game_id = None
             self._state_path = None

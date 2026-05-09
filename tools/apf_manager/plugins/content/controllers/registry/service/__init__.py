@@ -18,6 +18,7 @@ from .discovery import DiscoveryMixin
 from .staging import StagingMixin
 from .sharing import SharingMixin
 
+from ......core.controllers.logging.manager import APFLogManager
 from ....models.descriptors.base import GitHubRepo, RegistrySource
 from ....models.descriptors.types import RegistryDescriptor
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from ..resolver import DiscoveredMod
     from ..cache import RegistryCache
 
+logger = APFLogManager.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public dataclasses returned by this service
@@ -218,9 +220,8 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
                 sc = _build_sc_from_viewer_result(selected_mods, raw_selected_ids)
-                self._host.log(
-                    f"[registry] _build_sc_from_viewer_result: "
-                    f"selected_mods={len(selected_mods)} → sc={sc}"
+                logger.debug(
+                    f"Registry viewer result: {len(selected_mods)} mods selected -> sc={sc}"
                 )
                 self._host.config.add_user_registry(url, game_id=derived_game_id,
                                                      selected_content=sc)
@@ -326,7 +327,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
                     existing_mod_ids=existing_mod_ids,
                 )
             except Exception as exc:
-                self._host.log(f"[registry] WARN: get_folder_tree failed for {url}: {exc}")
+                logger.warning(f"get_folder_tree failed for {url}: {exc}")
                 folder_tree = None
 
             def _finalize(selected_mods, raw_selected_ids=None):
@@ -337,9 +338,8 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
                     parts.append(f"{non_ap_count} non-AP mod(s)")
                 summary = ", ".join(parts) if parts else "no mods"
                 sc = _build_sc_from_viewer_result(selected_mods, raw_selected_ids)
-                self._host.log(
-                    f"[registry] _build_sc_from_viewer_result: "
-                    f"selected_mods={len(selected_mods)} → sc={sc}"
+                logger.debug(
+                    f"Registry selection finalised: {len(selected_mods)} mods selected -> sc={sc}"
                 )
                 self._host.config.add_user_registry(url, game_id=derived_game_id,
                                                      selected_content=sc)
@@ -379,7 +379,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
                 try:
                     resolver.traverse(entry.url, cache)
                 except Exception as exc:
-                    self._host.log(f"[registry] Refresh failed for {entry.url}: {exc}")
+                    logger.error(f"Refresh failed for {entry.url}: {exc}")
             self._invalidate_mods_cache()
             if on_done:
                 on_done()
@@ -417,7 +417,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
         try:
             contents = api.list_contents("")
         except Exception as exc:
-            self._host.log(f"[registry] WARN: list_contents failed for {entry.repo.full_name}: {exc}")
+            logger.warning(f"list_contents failed for {entry.repo.full_name}: {exc}")
             return []
         docs = []
         root_readme = next(
@@ -451,9 +451,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
                             doc_type="registry",
                         ))
             except Exception as exc:
-                self._host.log(
-                    f"[registry] WARN: list_contents docs/ failed for {entry.repo.full_name}: {exc}"
-                )
+                logger.warning(f"list_contents docs/ failed for {entry.repo.full_name}: {exc}")
         return docs
 
     # -----------------------------------------------------------------------
@@ -495,18 +493,18 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
             if self._on_rate_limit_cb:
                 self._on_rate_limit_cb(msg)
             else:
-                self._host.log(f"[registry] WARN: GitHub rate limit reached: {msg}")
+                logger.warning(f"GitHub rate limit reached: {msg}")
             return
         if level == "rate_limit_exceeded_search":
             if self._on_search_rate_limit_cb:
                 self._on_search_rate_limit_cb(msg)
             else:
-                self._host.log(f"[registry] WARN: GitHub search rate limit reached: {msg}")
+                logger.warning(f"GitHub search rate limit reached: {msg}")
             return
         if level == "debug":
-            self._host.log(f"[registry] {msg}")
+            logger.debug(msg)
             return
-        self._host.log(f"[registry] [{level.upper()}] {msg}")
+        logger.info(f"[{level.upper()}] {msg}")
 
     def _invalidate_mods_cache(self) -> None:
         with self._lock:

@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Callable, Optional, Tuple, TYPE_CHECKING
 
 from ..auth import GitHubAuth
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from .....core.controllers.plugin_host import PluginHost
@@ -65,7 +68,7 @@ class AccountController:
             if svc and hasattr(svc, "_api") and svc._api:
                 svc._api.refresh_auth()
         except Exception as exc:
-            self._host.log(f"[devtools] Could not propagate token: {exc}")
+            logger.warning(f"Could not propagate token: {exc}")
 
     def propagate_token_clear(self) -> None:
         try:
@@ -73,7 +76,7 @@ class AccountController:
             if svc and hasattr(svc, "_api") and svc._api:
                 svc._api.clear_user_token()
         except Exception as exc:
-            self._host.log(f"[devtools] Could not clear token: {exc}")
+            logger.warning(f"Could not clear token: {exc}")
 
     def get_rate_limit_info(self) -> Tuple:
         from .....core.controllers.remote.github_api import GitHubAPI
