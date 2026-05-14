@@ -37,7 +37,7 @@ class RegistriesController:
         # Fix A: supply viewer callback so the service never imports Kivy
         def _on_viewer_requested(kwargs: dict) -> None:
             from kivy.clock import Clock
-            from ....registry.viewer import RegistryViewer
+            from ...registry.viewer import RegistryViewer
 
             def _ui(dt):
                 RegistryViewer(self._host).show(**kwargs)

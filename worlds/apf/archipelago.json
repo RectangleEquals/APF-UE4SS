@@ -1,6 +1,6 @@
 {
   "game": "APFramework",
-  "world_version": "0.2.7",
+  "world_version": "0.3.0",
   "minimum_ap_version": "0.6.4",
   "display_name": "ArchipelagoFramework",
   "authors": [
