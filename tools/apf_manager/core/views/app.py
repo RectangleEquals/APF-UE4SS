@@ -73,6 +73,14 @@ class APFManagerApp(MDApp):
         # Build screen manager
         self._sm = ScreenManager(transition=FadeTransition(duration=0.15))
 
+        # Register BusyService before panels are built so controllers can acquire it immediately.
+        from ..controllers.busy_service import BusyService
+        from .widgets.busy_overlay import BusyOverlay
+        _busy_svc = BusyService()
+        host.register_service("busy", _busy_svc)
+        _busy_overlay = BusyOverlay()
+        _busy_svc.attach_overlay(_busy_overlay)
+
         # Build game hub
         self._game_hub = GameHubScreen(host=host, config=config)
         APFLogManager.attach_panel(self._game_hub.log_panel.append)

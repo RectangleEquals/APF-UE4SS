@@ -52,7 +52,19 @@ class CITabController:
         token = self._auth.token
         if not token:
             return
-        self._ci.dispatch_workflow(wf_id, branch, token, on_status)
+        busy = self._host.get_service("busy")
+        if busy:
+            busy.set_busy("devtools.ci.dispatch", "Dispatching workflow…")
+        _cleared = [False]
+
+        def _wrapped_status(s: str) -> None:
+            if not _cleared[0]:
+                _cleared[0] = True
+                if busy:
+                    busy.clear_busy("devtools.ci.dispatch")
+            on_status(s)
+
+        self._ci.dispatch_workflow(wf_id, branch, token, _wrapped_status)
 
     def refresh_releases(
         self,

@@ -78,7 +78,7 @@ class DownloadService:
                 dest = _CACHE_DIR / f"{owner}+{repo}" / folder_name
 
             dest.mkdir(parents=True, exist_ok=True)
-            self.save_descriptor_cache(item, dest)
+            self.save_descriptor_cache(item, dest, game_id=game_id)
 
             from .....core.controllers.remote.github_api import GitHubAPI, _BUNDLED_TOKEN_PATH
 
@@ -150,10 +150,12 @@ class DownloadService:
             if on_done:
                 on_done(False, str(exc), None)
 
-    def save_descriptor_cache(self, item, dest: Path) -> None:
+    def save_descriptor_cache(self, item, dest: Path, game_id: str = "") -> None:
         """Persist the typed ContentDescriptor from a queue item to .apf_cache."""
         from ...models.state.pipeline import ContentSerializer
         try:
+            if game_id and not item.mod.game_id:
+                item.mod.game_id = game_id
             ContentSerializer().save_cache(dest, item.mod)
         except Exception as exc:
             logger.warning(f"Failed to save descriptor cache at {dest}: {exc}")

@@ -34,19 +34,32 @@ class RegistriesController:
         if not svc:
             return
 
+        busy = self._host.get_service("busy")
+        if busy:
+            busy.set_busy("registry.viewer", "Fetching registry…")
+
         # Fix A: supply viewer callback so the service never imports Kivy
         def _on_viewer_requested(kwargs: dict) -> None:
             from kivy.clock import Clock
             from ...registry.viewer import RegistryViewer
+            # Fetch complete — clear overlay before viewer opens
+            if busy:
+                busy.clear_busy("registry.viewer")
 
             def _ui(dt):
                 RegistryViewer(self._host).show(**kwargs)
 
             Clock.schedule_once(_ui, 0)
 
+        def _wrapped_done(success: bool, msg: str) -> None:
+            # Clear overlay for error / single-mod auto-finalize (no viewer shown)
+            if busy:
+                busy.clear_busy("registry.viewer")
+            on_done(success, msg)
+
         svc.add_registry_with_viewer(
             url, game_id,
-            on_done=on_done,
+            on_done=_wrapped_done,
             on_viewer_requested=_on_viewer_requested,
         )
 
@@ -57,8 +70,19 @@ class RegistriesController:
 
     def refresh_all(self, on_done: Callable) -> None:
         svc = self._svc()
-        if svc:
-            svc.refresh_all(on_done=on_done)
+        if not svc:
+            return
+        busy = self._host.get_service("busy")
+        if busy:
+            busy.set_busy("registry.fetch", "Refreshing registries…")
+
+        def _wrapped_done():
+            if busy:
+                busy.clear_busy("registry.fetch")
+            if on_done:
+                on_done()
+
+        svc.refresh_all(on_done=_wrapped_done)
 
     # -----------------------------------------------------------------------
     # Search + share
@@ -66,8 +90,18 @@ class RegistriesController:
 
     def search_github(self, game_id: str, on_done: Callable) -> None:
         svc = self._svc()
-        if svc:
-            svc.search_github(game_id, on_done=on_done)
+        if not svc:
+            return
+        busy = self._host.get_service("busy")
+        if busy:
+            busy.set_busy("registry.search", "Searching GitHub…")
+
+        def _wrapped_done(results):
+            if busy:
+                busy.clear_busy("registry.search")
+            on_done(results)
+
+        svc.search_github(game_id, on_done=_wrapped_done)
 
     def export_registries_b64(self) -> str:
         svc = self._svc()

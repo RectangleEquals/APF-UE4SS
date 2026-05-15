@@ -74,6 +74,15 @@ class SourceControlController:
         if not token:
             return
 
+        busy = self._host.get_service("busy")
+        if busy:
+            busy.set_busy("devtools.sc.branch", f"Creating branch '{name}'…")
+
+        def _wrapped_done(ok: bool, result: str) -> None:
+            if busy:
+                busy.clear_busy("devtools.sc.branch")
+            on_done(ok, result)
+
         def _run():
             try:
                 sha = subprocess.check_output(
@@ -81,10 +90,10 @@ class SourceControlController:
                     cwd=str(vm._REPO_ROOT), text=True, stderr=subprocess.STDOUT,
                 ).strip()
                 ok = self._ci.create_branch(name, sha, token)
-                on_done(ok, name)
+                _wrapped_done(ok, name)
             except Exception as exc:
                 logger.error(f"Error creating branch '{name}': {exc}")
-                on_done(False, str(exc))
+                _wrapped_done(False, str(exc))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -97,12 +106,21 @@ class SourceControlController:
         if not token:
             return
 
+        busy = self._host.get_service("busy")
+        if busy:
+            busy.set_busy("devtools.sc.branch", f"Deleting branch '{name}'…")
+
+        def _wrapped_done(ok: bool, result: str) -> None:
+            if busy:
+                busy.clear_busy("devtools.sc.branch")
+            on_done(ok, result)
+
         def _run():
             try:
                 ok = self._ci.delete_branch(name, token)
-                on_done(ok, name)
+                _wrapped_done(ok, name)
             except Exception as exc:
                 logger.error(f"Error deleting branch '{name}': {exc}")
-                on_done(False, str(exc))
+                _wrapped_done(False, str(exc))
 
         threading.Thread(target=_run, daemon=True).start()

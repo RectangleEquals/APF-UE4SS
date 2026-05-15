@@ -91,8 +91,6 @@ class CacheController:
         if not deploy_svc or not detection:
             return
 
-        ue4ss_was_installed = False
-
         for ci in list(items):
             try:
                 if ci.category == "template":
@@ -108,10 +106,6 @@ class CacheController:
                 deploy_svc.deploy_content(ci.cache_path, ci.content, detection, game_id)
                 logger.info(f"Installed '{ci.display_name}'")
 
-                from ....models.descriptors.types import BinaryDescriptor
-                if isinstance(ci.content, BinaryDescriptor) and ci.install_type == "ue4ss":
-                    ue4ss_was_installed = True
-
             except Exception as exc:
                 logger.error(f"Install failed for '{ci.display_name}': {exc}")
 
@@ -119,17 +113,11 @@ class CacheController:
         if mods_svc:
             mods_svc.rescan()
 
-        if ue4ss_was_installed:
-            profile = self._host.get_game_context()
-            if profile:
-                try:
-                    from ......core.controllers.ue import UEDetector
-                    new_detection = UEDetector.detect(profile.game_root)
-                    self._host.set_game_context(profile, new_detection)
-                except Exception as exc:
-                    logger.warning(f"Re-detect UE4SS failed after install: {exc}")
-            # X-4: Notify pipeline panel so it refreshes the warning bar
-            self._host.notify_state_change("detection")
+        # Always re-detect after any install so all tabs see current disk state.
+        try:
+            self._host.refresh_detection()
+        except Exception as exc:
+            logger.warning(f"Re-detect after install failed: {exc}")
 
         self._host.notify_state_change("install")
 

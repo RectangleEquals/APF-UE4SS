@@ -338,6 +338,26 @@ class PluginHost:
             except Exception:
                 pass
 
+    def refresh_detection(self) -> Optional["DetectionResult"]:
+        """Re-run full UE detection for the current game and broadcast the result.
+
+        Safe to call from any thread; the detection run is synchronous and the
+        subsequent set_game_context broadcast is guarded by Clock.schedule_once
+        internally via notify_state_change.
+        """
+        if not self._game_context:
+            return None
+        busy = self.get_service("busy") if self.has_service("busy") else None
+        if busy:
+            busy.set_busy("detection.refresh", "Rescanning installation…")
+        from .ue import UEDetector
+        detection = UEDetector.detect(self._game_context.game_root)
+        self.set_game_context(self._game_context, detection)
+        self.notify_state_change("detection")
+        if busy:
+            busy.clear_busy("detection.refresh")
+        return detection
+
     def navigate_to_game(self, profile: "GameProfile") -> None:
         if self._navigate_fn:
             self._navigate_fn(profile)

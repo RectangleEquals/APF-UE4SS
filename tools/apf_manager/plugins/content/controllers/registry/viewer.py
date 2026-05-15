@@ -689,9 +689,18 @@ class RegistryViewer:
                 selected_ids: list[str] = result.get("selected", [])
                 dropped = [sid for sid in selected_ids if sid not in id_to_mod]
                 if dropped:
-                    logger.warning(
-                        f"{len(dropped)} selected IDs not found in id_to_mod -- first few: {dropped[:3]}"
-                    )
+                    ue4ss_dropped = [sid for sid in dropped if sid.startswith("ue4ss:")]
+                    other_dropped = [sid for sid in dropped if not sid.startswith("ue4ss:")]
+                    if ue4ss_dropped:
+                        logger.debug(
+                            "Skipping %d UE4SS option ID(s) -- handled via separate UE4SS pathway: %s",
+                            len(ue4ss_dropped), ue4ss_dropped[:3],
+                        )
+                    if other_dropped:
+                        logger.warning(
+                            "%d selected IDs not found in id_to_mod -- first few: %s",
+                            len(other_dropped), other_dropped[:3],
+                        )
                 selected_mods = [
                     id_to_mod[sid] for sid in selected_ids if sid in id_to_mod
                 ]

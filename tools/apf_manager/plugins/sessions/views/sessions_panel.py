@@ -44,6 +44,7 @@ class SessionsPanel(PluginPanel):
         self._profile: Optional["GameProfile"] = None
         self._backup_dialog: Optional[MDDialog] = None
         self._rename_dialog: Optional[MDDialog] = None
+        self._detection_subscribed = False
         self._build_ui()
 
     # -----------------------------------------------------------------------
@@ -53,10 +54,19 @@ class SessionsPanel(PluginPanel):
     def on_activate(self, game_profile: "GameProfile") -> None:
         self._profile = game_profile
         self._ctrl.activate(game_profile)
+        if not self._detection_subscribed:
+            self._host.subscribe_state_change("detection", self._on_detection_changed)
+            self._detection_subscribed = True
         self._refresh()
 
     def on_deactivate(self) -> None:
         pass
+
+    def _on_detection_changed(self) -> None:
+        """Re-activate with the current profile so session paths stay in sync."""
+        if self._profile:
+            self._ctrl.activate(self._profile)
+            self._refresh()
 
     # -----------------------------------------------------------------------
     # UI

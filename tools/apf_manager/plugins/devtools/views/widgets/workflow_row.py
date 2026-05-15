@@ -10,10 +10,12 @@ from kivymd.uix.label import MDLabel
 from .data_row import DevDataRow, DevHeaderRow
 
 _COLS = [("Name", 0.45), ("Status", 0.30), ("Run", None), ("View", None)]
+_RUN_W: int = 80   # dp — shared by header and Run button so columns align
+_VIEW_W: int = 36  # dp — shared by header and View button
 
 
 def make_workflow_header() -> DevHeaderRow:
-    return DevHeaderRow.from_columns(_COLS)
+    return DevHeaderRow.from_columns(_COLS, fixed_widths={2: dp(_RUN_W), 3: dp(_VIEW_W)})
 
 
 class WorkflowRow(DevDataRow):
@@ -40,19 +42,21 @@ class WorkflowRow(DevDataRow):
             MDButtonIcon(icon="play"),
             MDButtonText(text="Run"),
             size_hint_x=None,
+            width=dp(_RUN_W),
         )
         _lbl = self._status_lbl
         self._run_btn.bind(
             on_release=lambda *_, _id=wf_id, _name=wf_name, lbl=_lbl: on_run(_id, _name, lbl)
         )
 
-        self._view_btn = MDIconButton(icon="open-in-new", size_hint_x=None, width=dp(36))
+        self._view_btn = MDIconButton(icon="open-in-new", size_hint_x=None, width=dp(_VIEW_W))
         if html_url and on_view:
             self._view_btn.bind(on_release=lambda *_, u=html_url: on_view(u))
         else:
             self._view_btn.disabled = True
 
-        for w in (self._name_lbl, self._run_btn, self._status_lbl, self._view_btn):
+        # Correct column order: Name | Status | Run | View
+        for w in (self._name_lbl, self._status_lbl, self._run_btn, self._view_btn):
             self.add_widget(w)
 
     def set_status(self, text: str) -> None:

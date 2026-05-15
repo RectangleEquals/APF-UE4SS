@@ -411,6 +411,8 @@ class ContentPipelinePanel(PluginPanel):
     # ------------------------------------------------------------------
 
     def _on_install_state_changed(self) -> None:
+        # Re-query framework state so child tabs receive fresh detection data.
+        self._fw_state = self._ctrl.get_framework_state()
         detection = self._fw_state.get("detection")
         if self._tab_load_order:
             self._tab_load_order.refresh(self._profile, detection)

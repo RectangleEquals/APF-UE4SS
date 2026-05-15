@@ -95,13 +95,21 @@ class DevHeaderRow(MDBoxLayout):
         )
 
     @classmethod
-    def from_columns(cls, columns: list[tuple[str, Optional[float]]]) -> "DevHeaderRow":
+    def from_columns(
+        cls,
+        columns: list[tuple[str, Optional[float]]],
+        fixed_widths: Optional[dict[int, float]] = None,
+    ) -> "DevHeaderRow":
         """
         Build a header row from [(label_text, size_hint_x), ...].
-        Pass size_hint_x=None for fixed-width spacer columns (uses dp(36)).
+
+        Pass size_hint_x=None for fixed-width columns.  When size_hint_x is None
+        and the column index appears in fixed_widths, that pixel value is used;
+        otherwise falls back to dp(36).
         """
         row = cls()
-        for text, shx in columns:
+        fw = fixed_widths or {}
+        for i, (text, shx) in enumerate(columns):
             lbl = MDLabel(
                 text=text,
                 adaptive_height=True,
@@ -110,7 +118,7 @@ class DevHeaderRow(MDBoxLayout):
             )
             if shx is None:
                 lbl.size_hint_x = None
-                lbl.width = dp(36)
+                lbl.width = fw.get(i, dp(36))
             else:
                 lbl.size_hint_x = shx
             row.add_widget(lbl)

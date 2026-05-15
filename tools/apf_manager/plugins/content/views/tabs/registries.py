@@ -48,6 +48,8 @@ class RegistriesTab(MDBoxLayout):
         self._search_results: Optional[MDBoxLayout] = None
         self._ue4ss_card: Optional[UE4SSStatusCard] = None
         self._add_status: Optional[MDLabel] = None
+        self._add_btn: Optional[MDButton] = None
+        self._search_github_btn: Optional[MDButton] = None
         self._share_btn: Optional[MDButton] = None
         self._game_id: str = ""
         from ...controllers.tabs.registries.controller import RegistriesController
@@ -116,14 +118,15 @@ class RegistriesTab(MDBoxLayout):
             mode="outlined",
         )
         add_bar.add_widget(self._url_field)
-        add_bar.add_widget(MDButton(
+        self._add_btn = MDButton(
             MDButtonText(text="View"),
             style="filled",
             size_hint=(None, None),
             size=(dp(72), dp(40)),
             pos_hint={"center_y": 0.5},
             on_release=lambda *_: self._on_add(),
-        ))
+        )
+        add_bar.add_widget(self._add_btn)
         content.add_widget(add_bar)
 
         self._add_status = MDLabel(
@@ -142,12 +145,13 @@ class RegistriesTab(MDBoxLayout):
             height=dp(48),
             spacing=dp(8),
         )
-        action_row.add_widget(MDButton(
+        self._search_github_btn = MDButton(
             MDButtonIcon(icon="magnify"),
             MDButtonText(text="Search GitHub"),
             style="outlined",
             on_release=lambda *_: self._on_search_github(),
-        ))
+        )
+        action_row.add_widget(self._search_github_btn)
         self._share_btn = MDButton(
             MDButtonIcon(icon="share-variant"),
             MDButtonText(text="Share"),
@@ -251,10 +255,14 @@ class RegistriesTab(MDBoxLayout):
                 self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
                 return
 
+        if self._add_btn:
+            self._add_btn.disabled = True
         self._set_add_status("Loading\u2026", (0.7, 0.7, 0.7, 1))
         self._ctrl.add_registry(url, self._game_id, on_done=self._on_add_done)
 
     def _on_add_done(self, success: bool, msg: str) -> None:
+        if self._add_btn:
+            self._add_btn.disabled = False
         color = (0.3, 0.8, 0.4, 1) if success else (0.9, 0.3, 0.3, 1)
         self._set_add_status(msg, color)
         if success:
@@ -271,13 +279,18 @@ class RegistriesTab(MDBoxLayout):
             self._add_status.text_color = color
 
     def _on_view(self, entry) -> None:
+        if self._add_btn:
+            self._add_btn.disabled = True
         self._set_add_status("Opening viewer\u2026", (0.7, 0.7, 0.7, 1))
         self._ctrl.add_registry(
             entry.url, self._game_id,
-            on_done=lambda ok, msg: self._set_add_status(
-                "" if ok else msg, (0.9, 0.3, 0.3, 1)
-            ),
+            on_done=self._on_view_done,
         )
+
+    def _on_view_done(self, ok: bool, msg: str) -> None:
+        if self._add_btn:
+            self._add_btn.disabled = False
+        self._set_add_status("" if ok else msg, (0.9, 0.3, 0.3, 1))
 
     def _on_remove(self, entry) -> None:
         self._ctrl.remove_registry(entry.url)
@@ -311,6 +324,8 @@ class RegistriesTab(MDBoxLayout):
     def _on_search_github(self) -> None:
         if not self._game_id:
             return
+        if self._search_github_btn:
+            self._search_github_btn.disabled = True
         self._search_results.clear_widgets()
         self._search_results.add_widget(MDLabel(
             text="Searching GitHub\u2026",
@@ -325,6 +340,8 @@ class RegistriesTab(MDBoxLayout):
         )
 
     def _on_search_results(self, results: list) -> None:
+        if self._search_github_btn:
+            self._search_github_btn.disabled = False
         self._search_results.clear_widgets()
         if not results:
             self._search_results.add_widget(MDLabel(
@@ -371,6 +388,8 @@ class RegistriesTab(MDBoxLayout):
             if self._ctrl.is_blacklisted(owner, repo):
                 self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
                 return
+        if self._add_btn:
+            self._add_btn.disabled = True
         self._set_add_status("Loading\u2026", (0.7, 0.7, 0.7, 1))
         self._ctrl.add_registry(url, self._game_id, on_done=self._on_add_done)
 

@@ -31,7 +31,10 @@ from kivymd.uix.button import MDButton, MDButtonText, MDIconButton
 from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
+from .....core.controllers.logging.manager import APFLogManager
 from .....core.views.widgets.tip_icon_button import TipIconButton
+
+logger = APFLogManager.get_logger(__name__)
 from ..chrome.constants import COL_DIM
 from ..chrome.section_header import make_section_header
 from ..panels.queue_panel import QueuePanelMixin
@@ -281,11 +284,20 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
 
     def add_to_queue(self, items: list) -> None:
         """items: list of (mod_obj, category) tuples OR bare ContentDescriptor objects."""
+        if not self._game_id:
+            logger.error(
+                "add_to_queue called with no active game_id — items discarded to prevent "
+                "cross-game contamination: %s", [
+                    getattr(i[0] if isinstance(i, tuple) else i, "name", "?")
+                    for i in items
+                ]
+            )
+            return
         with self._queue_lock:
             existing_keys = {qi.key for qi in self._queue}
             for item in items:
                 mod_obj = item[0] if isinstance(item, tuple) and len(item) == 2 else item
-                qi = _QueueItem(mod=mod_obj, game_id=self._game_id or "")
+                qi = _QueueItem(mod=mod_obj, game_id=self._game_id)
                 if qi.key not in existing_keys:
                     self._queue.append(qi)
                     existing_keys.add(qi.key)
@@ -313,7 +325,13 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
             if not result:
                 return
             content, _ = result
-            if content.game_id and content.game_id != self._game_id:
+            if content.game_id != self._game_id:
+                if not content.game_id:
+                    logger.debug(
+                        "Skipping untagged cache entry at %s -- no game_id (pre-AB3 cache); "
+                        "re-download to associate with a game",
+                        cache_dir,
+                    )
                 return
             items.append(_CacheItem(cache_path=cache_dir, content=content))
 

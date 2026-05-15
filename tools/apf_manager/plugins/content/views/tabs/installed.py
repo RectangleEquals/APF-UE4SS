@@ -111,6 +111,10 @@ class InstalledTab(MDBoxLayout):
         self._do_refresh()
 
     def _do_refresh(self) -> None:
+        fresh = self._host.refresh_detection()
+        if fresh is not None:
+            self._detection = fresh
+
         self._list.clear_widgets()
 
         ue4ss_ok  = bool(self._detection and getattr(self._detection, "valid", False))
@@ -313,14 +317,20 @@ class InstalledTab(MDBoxLayout):
             theme_text_color="Custom", text_color=(0.55, 0.75, 0.95, 1),
         ))
 
+        # Version priority: install record (authoritative) → updates service → plain "installed"
         ue4ss_version = ""
-        if ue4ss_ok and self._detection:
-            ue4ss_version = getattr(self._detection, "ue4ss_version", "") or ""
+        if ue4ss_ok:
+            game_id_v = self._ctrl.get_game_id(self._profile)
+            deploy_svc = self._ctrl.get_deploy_svc()
+            if deploy_svc:
+                v = deploy_svc.get_installed_version_for_type("ue4ss", game_id_v)
+                if v and v != "unknown":
+                    ue4ss_version = v
         if not ue4ss_version and ue4ss_update_info:
             ue4ss_version = ue4ss_update_info.current if ue4ss_update_info.current != "unknown" else ""
         ue4ss_detail = (
             f"v{ue4ss_version} installed" if (ue4ss_ok and ue4ss_version) else
-            ("Detected (version unknown — manually installed)" if ue4ss_ok else
+            ("Installed (version unavailable)" if ue4ss_ok else
              "Not installed — get it from the Content tab")
         )
         section.add_widget(self._status_row(
@@ -560,6 +570,7 @@ class InstalledTab(MDBoxLayout):
         if is_framework:
             Clock.schedule_once(lambda dt: self._trigger_full_refresh(), 0)
         else:
+            # _do_refresh already calls refresh_detection internally; no extra call needed.
             Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
     def _conflict_banner(self, conflict_paths: list) -> ConflictBanner:

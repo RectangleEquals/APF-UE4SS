@@ -147,9 +147,8 @@ class BaseContentRow(MDBoxLayout):
         # Bind whole header click to on_expand (for PackageHeaderWidget-style rows)
         if self._expand_on_header and self._on_expand:
             _fn = self._on_expand
-            _ex = self._expanded
-            header.bind(on_touch_down=lambda w, t, fn=_fn, ex=_ex: (
-                fn(not ex) if w.collide_point(*t.pos) else None
+            header.bind(on_touch_down=lambda w, t, fn=_fn: (
+                fn() if w.collide_point(*t.pos) else None
             ))
 
         # --- Checkbox (change-detection guard) ---
