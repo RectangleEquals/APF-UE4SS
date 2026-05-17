@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from kivy.clock import Clock
@@ -12,13 +13,16 @@ from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
+from .....core.controllers.logging.manager import APFLogManager
 from ..chrome.constants import COL_DIM
 
 if TYPE_CHECKING:
     from ..tabs.downloads import _QueueItem
 
+logger = APFLogManager.get_logger(__name__)
 
 _BG_ITEM = (0.13, 0.13, 0.13, 1)
+_THROTTLE_INTERVAL = 0.25   # seconds between Clock.schedule_once calls per item
 
 
 class QueuePanelMixin:
@@ -60,11 +64,20 @@ class QueuePanelMixin:
         row.add_widget(status_row)
 
         if item.status == "downloading":
-            bar = MDLinearProgressIndicator(size_hint=(1, None), height=dp(4))
+            # Reuse pre-registered widgets created before thread start; create if absent.
+            bar = self._progress_bars.get(item.key)
+            if bar is None:
+                bar = MDLinearProgressIndicator(size_hint=(1, None), height=dp(4))
+                self._progress_bars[item.key] = bar
             bar.value = item.progress
             row.add_widget(bar)
-            # Register bar reference so _set_progress can update it without a full rebuild
-            getattr(self, '_progress_bars', {})[item.key] = bar
+
+            lbl = self._progress_labels.get(item.key)
+            if lbl is None:
+                lbl = _make_progress_label()
+                self._progress_labels[item.key] = lbl
+            lbl.text = _format_progress(item)
+            row.add_widget(lbl)
 
         if item.status == "error" and item.error_msg:
             row.add_widget(MDLabel(
@@ -87,6 +100,17 @@ class QueuePanelMixin:
         with self._queue_lock:
             item.status = "downloading"
 
+        # Pre-register bar and label widgets BEFORE the thread starts.
+        # This guarantees _set_progress never hits the no-widget path during download.
+        item._start_time = time.monotonic()
+        if item.key not in self._progress_bars:
+            self._progress_bars[item.key] = MDLinearProgressIndicator(
+                size_hint=(1, None), height=dp(4))
+        if item.key not in self._progress_labels:
+            self._progress_labels[item.key] = _make_progress_label()
+
+        logger.info(f"[download] Starting: {item.mod.name!r}")
+
         from ...controllers.download.service import DownloadService
         svc = DownloadService(self._host)
 
@@ -98,9 +122,14 @@ class QueuePanelMixin:
                 if success:
                     item.status = "done"
                     item.cache_path = cache_path
+                    logger.info(f"[download] Completed: {item.mod.name!r}")
                 else:
                     item.status = "error"
                     item.error_msg = error_msg
+                    logger.error(f"[download] Failed: {item.mod.name!r} — {error_msg}")
+            self._progress_bars.pop(item.key, None)
+            self._progress_labels.pop(item.key, None)
+            self._last_progress_time.pop(item.key, None)
             Clock.schedule_once(lambda dt: self._on_item_done(item), 0)
 
         threading.Thread(
@@ -114,14 +143,27 @@ class QueuePanelMixin:
     def _set_progress(self, item: "_QueueItem", progress: float) -> None:
         with self._queue_lock:
             item.progress = progress
-        # Update the progress bar widget directly rather than rebuilding the full UI.
-        # A full rebuild on every progress tick (potentially hundreds per second) causes
-        # jitter and freezes. Only fall back to a rebuild if the bar isn't in the tree yet.
-        bar = getattr(self, '_progress_bars', {}).get(item.key)
-        if bar:
-            Clock.schedule_once(lambda dt, b=bar, v=progress: setattr(b, 'value', v), 0)
-        else:
-            Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
+
+        key = item.key
+        now = time.monotonic()
+        if now - self._last_progress_time.get(key, 0.0) < _THROTTLE_INTERVAL:
+            return
+        self._last_progress_time[key] = now
+
+        bar = self._progress_bars.get(key)
+        lbl = self._progress_labels.get(key)
+        if bar is None and lbl is None:
+            return
+
+        progress_text = _format_progress(item)
+
+        def _upd(dt):
+            if bar is not None:
+                bar.value = progress
+            if lbl is not None:
+                lbl.text = progress_text
+
+        Clock.schedule_once(_upd, 0)
 
     def _on_item_done(self, item: "_QueueItem") -> None:
         self._scan_cache_and_rebuild()
@@ -131,5 +173,42 @@ class QueuePanelMixin:
         with self._queue_lock:
             if item.status == "queued":
                 self._queue.remove(item)
+                logger.info(f"[download] Cancelled: {item.mod.name!r}")
+        self._progress_bars.pop(item.key, None)
+        self._progress_labels.pop(item.key, None)
+        self._last_progress_time.pop(item.key, None)
         self._rebuild_ui()
 
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+def _make_progress_label() -> MDLabel:
+    return MDLabel(
+        text="0%",
+        font_style="Label", role="small",
+        size_hint_y=None, height=dp(16),
+        padding=[dp(8), 0],
+        halign="left", valign="middle",
+        theme_text_color="Custom",
+        text_color=(0.5, 0.7, 1.0, 1),
+    )
+
+
+def _format_progress(item: "_QueueItem") -> str:
+    """Compute a rich progress string from item progress and elapsed time."""
+    p = item.progress
+    pct = f"{p * 100:.0f}%"
+    elapsed = time.monotonic() - item._start_time if item._start_time > 0 else 0.0
+    if elapsed > 0.5 and p > 0.01:
+        rate = p / elapsed
+        remaining = (1.0 - p) / rate
+        if remaining < 60:
+            eta = f"ETA ~{remaining:.0f}s"
+        elif remaining < 3600:
+            eta = f"ETA ~{remaining / 60:.0f}m"
+        else:
+            eta = f"ETA ~{remaining / 3600:.1f}h"
+        return f"{pct}  ·  {eta}"
+    return pct

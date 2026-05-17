@@ -163,7 +163,7 @@ class SourceControlTab(MDBoxLayout):
         self.add_widget(make_branch_header())
 
         self._branches_list = MDBoxLayout(
-            orientation="vertical", adaptive_height=True, spacing=dp(4))
+            orientation="vertical", adaptive_height=True, spacing=dp(2))
         self.add_widget(self._branches_list)
 
         self._status_lbl = MDLabel(

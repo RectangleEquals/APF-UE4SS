@@ -9,14 +9,12 @@ from kivymd.uix.label import MDLabel
 
 from .data_row import DevDataRow, DevHeaderRow
 
-# Fixed column widths (dp) — shared by header and data rows so they always align
-# regardless of ScrollView scrollbar width.
+# Fixed-width columns (dp).  Name is flexible (size_hint_x=1).
 _W_TAG  = 100
-_W_NAME = 250
 _W_VIEW = 36
 
-_COLS = [("Tag", None), ("Name", None), ("View", None)]
-_FIXED_WIDTHS = {0: dp(_W_TAG), 1: dp(_W_NAME), 2: dp(_W_VIEW)}
+_COLS = [("Tag", None), ("Name", 1), ("View", None)]
+_FIXED_WIDTHS = {0: dp(_W_TAG), 2: dp(_W_VIEW)}
 
 
 def make_release_header() -> DevHeaderRow:
@@ -40,21 +38,26 @@ class ReleaseRow(DevDataRow):
 
         self._tag_lbl = MDLabel(
             text=tag,
-            adaptive_height=True,
             size_hint_x=None,
             width=dp(_W_TAG),
+            size_hint_y=1,
+            valign="middle",
+            halign="left",
         )
         self._name_lbl = MDLabel(
             text=name,
-            adaptive_height=True,
-            size_hint_x=None,
-            width=dp(_W_NAME),
+            size_hint_x=1,
+            size_hint_y=1,
+            valign="middle",
+            halign="left",
             theme_text_color="Secondary",
         )
         self._view_btn = MDIconButton(
             icon="open-in-new",
-            size_hint_x=None,
+            size_hint=(None, None),
             width=dp(_W_VIEW),
+            height=dp(36),
+            pos_hint={"center_y": 0.5},
         )
         if url and on_view:
             self._view_btn.bind(on_release=lambda *_, u=url: on_view(u))

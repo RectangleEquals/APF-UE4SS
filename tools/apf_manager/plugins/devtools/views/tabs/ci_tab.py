@@ -15,11 +15,14 @@ from kivymd.uix.divider import MDDivider
 from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 
+from .....core.controllers.logging.manager import APFLogManager
 from ...controllers.tabs.ci_ctrl import CITabController
 from ..widgets.workflow_row import WorkflowRow, make_workflow_header
 from ..widgets.release_row import ReleaseRow, make_release_header
 
 import webbrowser
+
+logger = APFLogManager.get_logger(__name__)
 
 
 def _write_tier_placeholder() -> MDBoxLayout:
@@ -89,7 +92,7 @@ class CITab(MDBoxLayout):
         self.add_widget(make_workflow_header())
 
         self._workflows_list = MDBoxLayout(
-            orientation="vertical", adaptive_height=True, spacing=dp(4))
+            orientation="vertical", adaptive_height=True, spacing=dp(2))
         self.add_widget(self._workflows_list)
 
         self._wf_status_lbl = MDLabel(
@@ -118,7 +121,7 @@ class CITab(MDBoxLayout):
         self.add_widget(make_release_header())
 
         self._releases_list = MDBoxLayout(
-            orientation="vertical", adaptive_height=True, spacing=dp(4))
+            orientation="vertical", adaptive_height=True, spacing=dp(2))
         self.add_widget(self._releases_list)
 
         self._rel_status_lbl = MDLabel(
@@ -137,8 +140,13 @@ class CITab(MDBoxLayout):
         def _on_wf_run(wf_id, wf_name, status_lbl):
             branch = self._ctrl.get_current_branch()
             status_lbl.text = "Dispatching..."
-            def _on_status(s: str, lbl=status_lbl):
-                Clock.schedule_once(lambda dt: setattr(lbl, "text", s))
+            def _on_status(s: str, lbl=status_lbl, name=wf_name):
+                if s.startswith("error:"):
+                    logger.error(f"[ci] Workflow '{name}' dispatch failed: {s[6:].strip()}")
+                    display = "Error — see app log"
+                else:
+                    display = s
+                Clock.schedule_once(lambda dt: setattr(lbl, "text", display))
             self._ctrl.dispatch_workflow(str(wf_id), branch, _on_status)
 
         def _upd(dt):

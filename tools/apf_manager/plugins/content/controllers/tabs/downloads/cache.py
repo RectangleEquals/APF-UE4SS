@@ -110,11 +110,39 @@ class CacheController:
                         continue
                 deploy_svc.deploy_content(ci.cache_path, ci.content, detection, game_id)
                 logger.info(f"Installed '{ci.display_name}'")
-                # Update dep flags immediately so later items in this batch can use them
+                # Update dep flags immediately so later items in this batch can use them.
+                # After UE4SS installs, refresh detection synchronously so subsequent mods
+                # in this batch see the newly-created ue4ss/Mods/ directory.
                 if ci.category == "other":
                     it = getattr(ci.content, "install_type", "") or ""
                     if "ue4ss" in it:
                         ue4ss_ok = True
+                        try:
+                            from ......core.controllers.ue import UEDetector
+                            game_root = (
+                                detection.game.game_root
+                                if (detection and detection.game) else None
+                            )
+                            if game_root:
+                                fresh = UEDetector.detect(game_root)
+                                if fresh.valid:
+                                    detection = fresh
+                                    logger.info(
+                                        "[cache] Detection refreshed inline after UE4SS install"
+                                    )
+                                else:
+                                    logger.warning(
+                                        "[cache] Post-UE4SS re-detect returned invalid result "
+                                        "— mods dir may not be available for subsequent installs"
+                                    )
+                            else:
+                                logger.warning(
+                                    "[cache] Cannot refresh detection inline: game_root unavailable"
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                f"[cache] Post-UE4SS detection refresh failed: {exc}"
+                            )
                     if "framework" in it:
                         framework_ok = True
 

@@ -14,14 +14,17 @@ _BG_ROW_ODD  = (0.09, 0.10, 0.13, 1)
 _BG_HEADER   = (0.07, 0.08, 0.10, 1)
 _BG_HOVER    = (1, 1, 1, 0.06)
 
+_ROW_H   = 40   # dp — data row height
+_HDR_H   = 36   # dp — header row height
+
 
 class DevDataRow(HoverBehavior, MDBoxLayout):
     """
     Horizontal data row base class for DevTools tabs.
 
-    Provides consistent spacing/padding, alternating row background colors,
-    animated hover highlight (via HoverBehavior), and optional on_press callback.
-    Subclasses add typed cells via add_cell().
+    Fixed height (40 dp), alternating backgrounds, animated hover highlight,
+    and optional on_press callback.  Primary/name columns use size_hint_x=1;
+    action columns use explicit dp widths — both must match the header exactly.
     """
 
     def __init__(
@@ -34,9 +37,10 @@ class DevDataRow(HoverBehavior, MDBoxLayout):
         base_bg = _BG_ROW_EVEN if row_index % 2 == 0 else _BG_ROW_ODD
         super().__init__(
             orientation="horizontal",
-            adaptive_height=True,
+            size_hint=(1, None),
+            height=dp(_ROW_H),
             spacing=dp(8),
-            padding=(0, dp(4), 0, dp(4)),
+            padding=(dp(8), 0, dp(8), 0),
             md_bg_color=base_bg,
             **kwargs,
         )
@@ -45,35 +49,20 @@ class DevDataRow(HoverBehavior, MDBoxLayout):
         self._on_press_cb = on_press
 
     # -----------------------------------------------------------------------
-    # Public helpers
-    # -----------------------------------------------------------------------
-
-    def add_cell(
-        self,
-        widget,
-        size_hint_x: Optional[float] = None,
-        fixed_width: Optional[float] = None,
-    ) -> None:
-        if fixed_width is not None:
-            widget.size_hint_x = None
-            widget.width = dp(fixed_width)
-        elif size_hint_x is not None:
-            widget.size_hint_x = size_hint_x
-        self.add_widget(widget)
-
-    # -----------------------------------------------------------------------
     # HoverBehavior callbacks
     # -----------------------------------------------------------------------
 
     def on_enter(self):
         if not self._hover_enabled:
             return
-        Animation(md_bg_color=_BG_HOVER, duration=0.10).start(self)
+        Animation.cancel_all(self, "md_bg_color")
+        Animation(md_bg_color=_BG_HOVER, duration=0.08, t="out_quad").start(self)
 
     def on_leave(self):
         if not self._hover_enabled:
             return
-        Animation(md_bg_color=self._base_bg, duration=0.10).start(self)
+        Animation.cancel_all(self, "md_bg_color")
+        Animation(md_bg_color=self._base_bg, duration=0.12, t="out_quad").start(self)
 
     def on_parent(self, widget, parent):
         if parent is None:
@@ -92,15 +81,17 @@ class DevDataRow(HoverBehavior, MDBoxLayout):
 
 class DevHeaderRow(MDBoxLayout):
     """
-    Header row matching DevDataRow column layout, no hover, Secondary text color.
+    Header row matching DevDataRow column layout.
+    Fixed height (36 dp), slightly darker background, Secondary text color.
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(
             orientation="horizontal",
-            adaptive_height=True,
+            size_hint=(1, None),
+            height=dp(_HDR_H),
             spacing=dp(8),
-            padding=(0, dp(2), 0, dp(2)),
+            padding=(dp(8), 0, dp(8), 0),
             md_bg_color=_BG_HEADER,
             **kwargs,
         )
@@ -114,16 +105,17 @@ class DevHeaderRow(MDBoxLayout):
         """
         Build a header row from [(label_text, size_hint_x), ...].
 
-        Pass size_hint_x=None for fixed-width columns.  When size_hint_x is None
-        and the column index appears in fixed_widths, that pixel value is used;
-        otherwise falls back to dp(36).
+        size_hint_x=1   → flexible column (fills remaining width)
+        size_hint_x=None → fixed-width column; width taken from fixed_widths[i] or dp(36)
         """
         row = cls()
         fw = fixed_widths or {}
         for i, (text, shx) in enumerate(columns):
             lbl = MDLabel(
                 text=text,
-                adaptive_height=True,
+                size_hint_y=1,
+                valign="middle",
+                halign="left",
                 theme_text_color="Secondary",
                 font_style="Body",
             )

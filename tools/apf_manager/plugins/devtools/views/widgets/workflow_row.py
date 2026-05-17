@@ -9,20 +9,13 @@ from kivymd.uix.label import MDLabel
 
 from .data_row import DevDataRow, DevHeaderRow
 
-# Fixed column widths (dp) — shared by header and data rows so they always align
-# regardless of ScrollView scrollbar width.
-_W_NAME   = 200
+# Fixed-width columns (dp).  Name is flexible (size_hint_x=1).
 _W_STATUS = 140
 _W_RUN    = 80
 _W_VIEW   = 36
 
-_COLS = [("Name", None), ("Status", None), ("Run", None), ("View", None)]
-_FIXED_WIDTHS = {
-    0: dp(_W_NAME),
-    1: dp(_W_STATUS),
-    2: dp(_W_RUN),
-    3: dp(_W_VIEW),
-}
+_COLS = [("Name", 1), ("Status", None), ("Run", None), ("View", None)]
+_FIXED_WIDTHS = {1: dp(_W_STATUS), 2: dp(_W_RUN), 3: dp(_W_VIEW)}
 
 
 def make_workflow_header() -> DevHeaderRow:
@@ -47,23 +40,28 @@ class WorkflowRow(DevDataRow):
 
         self._name_lbl = MDLabel(
             text=wf_name,
-            adaptive_height=True,
-            size_hint_x=None,
-            width=dp(_W_NAME),
+            size_hint_x=1,
+            size_hint_y=1,
+            valign="middle",
+            halign="left",
         )
         self._status_lbl = MDLabel(
             text="",
-            adaptive_height=True,
             size_hint_x=None,
             width=dp(_W_STATUS),
+            size_hint_y=1,
+            valign="middle",
+            halign="left",
             theme_text_color="Secondary",
         )
 
         self._run_btn = MDButton(
             MDButtonIcon(icon="play"),
             MDButtonText(text="Run"),
-            size_hint_x=None,
+            size_hint=(None, None),
             width=dp(_W_RUN),
+            height=dp(36),
+            pos_hint={"center_y": 0.5},
         )
         _lbl = self._status_lbl
         self._run_btn.bind(
@@ -72,8 +70,10 @@ class WorkflowRow(DevDataRow):
 
         self._view_btn = MDIconButton(
             icon="open-in-new",
-            size_hint_x=None,
+            size_hint=(None, None),
             width=dp(_W_VIEW),
+            height=dp(36),
+            pos_hint={"center_y": 0.5},
         )
         if html_url and on_view:
             self._view_btn.bind(on_release=lambda *_, u=html_url: on_view(u))

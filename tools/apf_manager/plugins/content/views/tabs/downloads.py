@@ -64,6 +64,7 @@ class _QueueItem:
     error_msg: str = ""
     cache_path: Optional[Path] = None
     game_id: str = ""            # game this item was queued for; "" = any game
+    _start_time: float = 0.0     # monotonic timestamp when download thread started
 
     @property
     def category(self) -> str:
@@ -218,6 +219,8 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         self._cache_dirty: bool = False
         self._title_label = None
         self._progress_bars: dict = {}
+        self._progress_labels: dict = {}
+        self._last_progress_time: dict = {}
         from ...controllers.tabs.downloads.cache import CacheController
         self._ctrl = CacheController(self._host, on_refresh=self._scan_cache_and_rebuild)
         self._build_ui()

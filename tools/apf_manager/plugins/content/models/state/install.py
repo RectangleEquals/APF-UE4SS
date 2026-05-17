@@ -104,10 +104,25 @@ class InstallStateManager:
         self._save()
 
     def add_record(self, record: "InstallRecord") -> None:
-        from .pipeline import InstallRecord
-        self._data = [e for e in self._data if e.get("folder_name") != record.folder_name]
+        # Dedup key: folder_name for mods (always unique); install_type or name for binaries.
+        key = record.folder_name or record.install_type or record.name
+        self._data = [
+            e for e in self._data
+            if (e.get("folder_name") or e.get("install_type") or e.get("name", "")) != key
+        ]
         self._data.append(record.to_dict())
         self._save()
+
+    def remove_record(self, record: "InstallRecord") -> None:
+        """Remove the entry matching this record using the same composite key as add_record."""
+        key = record.folder_name or record.install_type or record.name
+        before = len(self._data)
+        self._data = [
+            e for e in self._data
+            if (e.get("folder_name") or e.get("install_type") or e.get("name", "")) != key
+        ]
+        if len(self._data) != before:
+            self._save()
 
     def find_record(self, folder_name: str) -> Optional["InstallRecord"]:
         from .pipeline import InstallRecord

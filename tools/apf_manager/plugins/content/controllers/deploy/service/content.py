@@ -42,13 +42,13 @@ class DeployContentMixin:
         if isinstance(content, TemplateDescriptor):
             self._deploy_template_content(cache_path, content)
         elif isinstance(content, BinaryDescriptor):
-            self._deploy_binary_content(cache_path, content, detection)
+            record.binary_files_deployed = self._deploy_binary_content(cache_path, content, detection)
         elif isinstance(content, ModDescriptor):
             self._deploy_mod_content(cache_path, content, detection)
         else:
             raise TypeError(f"Unsupported content type: {content.content_type!r}")
 
-        if gid and isinstance(content, ModDescriptor):
+        if gid:
             InstallStateManager(gid).add_record(record)
         return record
 
@@ -194,7 +194,8 @@ class DeployContentMixin:
         cache_path: "Path",
         content,
         detection: "Optional[DetectionResult]",
-    ) -> None:
+    ) -> list:
+        """Deploy binary content and return a list of top-level names added to platform_dir."""
         platform_dir = detection.platform.platform_dir if (detection and detection.platform) else None
         if not detection or platform_dir is None or not platform_dir.parts:
             raise RuntimeError("Game platform directory not detected")
@@ -204,6 +205,8 @@ class DeployContentMixin:
         logger.info(
             f"Deploying binary '{content.name}' install_type={install_type} from {cache_path}"
         )
+        # Snapshot top-level names before deploy so we can record exactly what was added.
+        before = {p.name for p in dest_dir.iterdir()} if dest_dir.exists() else set()
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
             zips = sorted(cache_path.glob("*.zip"))
@@ -214,7 +217,13 @@ class DeployContentMixin:
                 for f in cache_path.iterdir():
                     if f.is_file() and f.suffix.lower() in (".dll", ".exe", ".pdb"):
                         shutil.copy2(str(f), str(dest_dir / f.name))
-            logger.info(f"Deploy complete: binary '{content.name}'")
+            after = {p.name for p in dest_dir.iterdir()}
+            deployed = sorted(after - before)
+            logger.info(
+                f"Deploy complete: binary '{content.name}' "
+                f"({len(deployed)} top-level items added: {deployed})"
+            )
+            return deployed
         except Exception as exc:
             logger.error(f"Deploy failed for binary '{content.name}': {exc}")
             raise
@@ -238,9 +247,7 @@ class DeployContentMixin:
 
         if self._profile:
             from ....models.state.install import InstallStateManager
-            key = record.folder_name or record.name
-            if key:
-                InstallStateManager(self._profile.game_id).remove(key)
+            InstallStateManager(self._profile.game_id).remove_record(record)
 
     def _undeploy_mod_record(
         self,
@@ -276,10 +283,38 @@ class DeployContentMixin:
         record: "InstallRecord",
         detection: "Optional[DetectionResult]",
     ) -> None:
-        logger.warning(
-            f"Uninstall of binary '{record.name}' (type={record.install_type}) "
-            "requires manual removal — automatic binary uninstall is not supported."
+        platform_dir = (
+            detection.platform.platform_dir
+            if (detection and detection.platform) else None
         )
+        if not platform_dir:
+            logger.warning(
+                f"[deploy] Cannot undeploy binary '{record.name}': "
+                "platform_dir not detected"
+            )
+            return
+        if not record.binary_files_deployed:
+            logger.warning(
+                f"[deploy] No tracked files for binary '{record.name}' "
+                "(install_type={record.install_type!r}) — manual removal may be required"
+            )
+            return
+        for fname in record.binary_files_deployed:
+            target = platform_dir / fname
+            try:
+                if target.is_dir():
+                    shutil.rmtree(str(target), ignore_errors=True)
+                    logger.info(f"[deploy] Removed binary directory: {target}")
+                elif target.exists():
+                    target.unlink(missing_ok=True)
+                    logger.info(f"[deploy] Removed binary file: {target}")
+                else:
+                    logger.debug(f"[deploy] Binary item already absent: {target}")
+            except Exception as exc:
+                logger.error(
+                    f"[deploy] Failed to remove binary item '{fname}' "
+                    f"from {platform_dir}: {exc}"
+                )
 
     # -----------------------------------------------------------------------
     # Legacy deploy methods (kept for callers not yet migrated to Phase F)

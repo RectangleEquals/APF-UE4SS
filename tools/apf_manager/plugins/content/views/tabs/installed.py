@@ -14,6 +14,8 @@ Uninstalling the framework mod triggers a cascade impact analysis and confirmati
 
 from __future__ import annotations
 
+import re
+import webbrowser
 from typing import Optional, TYPE_CHECKING
 
 from kivy.metrics import dp
@@ -337,15 +339,17 @@ class InstalledTab(MDBoxLayout):
             theme_text_color="Custom", text_color=(0.55, 0.75, 0.95, 1),
         ))
 
-        # Version priority: DetectionResult (live from disk) → install state → updates service
+        # ---- UE4SS version detection (priority chain) ---------------------
         ue4ss_version = ""
+        ue4ss_source_url = ""
+
         if ue4ss_ok:
-            # Priority 1: version read from the DLL at detect-time (most authoritative,
-            # works for any UE4SS build including custom repos like Okaetsu/RE-UE4SS)
+            # P1: version from the DLL at detect-time (most authoritative)
             det_ver = getattr(self._detection.ue4ss, "version", None) if self._detection and self._detection.ue4ss else None
             if det_ver:
                 ue4ss_version = det_ver
-            # Priority 2: install state (fallback for installs with no DLL version resource)
+
+            # P2: install state record (fallback for builds with no DLL version resource)
             if not ue4ss_version:
                 game_id_v = self._ctrl.get_game_id(self._profile)
                 deploy_svc = self._ctrl.get_deploy_svc()
@@ -353,14 +357,72 @@ class InstalledTab(MDBoxLayout):
                     v = deploy_svc.get_installed_version_for_type("ue4ss", game_id_v)
                     if v and v != "unknown":
                         ue4ss_version = v
-        # Priority 3: updates service current-version tracker
+
+        # P3: updates service current-version tracker
         if not ue4ss_version and ue4ss_update_info:
-            ue4ss_version = ue4ss_update_info.current if ue4ss_update_info.current != "unknown" else ""
-        ue4ss_detail = (
-            f"v{ue4ss_version} installed" if (ue4ss_ok and ue4ss_version) else
-            ("Installed (version unavailable)" if ue4ss_ok else
-             "Not installed — get it from the Content tab")
-        )
+            v = ue4ss_update_info.current
+            if v and v != "unknown":
+                ue4ss_version = v
+
+        # Fallback A/B/C — read from install record (no network; data was cached at install time)
+        if ue4ss_ok and not ue4ss_version:
+            try:
+                from ...models.state.install import InstallStateManager
+                from ...models.state.pipeline import InstallRecord
+                game_id_v = self._ctrl.get_game_id(self._profile)
+                if game_id_v:
+                    ism = InstallStateManager(game_id_v)
+                    ue4ss_record: Optional[InstallRecord] = None
+                    for d in ism.get_all():
+                        rec = InstallRecord.from_dict(d)
+                        if rec.install_type and "ue4ss" in rec.install_type:
+                            ue4ss_record = rec
+                            break
+
+                    if ue4ss_record:
+                        # Fallback A: always build a GitHub URL when source_repo is known
+                        if ue4ss_record.source_repo:
+                            if ue4ss_record.source_tag:
+                                ue4ss_source_url = f"https://github.com/{ue4ss_record.source_repo}/releases/tag/{ue4ss_record.source_tag}"
+                            else:
+                                ue4ss_source_url = f"https://github.com/{ue4ss_record.source_repo}"
+
+                        # Fallback B: release tag captured at install time (uncertain — append ?)
+                        if not ue4ss_version and ue4ss_record.source_tag:
+                            ue4ss_version = f"{ue4ss_record.source_tag}?"
+
+            except Exception:
+                pass
+
+        # Fallback C: parse Changelog.md from the UE4SS installation directory
+        if ue4ss_ok and not ue4ss_version:
+            try:
+                ue4ss_dir = getattr(self._detection.ue4ss, "ue4ss_dir", None) if self._detection and self._detection.ue4ss else None
+                if ue4ss_dir:
+                    changelog = ue4ss_dir / "Changelog.md"
+                    if changelog.is_file():
+                        text = changelog.read_text(encoding="utf-8", errors="replace")
+                        # Commit hash first (more specific than semver)
+                        m = re.search(r'(?<!\w)[0-9a-fA-F]{7,40}(?!\w)', text)
+                        if m:
+                            ue4ss_version = f"{m.group()}?"
+                        else:
+                            m = re.search(r'\b(\d+\.\d+\.\d+[\w.-]*)', text)
+                            if m:
+                                ue4ss_version = f"{m.group(1)}?"
+            except Exception:
+                pass
+
+        if ue4ss_ok and ue4ss_version:
+            if ue4ss_version.endswith("?"):
+                ue4ss_detail = f"Installed ({ue4ss_version})"
+            else:
+                ue4ss_detail = f"v{ue4ss_version} installed"
+        elif ue4ss_ok:
+            ue4ss_detail = "Installed (version unavailable)"
+        else:
+            ue4ss_detail = "Not installed — get it from the Content tab"
+
         section.add_widget(self._status_row(
             icon="check-circle-outline" if ue4ss_ok else "close-circle-outline",
             icon_color=COL_STATUS_OK if ue4ss_ok else COL_STATUS_MISS,
@@ -369,6 +431,7 @@ class InstalledTab(MDBoxLayout):
             update_tag=(ue4ss_update_info.latest_stable.tag_name
                         if (ue4ss_update_info and ue4ss_update_info.is_update_available
                             and ue4ss_update_info.latest_stable) else ""),
+            link_url=ue4ss_source_url,
         ))
 
         from pathlib import Path
@@ -386,7 +449,7 @@ class InstalledTab(MDBoxLayout):
         return section
 
     def _status_row(self, icon: str, icon_color, label: str, detail: str,
-                    update_tag: str = "") -> MDBoxLayout:
+                    update_tag: str = "", link_url: str = "") -> MDBoxLayout:
         outer = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
         row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(28), spacing=dp(8),
@@ -405,6 +468,23 @@ class InstalledTab(MDBoxLayout):
             size_hint=(1, 1), halign="left", valign="middle",
             theme_text_color="Custom", text_color=COL_DIM,
         ))
+        if link_url:
+            _url = link_url
+            link_lbl = MDLabel(
+                text=_url, font_style="Label", role="small",
+                size_hint_x=None, width=min(dp(320), dp(4) * len(_url)),
+                halign="left", valign="middle",
+                theme_text_color="Custom", text_color=(0.3, 0.6, 1.0, 1),
+            )
+            link_btn = MDIconButton(
+                icon="open-in-new",
+                size_hint=(None, None), width=dp(24), height=dp(24),
+                pos_hint={"center_y": 0.5},
+            )
+            link_btn.bind(on_release=lambda *_, u=_url: webbrowser.open(u))
+            link_lbl.bind(on_touch_down=lambda w, t, u=_url: webbrowser.open(u) if w.collide_point(*t.pos) else None)
+            row.add_widget(link_lbl)
+            row.add_widget(link_btn)
         outer.add_widget(row)
         if update_tag:
             update_row = MDBoxLayout(

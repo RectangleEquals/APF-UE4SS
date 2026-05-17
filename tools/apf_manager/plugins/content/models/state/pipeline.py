@@ -135,9 +135,11 @@ class InstallRecord:
     source_registry_url: str = ""
     source_repo: str = ""
     source_folder: str = ""
+    source_tag: str = ""   # GitHub release tag captured at install time (Fallback B for version display)
     install_type: str = ""
     components: list = field(default_factory=list)
     bp_pak_files_deployed: list = field(default_factory=list)
+    binary_files_deployed: list = field(default_factory=list)  # top-level names in platform_dir written at install time
     capabilities_includes: list = field(default_factory=list)
     dependencies: list = field(default_factory=list)  # list[str] mod_ids this mod hard-depends on
     deployed_at: str = ""
@@ -191,4 +193,7 @@ class InstallRecord:
             r.install_type = content.install_type
             if bp_pak_files_deployed:
                 r.bp_pak_files_deployed = bp_pak_files_deployed
+            src = getattr(content, "source", None)
+            if src:
+                r.source_tag = getattr(src, "tag", "") or ""
         return r
