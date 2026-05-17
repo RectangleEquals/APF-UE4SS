@@ -140,6 +140,70 @@ class LoadOrderController:
             logger.warning(f"fix_load_order save failed: {exc}")
 
     # -----------------------------------------------------------------------
+    # BP Logic Mods section
+    # -----------------------------------------------------------------------
+
+    def get_bp_mods(self, detection, game_id: str = "") -> list:
+        """
+        Return all blueprint logic mods visible in the load order BP section.
+
+        Each entry is a tuple of (name: str, bp_mods: list[BpLogicMod], is_managed: bool).
+        Managed entries come from InstallStateManager records that include "blueprint" in
+        their components. Unmanaged entries are orphan files found in LogicMods/ that are
+        not tracked by any install record.
+        """
+        from ....models.state.install import InstallStateManager
+        from ....models.state.pipeline import InstallRecord
+        from ....models.descriptors.bp_component import parse_bp_mods
+
+        results = []
+        managed_pak_names: set[str] = set()
+
+        if game_id:
+            try:
+                state = InstallStateManager(game_id)
+                for d in state.get_all():
+                    record = InstallRecord.from_dict(d)
+                    if "blueprint" not in (record.components or []):
+                        continue
+                    pak_files = record.bp_pak_files_deployed or []
+                    if not pak_files:
+                        continue
+                    bp_list = parse_bp_mods(pak_files)
+                    if bp_list:
+                        name = record.name or record.folder_name or ""
+                        results.append((name, bp_list, True))
+                        managed_pak_names.update(record.bp_pak_files_deployed)
+            except Exception as exc:
+                logger.warning(f"[load_order] get_bp_mods: failed to read install state: {exc}")
+
+        # Orphan scan — unmanaged files in LogicMods/ not tracked by any install record
+        logicmods_dir = getattr(detection, "logicmods_dir", None) if detection else None
+        if logicmods_dir and logicmods_dir.is_dir():
+            orphan_files = [
+                f.name for f in sorted(logicmods_dir.iterdir())
+                if f.suffix.lower() in (".pak", ".ucas", ".utoc")
+                and f.name not in managed_pak_names
+            ]
+            for bp_mod in parse_bp_mods(orphan_files):
+                results.append((bp_mod.primary_name, [bp_mod], False))
+
+        return results
+
+    def is_bpml_active(self) -> bool:
+        """Return True if BPModLoaderMod is installed and enabled."""
+        mods_svc = self._host.get_service("mods")
+        if not mods_svc:
+            return False
+        for mod in mods_svc.scan():
+            if mod.folder_name.lower() == "bpmodloadermod":
+                mods_txt = self.get_mods_txt()
+                if mods_txt:
+                    return mods_txt.is_enabled(mod.folder_name)
+                return True  # present but no mods.txt — assume active
+        return False
+
+    # -----------------------------------------------------------------------
     # Error count (for pipeline panel badge)
     # -----------------------------------------------------------------------
 

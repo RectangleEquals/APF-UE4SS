@@ -92,13 +92,14 @@ class VersionsTab(MDBoxLayout):
         self.add_widget(MDDivider())
         self.add_widget(make_version_header())
 
-        for component in _COMPONENTS:
+        for i, component in enumerate(_COMPONENTS):
             row = VersionRow(
                 component=component,
                 label=_COMPONENT_LABELS[component],
                 bump_part=self._ctrl.get_bump_part(component),
                 on_bump_menu=self._open_bump_menu,
                 on_commit_tag=self._on_commit_tag,
+                row_index=i,
             )
             self._version_rows[component] = row
             self.add_widget(row)

@@ -52,6 +52,8 @@ class RegistriesTab(MDBoxLayout):
         self._search_github_btn: Optional[MDButton] = None
         self._share_btn: Optional[MDButton] = None
         self._game_id: str = ""
+        self._viewer_in_flight: bool = False
+        self._entry_rows: list = []
         from ...controllers.tabs.registries.controller import RegistriesController
         self._ctrl = RegistriesController(host)
         self._build_ui()
@@ -198,6 +200,7 @@ class RegistriesTab(MDBoxLayout):
         self._ue4ss_card.refresh(ue4ss_detected, self._ctrl.get_ue4ss_update_info())
 
     def _refresh_registries(self) -> None:
+        self._entry_rows.clear()
         self._registries_list.clear_widgets()
         if not self._host.has_service("registry"):
             self._registries_list.add_widget(MDLabel(
@@ -225,13 +228,15 @@ class RegistriesTab(MDBoxLayout):
             return
 
         for entry in entries:
-            self._registries_list.add_widget(RegistryEntryRow(
+            row = RegistryEntryRow(
                 entry=entry,
                 on_view=self._on_view,
                 on_report=self._on_report,
                 on_refresh=self._on_refresh_one,
                 on_remove=self._on_remove,
-            ))
+            )
+            self._entry_rows.append(row)
+            self._registries_list.add_widget(row)
 
     # -----------------------------------------------------------------------
     # Actions
@@ -255,14 +260,9 @@ class RegistriesTab(MDBoxLayout):
                 self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
                 return
 
-        if self._add_btn:
-            self._add_btn.disabled = True
-        self._set_add_status("Loading\u2026", (0.7, 0.7, 0.7, 1))
-        self._ctrl.add_registry(url, self._game_id, on_done=self._on_add_done)
+        self._start_view(url, self._on_add_done)
 
     def _on_add_done(self, success: bool, msg: str) -> None:
-        if self._add_btn:
-            self._add_btn.disabled = False
         color = (0.3, 0.8, 0.4, 1) if success else (0.9, 0.3, 0.3, 1)
         self._set_add_status(msg, color)
         if success:
@@ -279,18 +279,35 @@ class RegistriesTab(MDBoxLayout):
             self._add_status.text_color = color
 
     def _on_view(self, entry) -> None:
-        if self._add_btn:
-            self._add_btn.disabled = True
-        self._set_add_status("Opening viewer\u2026", (0.7, 0.7, 0.7, 1))
-        self._ctrl.add_registry(
-            entry.url, self._game_id,
-            on_done=self._on_view_done,
-        )
+        self._start_view(entry.url, self._on_view_done)
 
     def _on_view_done(self, ok: bool, msg: str) -> None:
-        if self._add_btn:
-            self._add_btn.disabled = False
         self._set_add_status("" if ok else msg, (0.9, 0.3, 0.3, 1))
+
+    # -----------------------------------------------------------------------
+    # Viewer in-flight guard
+    # -----------------------------------------------------------------------
+
+    def _start_view(self, url: str, on_done) -> None:
+        if self._viewer_in_flight:
+            return
+        self._viewer_in_flight = True
+        self._set_all_view_buttons_enabled(False)
+        self._set_add_status("Loading\u2026", (0.7, 0.7, 0.7, 1))
+        self._ctrl.add_registry(url, self._game_id, on_done=self._wrap_view_done(on_done))
+
+    def _wrap_view_done(self, callback) -> callable:
+        def _done(ok: bool, msg: str) -> None:
+            self._viewer_in_flight = False
+            self._set_all_view_buttons_enabled(True)
+            callback(ok, msg)
+        return _done
+
+    def _set_all_view_buttons_enabled(self, enabled: bool) -> None:
+        if self._add_btn:
+            self._add_btn.disabled = not enabled
+        for row in self._entry_rows:
+            row.set_view_enabled(enabled)
 
     def _on_remove(self, entry) -> None:
         self._ctrl.remove_registry(entry.url)
@@ -388,10 +405,7 @@ class RegistriesTab(MDBoxLayout):
             if self._ctrl.is_blacklisted(owner, repo):
                 self._set_add_status("This repository is on the block list.", (0.9, 0.3, 0.3, 1))
                 return
-        if self._add_btn:
-            self._add_btn.disabled = True
-        self._set_add_status("Loading\u2026", (0.7, 0.7, 0.7, 1))
-        self._ctrl.add_registry(url, self._game_id, on_done=self._on_add_done)
+        self._start_view(url, self._on_add_done)
 
     def _on_share(self) -> None:
         encoded = self._ctrl.export_registries_b64()

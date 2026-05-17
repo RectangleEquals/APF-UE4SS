@@ -63,6 +63,8 @@ class QueuePanelMixin:
             bar = MDLinearProgressIndicator(size_hint=(1, None), height=dp(4))
             bar.value = item.progress
             row.add_widget(bar)
+            # Register bar reference so _set_progress can update it without a full rebuild
+            getattr(self, '_progress_bars', {})[item.key] = bar
 
         if item.status == "error" and item.error_msg:
             row.add_widget(MDLabel(
@@ -112,7 +114,14 @@ class QueuePanelMixin:
     def _set_progress(self, item: "_QueueItem", progress: float) -> None:
         with self._queue_lock:
             item.progress = progress
-        Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
+        # Update the progress bar widget directly rather than rebuilding the full UI.
+        # A full rebuild on every progress tick (potentially hundreds per second) causes
+        # jitter and freezes. Only fall back to a rebuild if the bar isn't in the tree yet.
+        bar = getattr(self, '_progress_bars', {}).get(item.key)
+        if bar:
+            Clock.schedule_once(lambda dt, b=bar, v=progress: setattr(b, 'value', v), 0)
+        else:
+            Clock.schedule_once(lambda dt: self._rebuild_ui(), 0)
 
     def _on_item_done(self, item: "_QueueItem") -> None:
         self._scan_cache_and_rebuild()

@@ -217,6 +217,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         self._expanded_cache: set[str] = set()
         self._cache_dirty: bool = False
         self._title_label = None
+        self._progress_bars: dict = {}
         from ...controllers.tabs.downloads.cache import CacheController
         self._ctrl = CacheController(self._host, on_refresh=self._scan_cache_and_rebuild)
         self._build_ui()
@@ -422,6 +423,8 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
             self._title_label.text = "Downloads"
 
     def _rebuild_ui(self) -> None:
+        # Drop stale progress bar references before clearing the widget tree
+        self._progress_bars.clear()
         self._content.clear_widgets()
         self._update_title_size()
 
@@ -465,6 +468,10 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
                 halign="center", size_hint=(1, None), height=dp(80),
                 theme_text_color="Secondary",
             ))
+
+        # Reset scroll to top after rebuild so cleared/completed content doesn't leave
+        # the view stranded at a stale scroll position showing empty space.
+        Clock.schedule_once(lambda dt: setattr(self._scroll, 'scroll_y', 1.0), 0)
 
     def _add_items_by_category(self, items: list, row_builder, section: str = "") -> None:
         from collections import defaultdict

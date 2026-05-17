@@ -159,6 +159,10 @@ class LibraryScreen(MDBoxLayout):
             self._host.get_service("updates").check_all(
                 on_done=self._apply_update_dot
             )
+        # Subscribe so UE4SS badges update immediately after detection changes
+        # (e.g. after installing UE4SS from the game hub content tab)
+        if hasattr(self._host, "subscribe_state_change"):
+            self._host.subscribe_state_change("detection", self._on_detection_changed)
 
     def _apply_update_dot(self) -> None:
         if self._settings_badge_btn is None:
@@ -273,6 +277,15 @@ class LibraryScreen(MDBoxLayout):
     def _check_ue4ss_badge(self, profile: "GameProfile", tile: GameTile) -> None:
         status = self._ctrl.get_ue4ss_badge_status(profile)
         Clock.schedule_once(lambda dt, s=status: tile.set_ue4ss_badge(s), 0)
+
+    def _on_detection_changed(self) -> None:
+        """Refresh UE4SS badges for all visible game tiles after a detection state change."""
+        for game_id, tile in list(self._tile_map.items()):
+            profile = self._config.games.get(game_id)
+            if profile:
+                threading.Thread(
+                    target=self._check_ue4ss_badge, args=(profile, tile), daemon=True,
+                ).start()
 
     # -----------------------------------------------------------------------
     # Tile click

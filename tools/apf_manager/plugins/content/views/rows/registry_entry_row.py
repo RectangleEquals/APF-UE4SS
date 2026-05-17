@@ -39,12 +39,13 @@ class RegistryEntryRow(MDBoxLayout):
             **kwargs,
         )
         self.add_widget(MDLabel(text=entry.repo.full_name, size_hint=(1, 1)))
-        self.add_widget(MDIconButton(
+        self._view_btn = MDIconButton(
             icon="eye",
             theme_icon_color="Custom",
             icon_color=(0.5, 0.75, 1.0, 1),
             on_release=lambda *_: on_view(entry) if on_view else None,
-        ))
+        )
+        self.add_widget(self._view_btn)
         self.add_widget(MDIconButton(
             icon="flag",
             theme_icon_color="Custom",
@@ -59,3 +60,6 @@ class RegistryEntryRow(MDBoxLayout):
             icon="delete",
             on_release=lambda *_: on_remove(entry) if on_remove else None,
         ))
+
+    def set_view_enabled(self, enabled: bool) -> None:
+        self._view_btn.disabled = not enabled

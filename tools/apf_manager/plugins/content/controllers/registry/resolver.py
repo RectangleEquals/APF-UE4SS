@@ -252,7 +252,10 @@ class RegistryResolver:
                 if has_lua or has_cpp or has_bp:
                     folder_name = folder_path.split("/")[-1] if "/" in folder_path else folder_path
                     _comps   = (["lua"] if has_lua else []) + (["cpp"] if has_cpp else []) + (["blueprint"] if has_bp else [])
-                    _bp_paks = [e["name"] for e in sub_contents if e["name"].lower().endswith(".pak")]
+                    _bp_paks = [
+                        e["name"] for e in sub_contents
+                        if e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
+                    ]
                     mods.append(DiscoveredMod(
                         owner=owner, repo=repo, folder=folder_path,
                         manifest={"name": folder_name},
@@ -626,7 +629,10 @@ class RegistryResolver:
             if _na_lua or _na_cpp or _na_bp:
                 node_type = "non_ap_mod"
                 _na_comps   = (["lua"] if _na_lua else []) + (["cpp"] if _na_cpp else []) + (["blueprint"] if _na_bp else [])
-                _na_bp_paks = [e["name"] for e in sub_contents if e.get("name","").lower().endswith(".pak")]
+                _na_bp_paks = [
+                    e["name"] for e in sub_contents
+                    if e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
+                ]
                 mod = DiscoveredMod(
                     owner=owner, repo=repo, folder=epath,
                     manifest={"name": ename}, mod_id="",

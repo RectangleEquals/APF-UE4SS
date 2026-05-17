@@ -414,10 +414,17 @@ class ContentPipelinePanel(PluginPanel):
         # Re-query framework state so child tabs receive fresh detection data.
         self._fw_state = self._ctrl.get_framework_state()
         detection = self._fw_state.get("detection")
+        game_id = self._ctrl.get_game_id(self._profile)
         if self._tab_load_order:
             self._tab_load_order.refresh(self._profile, detection)
         if self._tab_installed:
             self._tab_installed.refresh(self._profile, detection)
+        # Refresh content tab so installed-state badges update on mod rows
+        if self._tab_content:
+            self._tab_content.refresh(game_id)
+        # Rescan downloads cache so install-status indicators stay current
+        if self._tab_downloads:
+            self._tab_downloads._scan_cache_and_rebuild()
         self._update_badges()
 
     def _on_registry_state_changed(self) -> None:
@@ -427,6 +434,10 @@ class ContentPipelinePanel(PluginPanel):
         self._update_badges()
 
     def _on_detection_state_changed(self) -> None:
-        """X-4: Re-query framework state after UE4SS install completes."""
+        """Re-query framework state and refresh detection-sensitive UI after any detection change."""
         self._fw_state = self._ctrl.get_framework_state()
         self._update_warning_bar(self._fw_state)
+        # Refresh registries tab UE4SS status card so it reflects the new detection state
+        if self._tab_registries:
+            ue4ss_ok = bool(self._fw_state.get("ue4ss_ok", False))
+            self._tab_registries._refresh_ue4ss_card(ue4ss_ok)

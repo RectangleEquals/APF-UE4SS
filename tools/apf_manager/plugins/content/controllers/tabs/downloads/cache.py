@@ -91,20 +91,32 @@ class CacheController:
         if not deploy_svc or not detection:
             return
 
+        # Mutable local flags — updated inline so same-batch UE4SS/framework installs
+        # unlock subsequent mod/template installs without a separate install run.
+        ue4ss_ok = ue4ss_detected
+        framework_ok = framework_detected
+
         for ci in list(items):
             try:
                 if ci.category == "template":
-                    if not (ue4ss_detected and framework_detected):
+                    if not (ue4ss_ok and framework_ok):
                         logger.warning(
                             f"Skipped template '{ci.display_name}': framework mod required"
                         )
                         continue
                 elif ci.category == "mod":
-                    if not ue4ss_detected:
+                    if not ue4ss_ok:
                         logger.warning(f"Skipped mod '{ci.display_name}': UE4SS required")
                         continue
                 deploy_svc.deploy_content(ci.cache_path, ci.content, detection, game_id)
                 logger.info(f"Installed '{ci.display_name}'")
+                # Update dep flags immediately so later items in this batch can use them
+                if ci.category == "other":
+                    it = getattr(ci.content, "install_type", "") or ""
+                    if "ue4ss" in it:
+                        ue4ss_ok = True
+                    if "framework" in it:
+                        framework_ok = True
 
             except Exception as exc:
                 logger.error(f"Install failed for '{ci.display_name}': {exc}")

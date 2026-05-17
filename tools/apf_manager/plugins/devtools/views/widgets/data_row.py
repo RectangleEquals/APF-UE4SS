@@ -9,28 +9,38 @@ from kivymd.uix.behaviors import HoverBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 
+_BG_ROW_EVEN = (0.11, 0.12, 0.15, 1)
+_BG_ROW_ODD  = (0.09, 0.10, 0.13, 1)
+_BG_HEADER   = (0.07, 0.08, 0.10, 1)
+_BG_HOVER    = (1, 1, 1, 0.06)
+
 
 class DevDataRow(HoverBehavior, MDBoxLayout):
     """
     Horizontal data row base class for DevTools tabs.
 
-    Provides consistent spacing/padding, animated hover highlight (via HoverBehavior),
-    and optional on_press callback. Subclasses add typed cells via add_cell().
+    Provides consistent spacing/padding, alternating row background colors,
+    animated hover highlight (via HoverBehavior), and optional on_press callback.
+    Subclasses add typed cells via add_cell().
     """
 
     def __init__(
         self,
         hover: bool = True,
+        row_index: int = 0,
         on_press: Optional[Callable] = None,
         **kwargs,
     ) -> None:
+        base_bg = _BG_ROW_EVEN if row_index % 2 == 0 else _BG_ROW_ODD
         super().__init__(
             orientation="horizontal",
             adaptive_height=True,
             spacing=dp(8),
             padding=(0, dp(4), 0, dp(4)),
+            md_bg_color=base_bg,
             **kwargs,
         )
+        self._base_bg = base_bg
         self._hover_enabled = hover
         self._on_press_cb = on_press
 
@@ -58,17 +68,17 @@ class DevDataRow(HoverBehavior, MDBoxLayout):
     def on_enter(self):
         if not self._hover_enabled:
             return
-        Animation(md_bg_color=(1, 1, 1, 0.06), duration=0.10).start(self)
+        Animation(md_bg_color=_BG_HOVER, duration=0.10).start(self)
 
     def on_leave(self):
         if not self._hover_enabled:
             return
-        Animation(md_bg_color=(0, 0, 0, 0), duration=0.10).start(self)
+        Animation(md_bg_color=self._base_bg, duration=0.10).start(self)
 
     def on_parent(self, widget, parent):
         if parent is None:
             Animation.cancel_all(self, "md_bg_color")
-            self.md_bg_color = (0, 0, 0, 0)
+            self.md_bg_color = self._base_bg
 
     # -----------------------------------------------------------------------
     # Press
@@ -91,6 +101,7 @@ class DevHeaderRow(MDBoxLayout):
             adaptive_height=True,
             spacing=dp(8),
             padding=(0, dp(2), 0, dp(2)),
+            md_bg_color=_BG_HEADER,
             **kwargs,
         )
 

@@ -36,15 +36,23 @@ class RegistriesController:
 
         busy = self._host.get_service("busy")
         if busy:
-            busy.set_busy("registry.viewer", "Fetching registry…")
+            busy.set_busy("registry.viewer", "Fetching registry index…")
 
-        # Fix A: supply viewer callback so the service never imports Kivy
+        # Supply viewer callback so the service never imports Kivy
         def _on_viewer_requested(kwargs: dict) -> None:
             from kivy.clock import Clock
             from ...registry.viewer import RegistryViewer
-            # Fetch complete — clear overlay before viewer opens
+            # Update status before clearing overlay so user sees the transition
             if busy:
+                busy.update_message("registry.viewer", "Opening registry viewer…")
                 busy.clear_busy("registry.viewer")
+
+            # Wrap the on_cancel from the service to ensure it runs on the Kivy thread
+            original_cancel = kwargs.get("on_cancel")
+            def _safe_cancel():
+                from kivy.clock import Clock as _Clock
+                _Clock.schedule_once(lambda dt: original_cancel() if original_cancel else None, 0)
+            kwargs = dict(kwargs, on_cancel=_safe_cancel)
 
             def _ui(dt):
                 RegistryViewer(self._host).show(**kwargs)

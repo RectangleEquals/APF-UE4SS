@@ -113,6 +113,12 @@ class ModInfo:
     is_orphaned: bool = False
 
     @property
+    def bp_mods(self) -> list:
+        """Typed BpLogicMod instances derived from bp_pak_files (computed, not stored)."""
+        from ....models.descriptors.bp_component import parse_bp_mods
+        return parse_bp_mods(self.bp_pak_files)
+
+    @property
     def is_managed(self) -> bool:
         return not self.is_orphaned and bool(self.mod_id)
 

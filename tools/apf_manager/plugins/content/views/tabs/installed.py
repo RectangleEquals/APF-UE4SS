@@ -253,13 +253,25 @@ class InstalledTab(MDBoxLayout):
         if not logicmods_dir or not logicmods_dir.is_dir():
             return
         from ...models.state.install import InstallStateManager
+        from ...models.descriptors.bp_component import parse_bp_mods
         game_id = self._ctrl.get_game_id(self._profile)
         state = InstallStateManager(game_id) if game_id else None
-        for f in sorted(logicmods_dir.iterdir()):
-            if f.suffix.lower() not in (".pak", ".ucas", ".utoc"):
-                continue
-            if state and state.is_pak_managed(f.name):
-                continue
+
+        # Collect unmanaged BP files, then group them via typed model so that
+        # .ucas/.utoc pairs are removed atomically.
+        unmanaged = [
+            f.name for f in sorted(logicmods_dir.iterdir())
+            if f.suffix.lower() in (".pak", ".ucas", ".utoc")
+            and not (state and state.is_pak_managed(f.name))
+        ]
+        if not unmanaged:
+            return
+
+        for bp_mod in parse_bp_mods(unmanaged):
+            file_paths = [logicmods_dir / fname for fname in bp_mod.files]
+            type_badge = bp_mod.display_type  # "PAK" or "UCAS/UTOC"
+            display_name = bp_mod.primary_name
+
             row = MDBoxLayout(
                 orientation="horizontal", size_hint_y=None, height=dp(40),
                 md_bg_color=(0.16, 0.12, 0.07, 1), padding=[dp(8), dp(4)], spacing=dp(8),
@@ -268,8 +280,16 @@ class InstalledTab(MDBoxLayout):
                 icon="folder-account", size_hint=(None, 1), width=dp(20),
                 theme_icon_color="Custom", icon_color=COL_WARN,
             ))
+            # Type badge
             row.add_widget(MDLabel(
-                text=f"Manually installed BP file: {f.name}",
+                text=f"[{type_badge}]",
+                font_style="Label", role="small",
+                size_hint=(None, 1), width=dp(72),
+                halign="left", valign="middle",
+                theme_text_color="Custom", text_color=COL_WARN,
+            ))
+            row.add_widget(MDLabel(
+                text=f"{display_name}  •  Manually installed",
                 font_style="Body", size_hint=(1, 1),
                 halign="left", valign="middle",
             ))
@@ -277,7 +297,7 @@ class InstalledTab(MDBoxLayout):
                 MDButtonText(text="Remove"),
                 style="text", size_hint=(None, None), size=(dp(80), dp(28)),
                 pos_hint={"center_y": 0.5},
-                on_release=lambda *_, fp=f: self._remove_pak(fp),
+                on_release=lambda *_, fps=file_paths: self._remove_bp_group(fps),
             ))
             self._list.add_widget(row)
 
@@ -317,15 +337,23 @@ class InstalledTab(MDBoxLayout):
             theme_text_color="Custom", text_color=(0.55, 0.75, 0.95, 1),
         ))
 
-        # Version priority: install record (authoritative) → updates service → plain "installed"
+        # Version priority: DetectionResult (live from disk) → install state → updates service
         ue4ss_version = ""
         if ue4ss_ok:
-            game_id_v = self._ctrl.get_game_id(self._profile)
-            deploy_svc = self._ctrl.get_deploy_svc()
-            if deploy_svc:
-                v = deploy_svc.get_installed_version_for_type("ue4ss", game_id_v)
-                if v and v != "unknown":
-                    ue4ss_version = v
+            # Priority 1: version read from the DLL at detect-time (most authoritative,
+            # works for any UE4SS build including custom repos like Okaetsu/RE-UE4SS)
+            det_ver = getattr(self._detection.ue4ss, "version", None) if self._detection and self._detection.ue4ss else None
+            if det_ver:
+                ue4ss_version = det_ver
+            # Priority 2: install state (fallback for installs with no DLL version resource)
+            if not ue4ss_version:
+                game_id_v = self._ctrl.get_game_id(self._profile)
+                deploy_svc = self._ctrl.get_deploy_svc()
+                if deploy_svc:
+                    v = deploy_svc.get_installed_version_for_type("ue4ss", game_id_v)
+                    if v and v != "unknown":
+                        ue4ss_version = v
+        # Priority 3: updates service current-version tracker
         if not ue4ss_version and ue4ss_update_info:
             ue4ss_version = ue4ss_update_info.current if ue4ss_update_info.current != "unknown" else ""
         ue4ss_detail = (
@@ -641,6 +669,16 @@ class InstalledTab(MDBoxLayout):
             pak_path.unlink(missing_ok=True)
         except Exception as exc:
             self._host.log(f"[installed] Failed to remove {pak_path.name}: {exc}")
+        Clock.schedule_once(lambda dt: self._do_refresh(), 0)
+
+    def _remove_bp_group(self, file_paths: list) -> None:
+        """Remove all files belonging to a BpLogicMod group atomically, then refresh."""
+        from kivy.clock import Clock
+        for fp in file_paths:
+            try:
+                fp.unlink(missing_ok=True)
+            except Exception as exc:
+                self._host.log(f"[installed] Failed to remove {fp.name}: {exc}")
         Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
     # -----------------------------------------------------------------------

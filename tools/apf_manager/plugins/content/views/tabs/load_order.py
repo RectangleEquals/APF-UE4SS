@@ -264,6 +264,93 @@ class LoadOrderTab(MDBoxLayout):
             )
             self._list_layout.add_widget(kb_row)
 
+        # BP Logic Mods section — locked, rendered after mods.txt list
+        _game_id = (
+            getattr(self._profile, "game_id", None)
+            or getattr(self._profile, "name", "")
+        ) if self._profile else ""
+        self._add_bp_section(_game_id)
+
+    # -----------------------------------------------------------------------
+    # BP Logic Mods section
+    # -----------------------------------------------------------------------
+
+    def _add_bp_section(self, game_id: str = "") -> None:
+        """Append the locked BP Logic Mods section at the bottom of the list."""
+        bp_entries = self._ctrl.get_bp_mods(self._detection, game_id)
+        if not bp_entries:
+            return
+
+        from kivy.metrics import dp as _dp
+        from kivymd.uix.label import MDIcon as _MDIcon, MDLabel as _MDLabel
+        from kivymd.uix.boxlayout import MDBoxLayout as _MDBoxLayout
+
+        bpml_ok = self._ctrl.is_bpml_active()
+        _COL_WARN = (1.0, 0.75, 0.0, 1)
+        _COL_DIM  = (0.55, 0.55, 0.55, 1)
+
+        # Section header
+        hdr = _MDBoxLayout(
+            orientation="horizontal",
+            size_hint_y=None, height=_dp(28),
+            md_bg_color=(0.10, 0.10, 0.10, 1),
+            padding=[_dp(8), 0], spacing=_dp(6),
+        )
+        hdr.add_widget(_MDLabel(
+            text="Blueprint Logic Mods  (via BPModLoaderMod)",
+            font_style="Label", role="small",
+            size_hint=(1, 1), halign="left", valign="middle",
+            theme_text_color="Custom",
+            text_color=_COL_WARN if not bpml_ok else _COL_DIM,
+        ))
+        if not bpml_ok:
+            hdr.add_widget(_MDIcon(
+                icon="alert-outline",
+                size_hint=(None, 1), width=_dp(20),
+                theme_icon_color="Custom", icon_color=_COL_WARN,
+            ))
+        from .....core.views.widgets.tip_icon_button import TipIconButton as _Tip
+        hdr.add_widget(_Tip(
+            icon="information-outline",
+            tooltip_text=(
+                "Load order for BP mods is managed by BPModLoaderMod — "
+                "reordering is not yet supported here."
+            ),
+        ))
+        self._list_layout.add_widget(hdr)
+
+        # One row per BP mod entry
+        for i, (name, bp_list, is_managed) in enumerate(bp_entries):
+            type_labels = " · ".join(m.display_type for m in bp_list)
+            source_label = "" if is_managed else "  [Manually installed]"
+
+            row = _MDBoxLayout(
+                orientation="horizontal",
+                size_hint_y=None, height=_dp(36),
+                md_bg_color=(0.13, 0.13, 0.13, 1) if i % 2 == 0 else (0.11, 0.11, 0.11, 1),
+                padding=[_dp(8), 0], spacing=_dp(6),
+            )
+            row.add_widget(_MDIcon(
+                icon="lock-outline",
+                size_hint=(None, 1), width=_dp(20),
+                theme_icon_color="Custom", icon_color=_COL_DIM,
+            ))
+            row.add_widget(_MDLabel(
+                text=f"[{type_labels}]",
+                font_style="Label", role="small",
+                size_hint=(None, 1), width=_dp(96),
+                halign="left", valign="middle",
+                theme_text_color="Custom", text_color=_COL_DIM,
+            ))
+            row.add_widget(_MDLabel(
+                text=f"{name}{source_label}",
+                font_style="Body",
+                size_hint=(1, 1), halign="left", valign="middle",
+                theme_text_color="Custom",
+                text_color=_COL_WARN if not is_managed else (1, 1, 1, 1),
+            ))
+            self._list_layout.add_widget(row)
+
     # -----------------------------------------------------------------------
     # Actions
     # -----------------------------------------------------------------------

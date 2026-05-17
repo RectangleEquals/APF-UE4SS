@@ -7,10 +7,17 @@ from typing import Optional
 
 from ..base.install import BaseInstallController
 
+# All file extensions that belong in LogicMods/
+_BP_EXTENSIONS = frozenset({".pak", ".ucas", ".utoc"})
+
 
 class BlueprintPakInstallController(BaseInstallController):
     """
-    Deploys blueprint pak files to the game's LogicMods directory.
+    Deploys blueprint pak/ucas/utoc files to the game's LogicMods directory.
+
+    Extracts ALL blueprint logic mod file types (.pak, .ucas, .utoc) from the zip
+    so that UcasLogicMod pairs (which require both .ucas and .utoc) are deployed
+    atomically.
 
     HARD ERROR if logicmods_dir is not provided — blueprint pak files must not
     be deployed to an unknown location. The RuntimeError propagates through
@@ -33,5 +40,5 @@ class BlueprintPakInstallController(BaseInstallController):
         logicmods_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(zip_path, "r") as zf:
             for info in zf.infolist():
-                if info.filename.lower().endswith(".pak"):
+                if Path(info.filename).suffix.lower() in _BP_EXTENSIONS:
                     zf.extract(info, str(logicmods_dir))

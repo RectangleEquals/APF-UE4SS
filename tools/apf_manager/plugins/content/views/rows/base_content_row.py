@@ -144,12 +144,18 @@ class BaseContentRow(MDBoxLayout):
                 spacing=dp(8),
             )
 
-        # Bind whole header click to on_expand (for PackageHeaderWidget-style rows)
+        # Bind whole header click to on_expand (for PackageHeaderWidget-style rows).
+        # _excl holds the checkbox ref (set below) so checkbox taps don't also expand.
+        _excl = [None]
         if self._expand_on_header and self._on_expand:
             _fn = self._on_expand
-            header.bind(on_touch_down=lambda w, t, fn=_fn: (
-                fn() if w.collide_point(*t.pos) else None
-            ))
+            def _on_header_tap(w, t, fn=_fn, excl_ref=_excl):
+                ex = excl_ref[0]
+                if ex and ex.collide_point(*t.pos):
+                    return None
+                if w.collide_point(*t.pos):
+                    fn()
+            header.bind(on_touch_down=_on_header_tap)
 
         # --- Checkbox (change-detection guard) ---
         if self._checked is not None:
@@ -165,6 +171,7 @@ class BaseContentRow(MDBoxLayout):
                     if val != was:
                         fn(val)
                 cb.bind(active=_guard)
+            _excl[0] = cb  # exclude checkbox area from header-tap expand
             header.add_widget(cb)
         else:
             header.add_widget(MDBoxLayout(size_hint=(None, 1), width=dp(24)))

@@ -229,15 +229,24 @@ class ContentRowWidget(BaseContentRow):
         elif cpp_count:
             comp_label = "C++"
         elif blueprint_count:
-            comp_label = "Blueprint"
+            # Use typed model to show PAK vs UCAS/UTOC when available
+            bp_label = "Blueprint"
+            if hasattr(comps, "bp_mods"):
+                bp_list = comps.bp_mods
+                if len(bp_list) == 1:
+                    bp_label = f"{bp_list[0].display_type} Mod"
+                elif len(bp_list) > 1:
+                    total_files = sum(len(m.files) for m in bp_list)
+                    bp_label = f"BP Mods ({total_files} files)"
+            comp_label = bp_label
         else:
             comp_label = "Lua"
         if isinstance(c, _FW):
-            return f"Framework {comp_label} Mod"
+            return f"Framework {comp_label}"
         elif isinstance(c, _AP):
-            return f"AP {comp_label} Mod"
+            return f"AP {comp_label}"
         else:
-            return f"Non-AP {comp_label} Mod"
+            return f"Non-AP {comp_label}"
 
     @staticmethod
     def _subtitle(c, is_grb, is_eub, is_manual, is_tpl, is_mod) -> str:

@@ -66,6 +66,12 @@ class ModComponents:
     bp_pak_files: list = field(default_factory=list)
 
     @property
+    def bp_mods(self) -> list:
+        """Typed BpLogicMod instances derived from bp_pak_files (computed, not stored)."""
+        from .bp_component import parse_bp_mods
+        return parse_bp_mods(self.bp_pak_files)
+
+    @property
     def component_count(self) -> int:
         return sum([self.lua, self.cpp, self.blueprint])
 

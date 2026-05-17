@@ -1,4 +1,4 @@
-"""VersionRow + VersionHeaderRow for the DevTools Versions tab."""
+"""VersionRow + make_version_header for the DevTools Versions tab."""
 from __future__ import annotations
 
 from typing import Callable, Optional
@@ -9,12 +9,19 @@ from kivymd.uix.label import MDLabel
 
 from .data_row import DevDataRow, DevHeaderRow
 
-_COLS = [("Component", 0.15), ("Local", 0.18), ("Remote", 0.18),
-         ("Status", 0.15), ("Bump", 0.18), ("Action", 0.16)]
+# Fixed column widths (dp) — shared by header and data rows so they always align
+# regardless of ScrollView scrollbar width.
+_W = dict(component=110, local=90, remote=90, status=90, bump=120, action=130)
+
+_COLS = [
+    ("Component", None), ("Local", None), ("Remote", None),
+    ("Status", None), ("Bump", None), ("Action", None),
+]
+_FIXED_WIDTHS = {i: dp(v) for i, v in enumerate(_W.values())}
 
 
 def make_version_header() -> DevHeaderRow:
-    return DevHeaderRow.from_columns(_COLS)
+    return DevHeaderRow.from_columns(_COLS, fixed_widths=_FIXED_WIDTHS)
 
 
 class VersionRow(DevDataRow):
@@ -29,33 +36,52 @@ class VersionRow(DevDataRow):
         bump_part: str,
         on_bump_menu: Callable,
         on_commit_tag: Callable,
+        row_index: int = 0,
         **kwargs,
     ) -> None:
-        super().__init__(hover=False, **kwargs)
+        super().__init__(hover=False, row_index=row_index, **kwargs)
         self.component = component
 
-        self._label_lbl = MDLabel(text=label, size_hint_x=0.15, adaptive_height=True)
+        self._label_lbl = MDLabel(
+            text=label,
+            size_hint_x=None, width=dp(_W["component"]),
+            adaptive_height=True,
+        )
         self._local_lbl = MDLabel(
-            text="--", size_hint_x=0.18, adaptive_height=True,
-            theme_text_color="Secondary")
+            text="--",
+            size_hint_x=None, width=dp(_W["local"]),
+            adaptive_height=True,
+            theme_text_color="Secondary",
+        )
         self._remote_lbl = MDLabel(
-            text="--", size_hint_x=0.18, adaptive_height=True,
-            theme_text_color="Secondary")
-        self._status_lbl = MDLabel(text="", size_hint_x=0.15, adaptive_height=True)
+            text="--",
+            size_hint_x=None, width=dp(_W["remote"]),
+            adaptive_height=True,
+            theme_text_color="Secondary",
+        )
+        self._status_lbl = MDLabel(
+            text="",
+            size_hint_x=None, width=dp(_W["status"]),
+            adaptive_height=True,
+        )
         self._bump_btn = MDButton(
             MDButtonIcon(icon="chevron-up"),
             MDButtonText(text=bump_part),
-            size_hint_x=0.18,
+            size_hint_x=None,
+            width=dp(_W["bump"]),
         )
         self._bump_btn.bind(
-            on_release=lambda btn, c=component: on_bump_menu(btn, c))
+            on_release=lambda btn, c=component: on_bump_menu(btn, c),
+        )
         self._commit_btn = MDButton(
             MDButtonIcon(icon="tag-check"),
             MDButtonText(text="Commit & Tag"),
-            size_hint_x=0.16,
+            size_hint_x=None,
+            width=dp(_W["action"]),
         )
         self._commit_btn.bind(
-            on_release=lambda *_, c=component: on_commit_tag(c))
+            on_release=lambda *_, c=component: on_commit_tag(c),
+        )
 
         for w in (self._label_lbl, self._local_lbl, self._remote_lbl,
                   self._status_lbl, self._bump_btn, self._commit_btn):

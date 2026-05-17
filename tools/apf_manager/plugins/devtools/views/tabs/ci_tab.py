@@ -155,9 +155,9 @@ class CITab(MDBoxLayout):
                 ))
                 self._set_wf_status("")
                 return
-            for wf in workflows:
+            for i, wf in enumerate(workflows):
                 self._workflows_list.add_widget(
-                    WorkflowRow(wf, on_run=_on_wf_run, on_view=self._open_url))
+                    WorkflowRow(wf, on_run=_on_wf_run, on_view=self._open_url, row_index=i))
             self._set_wf_status(f"{len(workflows)} workflow(s) loaded.", ok=True)
         Clock.schedule_once(_upd)
 
@@ -182,8 +182,8 @@ class CITab(MDBoxLayout):
                 ))
                 self._set_rel_status("")
                 return
-            for rel in releases[:5]:
-                self._releases_list.add_widget(ReleaseRow(rel, on_view=self._open_url))
+            for i, rel in enumerate(releases[:5]):
+                self._releases_list.add_widget(ReleaseRow(rel, on_view=self._open_url, row_index=i))
             self._set_rel_status(f"{len(releases)} release(s).", ok=True)
         Clock.schedule_once(_upd)
 

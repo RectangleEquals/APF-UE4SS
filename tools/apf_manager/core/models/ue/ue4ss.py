@@ -14,6 +14,7 @@ class UE4SSInfo:
     mods_txt: Optional[Path] = None
     logicmods_dir: Optional[Path] = None
     missing: list = field(default_factory=list)
+    version: Optional[str] = None
 
     @property
     def valid(self) -> bool:

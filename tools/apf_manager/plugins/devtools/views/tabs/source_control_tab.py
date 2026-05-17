@@ -197,9 +197,9 @@ class SourceControlTab(MDBoxLayout):
             if error:
                 self._set_status(f"Error: {error}", ok=False)
                 return
-            for br in (branches or []):
+            for i, br in enumerate(branches or []):
                 self._branches_list.add_widget(
-                    BranchRow(br, on_delete=self._confirm_delete_branch))
+                    BranchRow(br, on_delete=self._confirm_delete_branch, row_index=i))
             self._set_status(f"{len(branches or [])} branch(es).", ok=True)
         Clock.schedule_once(_upd)
 
