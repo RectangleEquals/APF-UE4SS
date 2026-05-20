@@ -1,16 +1,22 @@
 """
 bp_component.py — Typed blueprint logic mod model.
 
-BpLogicMod is the abstract base; PakLogicMod and UcasLogicMod are the two concrete forms:
-  - PakLogicMod     : a single .pak file
-  - UcasLogicMod    : a paired .ucas + .utoc file (both required for the mod to load)
+BpLogicMod is the abstract base; three concrete forms cover all file combinations:
+  - PakLogicMod          : a single .pak file
+  - UcasLogicMod         : a paired .ucas + .utoc file
+  - PakUcasUtocLogicMod  : a .pak + .ucas + .utoc triple (all same stem)
 
-parse_bp_mods() converts a flat list of filenames (from disk scan or registry resolver)
-into typed instances by pairing .ucas/.utoc by stem.
+Association metadata on each instance:
+  - is_standalone  : True when the mod lives in root LogicMods/ with no non-BP parent
+  - parent_folder  : folder_name of the parent non-BP mod (empty when is_standalone)
+
+parse_bp_mods() operates on the file list for a SINGLE subfolder.  All files must share
+one filename stem; mixed stems or unrecognised combinations return None (invalid subfolder).
 
 INSTALL PATH INVARIANT: BP logic mods are ALWAYS deployed to and removed from
-  <GameRoot>/<GameShortName>/Content/Paks/LogicMods/
-They are NEVER placed anywhere inside ue4ss/Mods/.
+  <GameRoot>/<GameShortName>/Content/Paks/LogicMods/<subfolder_name>/
+The subfolder name is preserved from the registry/repo structure.
+BP mods are NEVER placed anywhere inside ue4ss/Mods/.
 """
 from __future__ import annotations
 
@@ -25,8 +31,12 @@ logger = logging.getLogger(__name__)
 _BP_EXTENSIONS = frozenset({".pak", ".ucas", ".utoc"})
 
 
+@dataclass(kw_only=True)
 class BpLogicMod(ABC):
-    """Abstract base for a blueprint logic mod (one or two files in LogicMods/)."""
+    """Abstract base for a blueprint logic mod (one or more files in a LogicMods/ subfolder)."""
+
+    is_standalone: bool = False
+    parent_folder: str = ""
 
     @property
     @abstractmethod
@@ -37,7 +47,7 @@ class BpLogicMod(ABC):
     @property
     @abstractmethod
     def display_type(self) -> str:
-        """Short human-readable type label: "PAK" or "UCAS/UTOC"."""
+        """Short human-readable type label: 'PAK', 'UCAS/UTOC', or 'PAK+UCAS/UTOC'."""
         ...
 
     @property
@@ -75,54 +85,94 @@ class UcasLogicMod(BpLogicMod):
         return "UCAS/UTOC"
 
 
-def parse_bp_mods(file_list: Sequence[str]) -> list[BpLogicMod]:
+@dataclass
+class PakUcasUtocLogicMod(BpLogicMod):
+    """Three-file BP mod: .pak + .ucas + .utoc (all with the same stem)."""
+    pak_file: str
+    ucas_file: str
+    utoc_file: str
+
+    @property
+    def files(self) -> list[str]:
+        return [self.pak_file, self.ucas_file, self.utoc_file]
+
+    @property
+    def display_type(self) -> str:
+        return "PAK+UCAS/UTOC"
+
+
+def parse_bp_mods(
+    file_list: Sequence[str],
+    *,
+    is_standalone: bool = False,
+    parent_folder: str = "",
+) -> list[BpLogicMod] | None:
     """
-    Convert a flat list of BP filenames into typed BpLogicMod instances.
+    Parse the BP files for a single subfolder into a typed BpLogicMod instance.
 
-    Pairing rules:
-      - .ucas and .utoc with the same stem → UcasLogicMod
-      - .pak → PakLogicMod
-      - Unpaired .ucas or .utoc → PakLogicMod (with a warning; mod will likely not load)
-      - Unrecognised extensions → ignored
+    All files must share the same filename stem.  Mixed stems, duplicate extensions,
+    or unrecognised file combinations return None so the caller can flag the subfolder
+    as invalid.  An empty or non-BP file list returns an empty list (not None).
+
+    Recognised single-stem combinations:
+      .pak only             → PakLogicMod
+      .ucas + .utoc         → UcasLogicMod
+      .pak + .ucas + .utoc  → PakUcasUtocLogicMod
     """
-    ucas: dict[str, str] = {}  # stem -> filename
-    utoc: dict[str, str] = {}  # stem -> filename
-    paks: list[str] = []
+    bp_files = [
+        f for f in (file_list or [])
+        if os.path.splitext(f)[1].lower() in _BP_EXTENSIONS
+    ]
+    if not bp_files:
+        return []
 
-    for fname in (file_list or []):
-        ext = os.path.splitext(fname)[1].lower()
-        stem = os.path.splitext(fname)[0]
-        if ext == ".ucas":
-            ucas[stem] = fname
-        elif ext == ".utoc":
-            utoc[stem] = fname
-        elif ext == ".pak":
-            paks.append(fname)
-        # else: skip — not a recognised BP extension
+    stems = {os.path.splitext(f)[0] for f in bp_files}
+    if len(stems) > 1:
+        logger.warning(
+            "BP subfolder contains files with mixed stems %s — invalid, skipping",
+            sorted(stems),
+        )
+        return None
 
-    result: list[BpLogicMod] = []
-
-    matched_stems: set[str] = set()
-    for stem, ucas_fname in ucas.items():
-        if stem in utoc:
-            result.append(UcasLogicMod(ucas_file=ucas_fname, utoc_file=utoc[stem]))
-            matched_stems.add(stem)
-        else:
+    exts: dict[str, str] = {}
+    for f in bp_files:
+        ext = os.path.splitext(f)[1].lower()
+        if ext in exts:
             logger.warning(
-                "Unpaired .ucas file '%s' has no matching .utoc — treating as standalone PAK",
-                ucas_fname,
+                "BP subfolder has duplicate %r extension (%s and %s) — invalid, skipping",
+                ext, exts[ext], f,
             )
-            result.append(PakLogicMod(pak_file=ucas_fname))
+            return None
+        exts[ext] = f
 
-    for stem, utoc_fname in utoc.items():
-        if stem not in matched_stems:
-            logger.warning(
-                "Unpaired .utoc file '%s' has no matching .ucas — treating as standalone PAK",
-                utoc_fname,
-            )
-            result.append(PakLogicMod(pak_file=utoc_fname))
+    has_pak  = ".pak"  in exts
+    has_ucas = ".ucas" in exts
+    has_utoc = ".utoc" in exts
 
-    for pak in paks:
-        result.append(PakLogicMod(pak_file=pak))
+    if has_pak and has_ucas and has_utoc:
+        return [PakUcasUtocLogicMod(
+            pak_file=exts[".pak"],
+            ucas_file=exts[".ucas"],
+            utoc_file=exts[".utoc"],
+            is_standalone=is_standalone,
+            parent_folder=parent_folder,
+        )]
+    if has_ucas and has_utoc and not has_pak:
+        return [UcasLogicMod(
+            ucas_file=exts[".ucas"],
+            utoc_file=exts[".utoc"],
+            is_standalone=is_standalone,
+            parent_folder=parent_folder,
+        )]
+    if has_pak and not has_ucas and not has_utoc:
+        return [PakLogicMod(
+            pak_file=exts[".pak"],
+            is_standalone=is_standalone,
+            parent_folder=parent_folder,
+        )]
 
-    return result
+    logger.warning(
+        "BP subfolder has unrecognised file extension combination %s — invalid, skipping",
+        sorted(exts.keys()),
+    )
+    return None

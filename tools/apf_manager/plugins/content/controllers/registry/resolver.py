@@ -81,7 +81,11 @@ class DiscoveredMod:
     external_source_url: str = ""          # Nexus/CurseForge/Thunderstore URL (docs-only)
     submodule_of: str = ""                 # "owner/repo" of the parent if from a submodule
     components: list = field(default_factory=lambda: ["lua"])
-    bp_pak_files: list = field(default_factory=list)
+    bp_pak_files: list = field(default_factory=list)   # flat union of all BP files (backwards compat)
+    # Per-subfolder BP mod metadata. Each entry:
+    #   {"name": str, "files": list[str], "is_valid": bool, "warnings": list[str]}
+    # Populated by _scan_logicmods_folder; empty for non-BP mods.
+    bp_subfolders: list = field(default_factory=list)
     # BP-Combined: True when BP paks coexist with Lua/C++ in the same mod folder.
     # BP-Only (False): paks are standalone, install as their own content row.
     bp_is_combined: bool = False
@@ -100,7 +104,9 @@ class FolderTreeNode:
     """
     One node in the hierarchical folder tree shown by the Repo Viewer.
     node_type: "root" | "dir" | "mod_dir" | "non_ap_mod" | "template_dir"
-               | "lua_dir" | "cpp_dir" | "bp_dir" | "file" | "submodule"
+               | "lua_dir" | "cpp_dir" | "bp_dir"
+               | "bp_subfolder" | "bp_subfolder_invalid"
+               | "file" | "submodule"
     """
     node_type: str
     name: str               # display name (no path prefix)
@@ -112,6 +118,8 @@ class FolderTreeNode:
     submodule_url: str = ""                 # for submodule nodes
     game_id_match: bool = True              # False = wrong-game content
     conflict: bool = False                  # mod_id already in another registered registry
+    is_valid: bool = True                   # False for bp_subfolder_invalid nodes
+    bp_warnings: list = field(default_factory=list)  # warnings from BP subfolder scan
     children: list = field(default_factory=list)  # list[FolderTreeNode]
 
 
@@ -180,6 +188,7 @@ class RegistryResolver:
                     DiscoveredMod(
                         components=d.pop("components", ["lua"]),
                         bp_pak_files=d.pop("bp_pak_files", []),
+                        bp_subfolders=d.pop("bp_subfolders", []),
                         bp_is_combined=d.pop("bp_is_combined", False),
                         source_package_id=d.pop("source_package_id", ""),
                         is_submodule_content=d.pop("is_submodule_content", False),
@@ -243,25 +252,58 @@ class RegistryResolver:
             )
             if not (manifest_entry and manifest_entry.get("download_url")):
                 # No manifest.json — detect non-AP mods from directory structure alone.
+                folder_name = folder_path.split("/")[-1] if "/" in folder_path else folder_path
+
+                # Special case: root-level LogicMods/ directory is a standalone BP mod registry.
+                # Each named subfolder inside it is its own selectable BP mod.
+                if folder_name.lower() == "logicmods":
+                    subfolder_entries = self._scan_logicmods_folder(folder_path, api, owner, repo)
+                    for sf_entry in subfolder_entries:
+                        mods.append(DiscoveredMod(
+                            owner=owner, repo=repo,
+                            folder=f"{folder_path}/{sf_entry['name']}",
+                            manifest={"name": sf_entry["name"]},
+                            mod_id="",
+                            readme_url="", ue4ss_info=None, templates_paths=templates_paths,
+                            components=["blueprint"],
+                            bp_pak_files=sf_entry["files"],
+                            bp_subfolders=[sf_entry],
+                            bp_is_combined=False,
+                            source_package_id=f"{owner}/{repo}",
+                        ))
+                    continue
+
                 has_lua       = any(e["name"].lower() == "scripts"   and e["type"] == "dir" for e in sub_contents)
                 has_cpp       = any(e["name"].lower() == "dlls"      and e["type"] == "dir" for e in sub_contents)
-                has_logic_dir = any(e["name"].lower() == "logicmods" and e["type"] == "dir" for e in sub_contents)
-                has_bp_paks   = any(e["name"].lower().endswith(".pak")                       for e in sub_contents)
-                has_bp        = has_logic_dir or has_bp_paks
-                bp_combined   = has_bp and (has_lua or has_cpp)
+                _lm_sub_entry = next((e for e in sub_contents if e["name"].lower() == "logicmods" and e["type"] == "dir"), None)
+                has_bp_paks   = any(e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc") for e in sub_contents)
+
+                _bp_subfolders: list = []
+                _bp_paks: list = []
+                if _lm_sub_entry:
+                    _bp_subfolders = self._scan_logicmods_folder(
+                        _lm_sub_entry["path"], api, owner, repo)
+                    _bp_paks = [f for sf in _bp_subfolders for f in sf.get("files", [])]
+                # Also collect any loose pak files directly in the mod folder (legacy)
+                _loose_paks = [
+                    e["name"] for e in sub_contents
+                    if e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
+                ]
+                if _loose_paks:
+                    _known = set(_bp_paks)
+                    _bp_paks = _bp_paks + [p for p in _loose_paks if p not in _known]
+
+                has_bp      = bool(_lm_sub_entry or has_bp_paks)
+                bp_combined = has_bp and (has_lua or has_cpp)
                 if has_lua or has_cpp or has_bp:
-                    folder_name = folder_path.split("/")[-1] if "/" in folder_path else folder_path
-                    _comps   = (["lua"] if has_lua else []) + (["cpp"] if has_cpp else []) + (["blueprint"] if has_bp else [])
-                    _bp_paks = [
-                        e["name"] for e in sub_contents
-                        if e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
-                    ]
+                    _comps = (["lua"] if has_lua else []) + (["cpp"] if has_cpp else []) + (["blueprint"] if has_bp else [])
                     mods.append(DiscoveredMod(
                         owner=owner, repo=repo, folder=folder_path,
                         manifest={"name": folder_name},
                         mod_id="",
                         readme_url="", ue4ss_info=None, templates_paths=templates_paths,
                         components=_comps, bp_pak_files=_bp_paks,
+                        bp_subfolders=_bp_subfolders,
                         bp_is_combined=bp_combined,
                         source_package_id=f"{owner}/{repo}",
                     ))
@@ -312,20 +354,17 @@ class RegistryResolver:
                 _detected.append("lua")
             if _has_cpp:
                 _detected.append("cpp")
-            _bp_pak_files = []
+            _bp_pak_files: list = []
+            _bp_subfolders_ap: list = []
             _lm_entry = next(
                 (e for e in sub_contents if e["name"].lower() == "logicmods" and e["type"] == "dir"),
                 None,
             )
             if _lm_entry:
-                try:
-                    _lm_contents = api.list_contents(_lm_entry["path"]) or []
-                    _bp_pak_files = [
-                        e["name"] for e in _lm_contents
-                        if e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
-                    ]
-                except Exception as exc:
-                    self._on_status("warn", f"[resolver] Failed to list LogicMods/ in {folder_path}: {exc}")
+                _folder_leaf = folder_path.split("/")[-1] if "/" in folder_path else folder_path
+                _bp_subfolders_ap = self._scan_logicmods_folder(
+                    _lm_entry["path"], api, owner, repo)
+                _bp_pak_files = [f for sf in _bp_subfolders_ap for f in sf.get("files", [])]
                 if _bp_pak_files:
                     _detected.append("blueprint")
             _bp_combined = bool(_bp_pak_files) and (_has_lua or _has_cpp)
@@ -342,6 +381,7 @@ class RegistryResolver:
                 templates_paths=templates_paths,
                 components=_components,
                 bp_pak_files=_bp_pak_files,
+                bp_subfolders=_bp_subfolders_ap,
                 bp_is_combined=_bp_combined,
                 source_package_id=f"{owner}/{repo}",
             ))
@@ -426,6 +466,7 @@ class RegistryResolver:
                         "templates_paths": m.templates_paths,
                         "components": m.components,
                         "bp_pak_files": m.bp_pak_files,
+                        "bp_subfolders": m.bp_subfolders,
                         "bp_is_combined": m.bp_is_combined,
                         "source_package_id": m.source_package_id,
                         "is_submodule_content": m.is_submodule_content,
@@ -666,12 +707,42 @@ class RegistryResolver:
             conflict=is_conflict,
         )
 
+        # BP Logic Mods directory: scan subfolders and build typed child nodes
+        if node_type == "bp_dir":
+            subfolder_entries = self._scan_logicmods_folder(epath, api, owner, repo)
+            sf_children: list[FolderTreeNode] = []
+            for sf_entry in subfolder_entries:
+                sf_type = "bp_subfolder" if sf_entry["is_valid"] else "bp_subfolder_invalid"
+                sf_path = f"{epath}/{sf_entry['name']}"
+                sf_node = FolderTreeNode(
+                    node_type=sf_type,
+                    name=sf_entry["name"],
+                    path=sf_path,
+                    owner=owner,
+                    repo=repo,
+                    is_valid=sf_entry["is_valid"],
+                    bp_warnings=sf_entry.get("warnings", []),
+                )
+                # Add BP files as children of each subfolder node
+                for fname in sf_entry.get("files", []):
+                    sf_node.children.append(FolderTreeNode(
+                        node_type="file",
+                        name=fname,
+                        path=f"{sf_path}/{fname}",
+                        owner=owner,
+                        repo=repo,
+                    ))
+                sf_children.append(sf_node)
+            sf_children.sort(key=lambda n: n.name.lower())
+            node.children = sf_children
+            return node
+
         # Build children (docs first, then subdirs)
         doc_children: list[FolderTreeNode] = []
         dir_children: list[FolderTreeNode] = []
         is_template_node = (node_type == "template_dir")
         # Component directories show all files (not just .md) so users can see main.lua/main.dll
-        is_component_dir = node_type in ("lua_dir", "cpp_dir", "bp_dir")
+        is_component_dir = node_type in ("lua_dir", "cpp_dir")
 
         for sub in sub_contents:
             sname = sub.get("name", "")
@@ -905,6 +976,88 @@ class RegistryResolver:
     # -----------------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------------
+
+    def _scan_logicmods_folder(
+        self,
+        lm_path: str,
+        api,
+        owner: str,
+        repo: str,
+    ) -> list[dict]:
+        """
+        Scan a LogicMods/ directory and return one entry per named subfolder:
+          {"name": str, "files": list[str], "is_valid": bool, "warnings": list[str]}
+
+        BP files found directly inside lm_path (not in a subfolder) are logged as
+        warnings but excluded from results — they violate the subfolder invariant.
+        Invalid subfolders (mixed stems, unrecognised combinations) are still returned
+        with is_valid=False so the viewer can display a warning to the user.
+        """
+        from ....models.descriptors.bp_component import parse_bp_mods
+
+        try:
+            lm_contents = api.list_contents(lm_path) or []
+        except Exception as exc:
+            self._on_status("warn", f"[resolver] Failed to list {lm_path} in {owner}/{repo}: {exc}")
+            return []
+
+        # Files directly in the root of LogicMods/ violate the subfolder invariant
+        loose_bp = [
+            e["name"] for e in lm_contents
+            if e.get("type") == "file"
+            and e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
+        ]
+        if loose_bp:
+            self._on_status(
+                "warn",
+                f"[resolver] {lm_path}: BP files found directly in LogicMods/ root "
+                f"(must be in named subfolders): {loose_bp}",
+            )
+
+        entries: list[dict] = []
+        for sub in lm_contents:
+            if sub.get("type") != "dir":
+                continue
+            sf_name = sub.get("name", "")
+            sf_path = sub.get("path", f"{lm_path}/{sf_name}")
+            warnings: list[str] = []
+
+            try:
+                sf_contents = api.list_contents(sf_path) or []
+            except Exception as exc:
+                entries.append({
+                    "name": sf_name, "files": [],
+                    "is_valid": False, "warnings": [f"Failed to list subfolder: {exc}"],
+                })
+                continue
+
+            bp_files = [
+                e["name"] for e in sf_contents
+                if e.get("type") == "file"
+                and e.get("name", "").rsplit(".", 1)[-1].lower() in ("pak", "ucas", "utoc")
+            ]
+            nested_dirs = [e["name"] for e in sf_contents if e.get("type") == "dir"]
+            if nested_dirs:
+                warnings.append(f"Unexpected nested directories: {nested_dirs}")
+
+            result = parse_bp_mods(bp_files)
+            if result is None:
+                is_valid = False
+                warnings.append("Mixed stems or unrecognised file combination")
+            elif not result:
+                is_valid = False
+                warnings.append("No recognised BP files found in subfolder")
+            else:
+                is_valid = True
+
+            entries.append({
+                "name": sf_name,
+                "files": bp_files,
+                "is_valid": is_valid,
+                "warnings": warnings,
+            })
+
+        return entries
 
     def _make_api(self, owner: str, repo: str):
         from .....core.controllers.remote.github_api import GitHubAPI

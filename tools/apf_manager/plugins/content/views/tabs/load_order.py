@@ -416,7 +416,19 @@ class LoadOrderTab(MDBoxLayout):
         )
         if idx is None or idx == 0:
             return
-        self._swap_displayed(idx, idx - 1)
+
+        above_mod   = self._rows[idx - 1]._mod
+        is_fw       = bool(mod.mod_id and _FRAMEWORK_MOD_RE.match(mod.mod_id))
+        above_is_fw = bool(above_mod.mod_id and _FRAMEWORK_MOD_RE.match(above_mod.mod_id))
+
+        if is_fw:
+            if above_mod.is_ap_mod:
+                return  # Framework must always lead AP mods — invalid state guard
+            self._swap_displayed(idx, idx - 1)
+        elif mod.is_ap_mod and above_is_fw:
+            self._cascade_ap_up(fw_idx=idx - 1, ap_idx=idx)
+        else:
+            self._swap_displayed(idx, idx - 1)
 
     def _on_move_down(self, mod: "ModInfo") -> None:
         idx = next(
@@ -442,7 +454,6 @@ class LoadOrderTab(MDBoxLayout):
         """
         rows = self._rows
 
-        # Find the end of the adjacent-AP cluster below the framework mod
         cluster_end = fw_idx + 1
         while cluster_end < len(rows) and rows[cluster_end]._mod.is_ap_mod:
             cluster_end += 1
@@ -450,7 +461,6 @@ class LoadOrderTab(MDBoxLayout):
         if cluster_end >= len(rows):
             return  # No non-AP mod below — blocked
 
-        # Bubble the non-AP row up to just before the framework mod
         non_ap_row = rows[cluster_end]
         new_rows = (
             rows[:fw_idx]
@@ -458,14 +468,36 @@ class LoadOrderTab(MDBoxLayout):
             + rows[fw_idx:cluster_end]
             + rows[cluster_end + 1:]
         )
+        self._commit_row_order(new_rows)
 
+    def _cascade_ap_up(self, fw_idx: int, ap_idx: int) -> None:
+        """
+        Push [framework mod, non-framework AP mod] pair up together past the first
+        non-AP slot above the framework mod. Blocked when no non-AP exists above fw.
+        """
+        rows = self._rows
+        non_ap_target = fw_idx - 1
+        while non_ap_target >= 0 and rows[non_ap_target]._mod.is_ap_mod:
+            non_ap_target -= 1
+        if non_ap_target < 0:
+            return  # Blocked — no non-AP above the framework mod
+
+        new_rows = (
+            rows[:non_ap_target]
+            + [rows[fw_idx], rows[ap_idx]]
+            + rows[non_ap_target + 1 : fw_idx]
+            + [rows[non_ap_target]]
+            + rows[ap_idx + 1:]
+        )
+        self._commit_row_order(new_rows)
+
+    def _commit_row_order(self, new_rows: list) -> None:
+        """Persist a new row ordering to mods.txt and refresh the display."""
         svc = self._deploy_svc
         if not svc:
             return
-
-        new_names = [r._mod.folder_name for r in new_rows]
+        new_names     = [r._mod.folder_name for r in new_rows]
         displayed_set = {r._mod.folder_name for r in self._rows}
-
         full_order = svc.get_load_order()
         new_full: list[str] = []
         di = 0
@@ -478,33 +510,11 @@ class LoadOrderTab(MDBoxLayout):
         while di < len(new_names):
             new_full.append(new_names[di])
             di += 1
-
         svc.reorder(new_full)
         self._do_refresh()
 
     def _swap_displayed(self, i: int, j: int) -> None:
         """Swap rows[i] and rows[j], rebuild mods.txt order."""
-        svc = self._deploy_svc
-        if not svc:
-            return
-
         rows = self._rows[:]
         rows[i], rows[j] = rows[j], rows[i]
-        new_names = [r._mod.folder_name for r in rows]
-        displayed_set = {r._mod.folder_name for r in self._rows}
-
-        full_order = svc.get_load_order()
-        new_full: list[str] = []
-        di = 0
-        for name in full_order:
-            if name in displayed_set:
-                new_full.append(new_names[di])
-                di += 1
-            else:
-                new_full.append(name)
-        while di < len(new_names):
-            new_full.append(new_names[di])
-            di += 1
-
-        svc.reorder(new_full)
-        self._do_refresh()
+        self._commit_row_order(rows)

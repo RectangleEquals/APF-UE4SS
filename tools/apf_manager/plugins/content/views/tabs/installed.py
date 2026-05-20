@@ -272,7 +272,7 @@ class InstalledTab(MDBoxLayout):
         if not unmanaged:
             return
 
-        for bp_mod in parse_bp_mods(unmanaged):
+        for bp_mod in (parse_bp_mods(unmanaged) or []):
             file_paths = [logicmods_dir / fname for fname in bp_mod.files]
             type_badge = bp_mod.display_type  # "PAK" or "UCAS/UTOC"
             display_name = bp_mod.primary_name

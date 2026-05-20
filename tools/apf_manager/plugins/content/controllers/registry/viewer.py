@@ -56,6 +56,19 @@ def _detect_external_type(url: str) -> str:
     return "external"
 
 
+def _get_bp_type_label(files: list) -> str:
+    """Return display type tag for a BP subfolder's file list."""
+    import os as _os
+    exts = {_os.path.splitext(f)[1].lower() for f in files}
+    if ".pak" in exts and ".ucas" in exts and ".utoc" in exts:
+        return "PAK+UCAS/UTOC"
+    if ".ucas" in exts and ".utoc" in exts:
+        return "UCAS/UTOC"
+    if ".pak" in exts:
+        return "PAK"
+    return "?"
+
+
 def _freshness_color(last_push_days: int) -> str:
     if last_push_days <= 30:
         return "#4caf50"   # green
@@ -115,6 +128,19 @@ def _build_tree_nodes(
     Groups by repo, deduplicates template paths, and nests submodule repos
     under their parent repos.
     """
+    # BP filename conflict detection — flag filenames that appear in more than one BP entry
+    _bp_file_sources: dict[str, list[str]] = {}
+    for _mod in mods:
+        for _sf in getattr(_mod, "bp_subfolders", []):
+            if _sf.get("is_valid"):
+                for _fname in _sf.get("files", []):
+                    _bp_file_sources.setdefault(_fname, []).append(_mod.folder)
+    _bp_file_conflicts: set[str] = {
+        fname for fname, srcs in _bp_file_sources.items() if len(srcs) > 1
+    }
+    if _bp_file_conflicts:
+        logger.warning("BP filename conflicts detected across registry mods: %s", sorted(_bp_file_conflicts))
+
     # Group by owner/repo
     by_repo: dict[str, list["DiscoveredMod"]] = {}
     for mod in mods:
@@ -190,28 +216,93 @@ def _build_tree_nodes(
                     "checked": not is_conflict,
                 })
             elif mod.folder and mod.manifest:
-                # Non-AP mod: no mod_id but has structural component dirs (e.g. PalSchema)
                 folder_name = mod.folder.split("/")[-1] if "/" in mod.folder else mod.folder
-                children.append({
-                    "type": "non_ap_mod",
-                    "id": f"non_ap:{mod.owner}/{mod.repo}:{mod.folder}",
-                    "label": mod.manifest.get("name") or folder_name,
-                    "mod_id": "",
-                    "owner": mod.owner,
-                    "repo": mod.repo,
-                    "folder": mod.folder,
-                    "description": mod.manifest.get("description", ""),
-                    "readme_url": mod.readme_url,
-                    "is_framework": False,
-                    "components": getattr(mod, "components", []),
-                    "bp_pak_files": getattr(mod, "bp_pak_files", []),
-                    "bp_is_combined": getattr(mod, "bp_is_combined", False),
-                    "game_id_match": not _cross_game_registry,
-                    "cross_game": _cross_game_registry,
-                    "selectable": True,
-                    "checked": not _cross_game_registry,
-                    "disabled": False,
-                })
+                _comps = getattr(mod, "components", [])
+                _bp_sf_list = getattr(mod, "bp_subfolders", [])
+
+                # Standalone BP mod: blueprint-only, no mod_id, has bp_subfolders
+                # (created from root LogicMods/<name>/ subfolders in the registry)
+                is_standalone_bp = (
+                    not mod.mod_id
+                    and "blueprint" in _comps
+                    and not any(c in _comps for c in ("lua", "cpp"))
+                    and bool(_bp_sf_list)
+                )
+                if is_standalone_bp:
+                    sf = _bp_sf_list[0]
+                    has_bp_conflict = any(f in _bp_file_conflicts for f in sf.get("files", []))
+                    sf_warnings = list(sf.get("warnings", []))
+                    if has_bp_conflict:
+                        sf_warnings = ["Filename conflict with another BP mod"] + sf_warnings
+                    sf_valid = sf.get("is_valid", False)
+                    children.append({
+                        "type": "bp_mod",
+                        "id": f"bp_mod:{mod.owner}/{mod.repo}:{mod.folder}",
+                        "label": folder_name,
+                        "owner": mod.owner,
+                        "repo": mod.repo,
+                        "folder": mod.folder,
+                        "bp_subfolders": _bp_sf_list,
+                        "bp_files": sf.get("files", []),
+                        "bp_type": _get_bp_type_label(sf.get("files", [])),
+                        "is_valid": sf_valid,
+                        "bp_warnings": sf_warnings,
+                        "conflict": has_bp_conflict,
+                        "game_id_match": True,
+                        "selectable": sf_valid,
+                        "checked": sf_valid and not has_bp_conflict,
+                        "disabled": not sf_valid,
+                    })
+                else:
+                    # Regular non-AP mod — may have associated BP subfolder children
+                    _bp_children = []
+                    for sf in _bp_sf_list:
+                        has_sf_conflict = any(f in _bp_file_conflicts for f in sf.get("files", []))
+                        sf_warnings = list(sf.get("warnings", []))
+                        if has_sf_conflict:
+                            sf_warnings = ["Filename conflict with another BP mod"] + sf_warnings
+                        sf_valid = sf.get("is_valid", False)
+                        _bp_children.append({
+                            "type": "bp_subfolder" if sf_valid else "bp_subfolder_invalid",
+                            "id": f"bp_subfolder:{mod.owner}/{mod.repo}:{mod.folder}/LogicMods/{sf['name']}",
+                            "label": sf["name"],
+                            "owner": mod.owner,
+                            "repo": mod.repo,
+                            "folder": f"{mod.folder}/LogicMods/{sf['name']}",
+                            "bp_files": sf.get("files", []),
+                            "bp_type": _get_bp_type_label(sf.get("files", [])),
+                            "is_valid": sf_valid,
+                            "bp_warnings": sf_warnings,
+                            "conflict": has_sf_conflict,
+                            "selectable": sf_valid,
+                            "checked": False,
+                            "disabled": not sf_valid,
+                        })
+
+                    _cross_game = _cross_game_registry
+                    nap_node: dict = {
+                        "type": "non_ap_mod",
+                        "id": f"non_ap:{mod.owner}/{mod.repo}:{mod.folder}",
+                        "label": mod.manifest.get("name") or folder_name,
+                        "mod_id": "",
+                        "owner": mod.owner,
+                        "repo": mod.repo,
+                        "folder": mod.folder,
+                        "description": mod.manifest.get("description", ""),
+                        "readme_url": mod.readme_url,
+                        "is_framework": False,
+                        "components": _comps,
+                        "bp_pak_files": getattr(mod, "bp_pak_files", []),
+                        "bp_is_combined": getattr(mod, "bp_is_combined", False),
+                        "game_id_match": not _cross_game,
+                        "cross_game": _cross_game,
+                        "selectable": True,
+                        "checked": not _cross_game,
+                        "disabled": False,
+                    }
+                    if _bp_children:
+                        nap_node["children"] = _bp_children
+                    children.append(nap_node)
             # BUG-8: Surface UE4SS options from ue4ss.json in the repo viewer
             if mod.ue4ss_info:
                 _fw_game_id = mod.mod_id.split(".")[1] if mod.mod_id and mod.mod_id.count(".") >= 2 else ""
@@ -317,6 +408,10 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
             spa_type = "cpp_dir"
         elif ntype == "bp_dir":
             spa_type = "bp_dir"
+        elif ntype == "bp_subfolder":
+            spa_type = "bp_subfolder"
+        elif ntype == "bp_subfolder_invalid":
+            spa_type = "bp_subfolder_invalid"
         else:
             spa_type = "dir"
 
@@ -421,6 +516,16 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
             base.update({"component_label": "C++ module"})
         elif spa_type == "bp_dir":
             base.update({"component_label": "Blueprint Logic Mod"})
+        elif spa_type in ("bp_subfolder", "bp_subfolder_invalid"):
+            is_valid = node.is_valid
+            warnings = node.bp_warnings
+            base.update({
+                "is_valid": is_valid,
+                "bp_warnings": warnings,
+                "selectable": is_valid,
+                "checked": False,
+                "disabled": not is_valid,
+            })
 
         # Children
         if node.children:
@@ -512,7 +617,7 @@ def _apply_initial_selection(nodes: list[dict], initial_selected_content: Option
         return
     sc_set = set(initial_selected_content)
 
-    def _walk(node_list: list[dict]) -> None:
+    def _walk(node_list: list[dict], parent_checked: bool = True) -> None:
         for node in node_list:
             if node.get("selectable"):
                 ntype = node.get("type")
@@ -521,6 +626,13 @@ def _apply_initial_selection(nodes: list[dict], initial_selected_content: Option
                     node["checked"] = (f"mod:{mid}" in sc_set or f"framework_mod:{mid}" in sc_set)
                 elif ntype == "non_ap_mod":
                     node["checked"] = f"mod:{node.get('folder', '')}" in sc_set
+                elif ntype == "bp_mod":
+                    node["checked"] = f"mod:{node.get('folder', '')}" in sc_set
+                elif ntype == "bp_subfolder":
+                    # Cascade: checked if and only if the parent is checked
+                    node["checked"] = parent_checked and node.get("is_valid", True)
+                elif ntype == "bp_subfolder_invalid":
+                    node["checked"] = False
                 elif ntype == "template":
                     node["checked"] = f"template:{node.get('path', '')}" in sc_set
                 elif ntype == "ue4ss_option":
@@ -529,7 +641,7 @@ def _apply_initial_selection(nodes: list[dict], initial_selected_content: Option
                     tag   = node.get("tag", "")
                     node["checked"] = f"ue4ss_option:{owner}/{repo}:{tag}" in sc_set
             if node.get("children"):
-                _walk(node["children"])
+                _walk(node["children"], parent_checked=node.get("checked", False))
 
     _walk(nodes)
 
@@ -604,8 +716,7 @@ class RegistryViewer:
                         matched = next((m for m in mods if m.mod_id == mid), None)
                         if matched:
                             id_to_mod[n["id"]] = matched
-                    elif ntype == "non_ap_mod":
-                        # X-5-D: use path as fallback; match by folder suffix to handle subdir case
+                    elif ntype in ("non_ap_mod", "bp_mod"):
                         folder = n.get("folder") or n.get("path")
                         if folder:
                             matched = next(
@@ -689,12 +800,21 @@ class RegistryViewer:
                 selected_ids: list[str] = result.get("selected", [])
                 dropped = [sid for sid in selected_ids if sid not in id_to_mod]
                 if dropped:
-                    ue4ss_dropped = [sid for sid in dropped if sid.startswith("ue4ss:")]
-                    other_dropped = [sid for sid in dropped if not sid.startswith("ue4ss:")]
+                    ue4ss_dropped  = [sid for sid in dropped if sid.startswith("ue4ss:")]
+                    bp_sf_dropped  = [sid for sid in dropped if sid.startswith("bp_subfolder:")]
+                    other_dropped  = [
+                        sid for sid in dropped
+                        if not sid.startswith("ue4ss:") and not sid.startswith("bp_subfolder:")
+                    ]
                     if ue4ss_dropped:
                         logger.debug(
                             "Skipping %d UE4SS option ID(s) -- handled via separate UE4SS pathway: %s",
                             len(ue4ss_dropped), ue4ss_dropped[:3],
+                        )
+                    if bp_sf_dropped:
+                        logger.debug(
+                            "Skipping %d BP subfolder ID(s) -- carried by parent mod selection: %s",
+                            len(bp_sf_dropped), bp_sf_dropped[:3],
                         )
                     if other_dropped:
                         logger.warning(

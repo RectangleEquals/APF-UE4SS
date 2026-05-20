@@ -169,7 +169,7 @@ class LoadOrderController:
                     pak_files = record.bp_pak_files_deployed or []
                     if not pak_files:
                         continue
-                    bp_list = parse_bp_mods(pak_files)
+                    bp_list = parse_bp_mods(pak_files) or []
                     if bp_list:
                         name = record.name or record.folder_name or ""
                         results.append((name, bp_list, True))
@@ -187,7 +187,7 @@ class LoadOrderController:
                 if f.suffix.lower() in (".pak", ".ucas", ".utoc")
                 and f.name not in managed_pak_names
             ]
-            for bp_mod in parse_bp_mods(orphan_files):
+            for bp_mod in (parse_bp_mods(orphan_files) or []):
                 results.append((bp_mod.primary_name, [bp_mod], False))
 
         return results

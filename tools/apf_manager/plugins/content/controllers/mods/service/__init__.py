@@ -116,7 +116,7 @@ class ModInfo:
     def bp_mods(self) -> list:
         """Typed BpLogicMod instances derived from bp_pak_files (computed, not stored)."""
         from ....models.descriptors.bp_component import parse_bp_mods
-        return parse_bp_mods(self.bp_pak_files)
+        return parse_bp_mods(self.bp_pak_files) or []
 
     @property
     def is_managed(self) -> bool:

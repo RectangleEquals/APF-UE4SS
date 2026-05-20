@@ -92,6 +92,9 @@ class VersionsTab(MDBoxLayout):
         self.add_widget(MDDivider())
         self.add_widget(make_version_header())
 
+        self._versions_list = MDBoxLayout(
+            orientation="vertical", adaptive_height=True, spacing=dp(2))
+
         for i, component in enumerate(_COMPONENTS):
             row = VersionRow(
                 component=component,
@@ -102,7 +105,9 @@ class VersionsTab(MDBoxLayout):
                 row_index=i,
             )
             self._version_rows[component] = row
-            self.add_widget(row)
+            self._versions_list.add_widget(row)
+
+        self.add_widget(self._versions_list)
 
         self._status_lbl = MDLabel(
             text="", adaptive_height=True,

@@ -73,7 +73,7 @@ class QueuePanelMixin:
                 self._progress_bars[item.key] = bar
             elif bar.parent is not None:
                 bar.parent.remove_widget(bar)
-            bar.value = item.progress
+            bar.value = item.progress * 100
             row.add_widget(bar)
 
             lbl = self._progress_labels.get(item.key)
@@ -165,7 +165,7 @@ class QueuePanelMixin:
 
         def _upd(dt):
             if bar is not None:
-                bar.value = progress
+                bar.value = progress * 100
             if lbl is not None:
                 lbl.text = progress_text
 

@@ -45,7 +45,8 @@ def to_content_descriptor(mod: "DiscoveredMod", entry, log_fn: Optional[Callable
         ),
     )
     components = ModComponents.from_lists(
-        mod.components or [], mod.bp_pak_files or []
+        mod.components or [], mod.bp_pak_files or [],
+        bp_subfolders=getattr(mod, "bp_subfolders", []),
     )
     docs = DocInfo(readme_url=mod.readme_url or "")
     tags = ContentTags(

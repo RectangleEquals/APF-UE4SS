@@ -247,7 +247,14 @@ function buildNodeEl(node, depth) {
     cb.className = "check";
     cb.checked = node.checked !== false;
     cb.dataset.id = node.id;
-    cb.onclick = e => { e.stopPropagation(); node.checked = cb.checked; updateSelectionCount(); };
+    cb.onclick = e => {
+      e.stopPropagation();
+      node.checked = cb.checked;
+      if (node.type === "non_ap_mod" || node.type === "mod") {
+        cascadeToBpChildren(node, cb.checked);
+      }
+      updateSelectionCount();
+    };
     row.appendChild(cb);
   }
 
@@ -303,15 +310,18 @@ function nodeIcon(node) {
     if (comps.includes("blueprint")) return "🧩";
     return "🔧";
   }
-  if (t === "lua_dir")      return "🔧";
-  if (t === "cpp_dir")      return "⚙️";
-  if (t === "bp_dir")       return "🧩";
-  if (t === "ue4ss_option") return "🧰";
-  if (t === "submodule")    return "🔗";
-  if (t === "template")     return "📋";
-  if (t === "docs")         return "📄";
-  if (t === "dir")          return "📁";
-  if (t === "external")     return "🔗";
+  if (t === "lua_dir")              return "🔧";
+  if (t === "cpp_dir")              return "⚙️";
+  if (t === "bp_dir")               return "🧩";
+  if (t === "bp_mod")               return "🧩";
+  if (t === "bp_subfolder")         return "🧩";
+  if (t === "bp_subfolder_invalid") return "⚠️";
+  if (t === "ue4ss_option")         return "🧰";
+  if (t === "submodule")            return "🔗";
+  if (t === "template")             return "📋";
+  if (t === "docs")                 return "📄";
+  if (t === "dir")                  return "📁";
+  if (t === "external")             return "🔗";
   return "•";
 }
 
@@ -337,6 +347,15 @@ function appendBadges(row, node) {
   if (t === "lua_dir")   addBadge(row, "LUA",   "badge-lua");
   if (t === "cpp_dir")   addBadge(row, "C++",   "badge-cpp");
   if (t === "bp_dir")    addBadge(row, "BP",    "badge-bp");
+  if (t === "bp_mod") {
+    addBadge(row, node.bp_type || "BP", "badge-bp");
+    if (node.conflict) addBadge(row, "CONFLICT", "badge-dup");
+  }
+  if (t === "bp_subfolder") {
+    addBadge(row, node.bp_type || "BP", "badge-bp");
+    if (node.conflict) addBadge(row, "CONFLICT", "badge-dup");
+  }
+  if (t === "bp_subfolder_invalid") addBadge(row, "WARN", "badge-warn");
   if (t === "submodule") addBadge(row, "SUB",   "badge-sub");
   if (t === "ue4ss_option") {
     addBadge(row, "UE4SS", "badge-ue4ss");
@@ -628,6 +647,62 @@ function renderDetail(node) {
         ${isCode   ? `<div class="prop-row"><span class="prop-key">Note</span><span class="prop-val" style="color:#8b949e">Source file — not shown to end users</span></div>` : ""}
       </div>
       ${renderableText ? `<div id="docs-content" class="md-content"></div>` : ""}`;
+
+  } else if (node.type === "bp_mod") {
+    const bpType    = escHtml(node.bp_type || "BP");
+    const bpFiles   = (node.bp_files || []).map(f => `<li>${escHtml(f)}</li>`).join("");
+    const bpWarns   = (node.bp_warnings || []).map(w => `<li style="color:#f0883e">${escHtml(w)}</li>`).join("");
+    const conflictBanner = node.conflict
+      ? `<div class="banner banner-dup">⚠ One or more files in this BP mod share a filename with another BP mod. Installing both may cause one to overwrite the other.</div>`
+      : "";
+    const invalidBanner = !node.is_valid
+      ? `<div class="banner banner-ng">⚠ This BP mod subfolder failed validation and cannot be installed. See warnings below.</div>`
+      : "";
+    html = `
+      ${conflictBanner}${invalidBanner}
+      <h2>🧩 ${escHtml(node.label)}</h2>
+      <div class="subtitle">Standalone Blueprint Logic Mod — ${escHtml(node.owner)}/${escHtml(node.repo)}</div>
+      <div class="section">
+        <div class="section-title">Identity</div>
+        <div class="prop-row"><span class="prop-key">Type</span><span class="prop-val">${bpType}</span></div>
+        <div class="prop-row"><span class="prop-key">Install path</span><span class="prop-val" style="font-family:monospace;font-size:11px">Content/Paks/LogicMods/${escHtml(node.label)}/</span></div>
+        ${node.folder ? `<div class="prop-row"><span class="prop-key">Registry path</span><span class="prop-val">${escHtml(node.folder)}</span></div>` : ""}
+      </div>
+      ${bpFiles ? `<div class="section"><div class="section-title">Files</div><ul style="margin:4px 0 0 16px;color:#c9d1d9;font-size:12px">${bpFiles}</ul></div>` : ""}
+      ${bpWarns ? `<div class="section"><div class="section-title">Warnings</div><ul style="margin:4px 0 0 16px;font-size:12px">${bpWarns}</ul></div>` : ""}`;
+
+  } else if (node.type === "bp_subfolder") {
+    const bpType  = escHtml(node.bp_type || "BP");
+    const bpFiles = (node.bp_files || []).map(f => `<li>${escHtml(f)}</li>`).join("");
+    const bpWarns = (node.bp_warnings || []).map(w => `<li style="color:#f0883e">${escHtml(w)}</li>`).join("");
+    const conflictBanner = node.conflict
+      ? `<div class="banner banner-dup">⚠ One or more files in this BP mod share a filename with another BP mod. Installing both may cause one to overwrite the other.</div>`
+      : "";
+    html = `
+      ${conflictBanner}
+      <h2>🧩 ${escHtml(node.label)}</h2>
+      <div class="subtitle">Associated Blueprint Logic Mod — ${escHtml(node.owner)}/${escHtml(node.repo)}</div>
+      <div class="section">
+        <div class="section-title">Identity</div>
+        <div class="prop-row"><span class="prop-key">Type</span><span class="prop-val">${bpType}</span></div>
+        <div class="prop-row"><span class="prop-key">Install path</span><span class="prop-val" style="font-family:monospace;font-size:11px">Content/Paks/LogicMods/${escHtml(node.label)}/</span></div>
+      </div>
+      ${bpFiles ? `<div class="section"><div class="section-title">Files</div><ul style="margin:4px 0 0 16px;color:#c9d1d9;font-size:12px">${bpFiles}</ul></div>` : ""}
+      ${bpWarns ? `<div class="section"><div class="section-title">Warnings</div><ul style="margin:4px 0 0 16px;font-size:12px">${bpWarns}</ul></div>` : ""}
+      <div class="section">
+        <div style="color:#8b949e;font-size:12px">This BP mod is bundled inside a parent mod. Selecting the parent mod automatically selects this subfolder alongside it.</div>
+      </div>`;
+
+  } else if (node.type === "bp_subfolder_invalid") {
+    const bpWarns = (node.bp_warnings || []).map(w => `<li style="color:#f0883e">${escHtml(w)}</li>`).join("");
+    html = `
+      <div class="banner banner-ng">⚠ This BP mod subfolder failed validation and cannot be installed.</div>
+      <h2>⚠️ ${escHtml(node.label)}</h2>
+      <div class="subtitle">Invalid Blueprint Logic Mod Subfolder — ${escHtml(node.owner)}/${escHtml(node.repo)}</div>
+      ${bpWarns ? `<div class="section"><div class="section-title">Validation Errors</div><ul style="margin:4px 0 0 16px;font-size:12px">${bpWarns}</ul></div>` : ""}
+      <div class="section">
+        <div style="color:#8b949e;font-size:12px">This subfolder cannot be selected. Fix the issues listed above in the registry source to make it installable.</div>
+      </div>`;
   }
 
   panel.innerHTML = html;
@@ -806,6 +881,17 @@ function doConfirm() {
 
 function doCancel() {
   pywebview.api.close();
+}
+
+// ── BP cascade ────────────────────────────────────────────────────────────────
+function cascadeToBpChildren(node, checked) {
+  for (const child of (node.children || [])) {
+    if (child.type === "bp_subfolder" && child.selectable) {
+      child.checked = checked;
+      const cb = document.querySelector(`.check[data-id="${CSS.escape(child.id)}"]`);
+      if (cb) cb.checked = checked;
+    }
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

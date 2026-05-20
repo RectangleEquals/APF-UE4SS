@@ -64,12 +64,23 @@ class ModComponents:
     cpp: bool = False
     blueprint: bool = False
     bp_pak_files: list = field(default_factory=list)
+    # Per-subfolder BP metadata from the registry resolver.
+    # Each entry: {"name": str, "files": list[str], "is_valid": bool, "warnings": list[str]}
+    bp_subfolders: list = field(default_factory=list)
 
     @property
     def bp_mods(self) -> list:
-        """Typed BpLogicMod instances derived from bp_pak_files (computed, not stored)."""
+        """Typed BpLogicMod instances from bp_subfolders (falls back to flat bp_pak_files)."""
         from .bp_component import parse_bp_mods
-        return parse_bp_mods(self.bp_pak_files)
+        if self.bp_subfolders:
+            result = []
+            for sf in self.bp_subfolders:
+                if sf.get("is_valid") and sf.get("files"):
+                    mods = parse_bp_mods(sf["files"])
+                    if mods:
+                        result.extend(mods)
+            return result
+        return parse_bp_mods(self.bp_pak_files) or []
 
     @property
     def component_count(self) -> int:
@@ -90,12 +101,19 @@ class ModComponents:
                (["blueprint"] if self.blueprint else [])
 
     @classmethod
-    def from_lists(cls, components: list[str], bp_pak_files: list[str]) -> "ModComponents":
+    def from_lists(
+        cls,
+        components: list[str],
+        bp_pak_files: list[str],
+        *,
+        bp_subfolders: list | None = None,
+    ) -> "ModComponents":
         return cls(
             lua="lua" in components,
             cpp="cpp" in components,
             blueprint="blueprint" in components,
             bp_pak_files=bp_pak_files,
+            bp_subfolders=bp_subfolders or [],
         )
 
 

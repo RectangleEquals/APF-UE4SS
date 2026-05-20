@@ -35,7 +35,7 @@ class CIManager:
                 api = self._api(token)
                 resp = api.client.rest.actions.create_workflow_dispatch(
                     self._owner, self._repo, workflow_id,
-                    body={"ref": ref, "inputs": inputs or {}},
+                    {"ref": ref, "inputs": inputs or {}},
                 )
                 try:
                     api.update_rate_limit(resp.headers)
