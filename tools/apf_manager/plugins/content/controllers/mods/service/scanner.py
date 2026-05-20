@@ -15,7 +15,7 @@ class ModScannerMixin:
             self._mods_dir = None
             self._game_id = None
             return
-        self._game_id = getattr(profile, "game_id", None)
+        self._game_id = profile.game_id
         detection = self._host.get_detection()
         if detection and detection.ue4ss and detection.ue4ss.mods_dir:
             self._mods_dir = detection.ue4ss.mods_dir

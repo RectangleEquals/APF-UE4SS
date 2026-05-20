@@ -65,10 +65,14 @@ class QueuePanelMixin:
 
         if item.status == "downloading":
             # Reuse pre-registered widgets created before thread start; create if absent.
+            # Detach from previous parent first — clear_widgets() on the container only
+            # sets row.parent=None for direct children, not nested bar/lbl inside old rows.
             bar = self._progress_bars.get(item.key)
             if bar is None:
                 bar = MDLinearProgressIndicator(size_hint=(1, None), height=dp(4))
                 self._progress_bars[item.key] = bar
+            elif bar.parent is not None:
+                bar.parent.remove_widget(bar)
             bar.value = item.progress
             row.add_widget(bar)
 
@@ -76,6 +80,8 @@ class QueuePanelMixin:
             if lbl is None:
                 lbl = _make_progress_label()
                 self._progress_labels[item.key] = lbl
+            elif lbl.parent is not None:
+                lbl.parent.remove_widget(lbl)
             lbl.text = _format_progress(item)
             row.add_widget(lbl)
 

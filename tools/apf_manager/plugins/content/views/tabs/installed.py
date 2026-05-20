@@ -119,7 +119,7 @@ class InstalledTab(MDBoxLayout):
 
         self._list.clear_widgets()
 
-        ue4ss_ok  = bool(self._detection and getattr(self._detection, "valid", False))
+        ue4ss_ok  = bool(self._detection and self._detection.valid)
         fw_mod_ok = bool(self._fw_mod_dir)
 
         game_id = self._ctrl.get_game_id(self._profile)
@@ -171,10 +171,10 @@ class InstalledTab(MDBoxLayout):
                     from ...models.state.pipeline import InstallRecord
                     record = InstallRecord(
                         content_type="ap_mod",
-                        name=getattr(mod, "display_name", mod.folder_name),
-                        mod_id=getattr(mod, "mod_id", ""),
+                        name=mod.display_name,
+                        mod_id=mod.mod_id,
                         folder_name=mod.folder_name,
-                        components=list(getattr(mod, "components", ["lua"])),
+                        components=list(mod.components),
                         game_id=game_id,
                     )
 
@@ -251,7 +251,10 @@ class InstalledTab(MDBoxLayout):
         return row
 
     def _add_orphaned_bp_rows(self) -> None:
-        logicmods_dir = getattr(self._detection, "logicmods_dir", None)
+        logicmods_dir = (
+            self._detection.ue4ss.logicmods_dir
+            if (self._detection and self._detection.ue4ss) else None
+        )
         if not logicmods_dir or not logicmods_dir.is_dir():
             return
         from ...models.state.install import InstallStateManager
@@ -317,8 +320,11 @@ class InstalledTab(MDBoxLayout):
 
     def _other_status_section(self) -> MDBoxLayout:
         """Bootstrap status section — always rendered regardless of UE4SS state."""
-        ue4ss_ok    = bool(self._detection and getattr(self._detection, "valid", False))
-        platform_dir = getattr(self._detection, "platform_dir", None) if self._detection else None
+        ue4ss_ok     = bool(self._detection and self._detection.valid)
+        platform_dir = (
+            self._detection.platform.platform_dir
+            if (self._detection and self._detection.platform) else None
+        )
 
         updates_svc = (
             self._host.get_service("updates")
@@ -344,10 +350,9 @@ class InstalledTab(MDBoxLayout):
         ue4ss_source_url = ""
 
         if ue4ss_ok:
-            # P1: version from the DLL at detect-time (most authoritative)
-            det_ver = getattr(self._detection.ue4ss, "version", None) if self._detection and self._detection.ue4ss else None
-            if det_ver:
-                ue4ss_version = det_ver
+            # P1: version from DLL metadata at detect-time (most authoritative)
+            if self._detection.ue4ss and self._detection.ue4ss.version:
+                ue4ss_version = self._detection.ue4ss.version
 
             # P2: install state record (fallback for builds with no DLL version resource)
             if not ue4ss_version:
@@ -364,40 +369,43 @@ class InstalledTab(MDBoxLayout):
             if v and v != "unknown":
                 ue4ss_version = v
 
-        # Fallback A/B/C — read from install record (no network; data was cached at install time)
-        if ue4ss_ok and not ue4ss_version:
+        # Always load install record when UE4SS is present so Fallback A URL is always shown.
+        ue4ss_record = None
+        if ue4ss_ok:
             try:
                 from ...models.state.install import InstallStateManager
                 from ...models.state.pipeline import InstallRecord
                 game_id_v = self._ctrl.get_game_id(self._profile)
                 if game_id_v:
-                    ism = InstallStateManager(game_id_v)
-                    ue4ss_record: Optional[InstallRecord] = None
-                    for d in ism.get_all():
+                    for d in InstallStateManager(game_id_v).get_all():
                         rec = InstallRecord.from_dict(d)
                         if rec.install_type and "ue4ss" in rec.install_type:
                             ue4ss_record = rec
                             break
-
-                    if ue4ss_record:
-                        # Fallback A: always build a GitHub URL when source_repo is known
-                        if ue4ss_record.source_repo:
-                            if ue4ss_record.source_tag:
-                                ue4ss_source_url = f"https://github.com/{ue4ss_record.source_repo}/releases/tag/{ue4ss_record.source_tag}"
-                            else:
-                                ue4ss_source_url = f"https://github.com/{ue4ss_record.source_repo}"
-
-                        # Fallback B: release tag captured at install time (uncertain — append ?)
-                        if not ue4ss_version and ue4ss_record.source_tag:
-                            ue4ss_version = f"{ue4ss_record.source_tag}?"
-
             except Exception:
                 pass
+
+        # Fallback A: GitHub URL — always shown when source_repo is known (independent of version)
+        if ue4ss_record and ue4ss_record.source_repo:
+            if ue4ss_record.source_tag:
+                ue4ss_source_url = (
+                    f"https://github.com/{ue4ss_record.source_repo}"
+                    f"/releases/tag/{ue4ss_record.source_tag}"
+                )
+            else:
+                ue4ss_source_url = f"https://github.com/{ue4ss_record.source_repo}"
+
+        # Fallback B: release tag captured at install time (uncertain — append ?)
+        if ue4ss_ok and not ue4ss_version and ue4ss_record and ue4ss_record.source_tag:
+            ue4ss_version = f"{ue4ss_record.source_tag}?"
 
         # Fallback C: parse Changelog.md from the UE4SS installation directory
         if ue4ss_ok and not ue4ss_version:
             try:
-                ue4ss_dir = getattr(self._detection.ue4ss, "ue4ss_dir", None) if self._detection and self._detection.ue4ss else None
+                ue4ss_dir = (
+                    self._detection.ue4ss.ue4ss_dir
+                    if (self._detection and self._detection.ue4ss) else None
+                )
                 if ue4ss_dir:
                     changelog = ue4ss_dir / "Changelog.md"
                     if changelog.is_file():
@@ -413,11 +421,14 @@ class InstalledTab(MDBoxLayout):
             except Exception:
                 pass
 
+        _SEMVER_RE = re.compile(r'^\d+\.\d+')
         if ue4ss_ok and ue4ss_version:
             if ue4ss_version.endswith("?"):
                 ue4ss_detail = f"Installed ({ue4ss_version})"
-            else:
+            elif _SEMVER_RE.match(ue4ss_version):
                 ue4ss_detail = f"v{ue4ss_version} installed"
+            else:
+                ue4ss_detail = f"{ue4ss_version} installed"
         elif ue4ss_ok:
             ue4ss_detail = "Installed (version unavailable)"
         else:
@@ -588,10 +599,10 @@ class InstalledTab(MDBoxLayout):
         from ...models.state.pipeline import InstallRecord
         return InstallRecord(
             content_type="ap_mod",
-            name=getattr(mod, "display_name", mod.folder_name),
-            mod_id=getattr(mod, "mod_id", ""),
+            name=mod.display_name,
+            mod_id=mod.mod_id,
             folder_name=mod.folder_name,
-            components=list(getattr(mod, "components", ["lua"])),
+            components=list(mod.components),
             game_id=game_id,
         )
 
@@ -656,9 +667,8 @@ class InstalledTab(MDBoxLayout):
             else:
                 import shutil
                 if mod_info:
-                    folder_path = getattr(mod_info, "folder_path", None)
-                    if folder_path and folder_path.exists():
-                        shutil.rmtree(str(folder_path), ignore_errors=True)
+                    if mod_info.folder_path and mod_info.folder_path.exists():
+                        shutil.rmtree(str(mod_info.folder_path), ignore_errors=True)
                 if deploy_svc:
                     deploy_svc.remove_entry(install_record.folder_name)
 

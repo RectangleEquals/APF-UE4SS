@@ -37,10 +37,10 @@ class DiagnosticsController:
         items.append(DiagValidationItem(
             label="UE game detected",
             detail="",
-            status="ok" if getattr(detection, "is_ue_game", False) else "error",
+            status="ok" if detection.is_ue_game else "error",
         ))
 
-        platform_ok = bool(detection.platform and getattr(detection.platform, "platform_dir", None))
+        platform_ok = bool(detection.platform and detection.platform.platform_dir)
         items.append(DiagValidationItem(
             label="Platform directory detected",
             detail=str(detection.platform.platform_dir) if platform_ok else "",

@@ -134,7 +134,7 @@ class LoadOrderModRow(MDBoxLayout):
             return
 
         # Normal mod row
-        is_orphaned = getattr(mod, "is_orphaned", False)
+        is_orphaned = mod.is_orphaned
         if mod.is_ap_mod:
             self.md_bg_color = (
                 ROW_BG_DISABLED if not enabled
@@ -145,22 +145,19 @@ class LoadOrderModRow(MDBoxLayout):
         else:
             self.md_bg_color = ROW_BG_NONAP
 
-        # Column 1: Reorder buttons (AP mods only)
-        if mod.is_ap_mod:
-            reorder_box = MDBoxLayout(size_hint=(None, 1), width=COL_REORDER)
-            reorder_box.add_widget(MDIconButton(
-                icon="chevron-up",
-                size_hint=(1, 1),
-                on_release=lambda *_: on_move_up(mod),
-            ))
-            reorder_box.add_widget(MDIconButton(
-                icon="chevron-down",
-                size_hint=(1, 1),
-                on_release=lambda *_: on_move_down(mod),
-            ))
-            self.add_widget(reorder_box)
-        else:
-            self.add_widget(MDBoxLayout(size_hint=(None, 1), width=COL_REORDER))
+        # Column 1: Reorder — all non-Keybinds mods are reorderable
+        reorder_box = MDBoxLayout(size_hint=(None, 1), width=COL_REORDER)
+        reorder_box.add_widget(MDIconButton(
+            icon="chevron-up",
+            size_hint=(1, 1),
+            on_release=lambda *_: on_move_up(mod),
+        ))
+        reorder_box.add_widget(MDIconButton(
+            icon="chevron-down",
+            size_hint=(1, 1),
+            on_release=lambda *_: on_move_down(mod),
+        ))
+        self.add_widget(reorder_box)
 
         # Column 2: Status badge
         icon_name, icon_color = STATUS_ICONS.get(status, STATUS_ICONS["unknown"])
@@ -177,7 +174,7 @@ class LoadOrderModRow(MDBoxLayout):
 
         # Column 3: Name (with optional C++ badge and orphaned marker)
         name_box = MDBoxLayout(orientation="horizontal", size_hint=(1, 1), spacing=dp(4))
-        components = getattr(mod, "components", ["lua"])
+        components = mod.components
         if "cpp" in components:
             name_box.add_widget(MDIcon(
                 icon="code-braces",
@@ -232,7 +229,7 @@ class LoadOrderModRow(MDBoxLayout):
 
         # Column 4: Version (prefer InstallRecord, fall back to ModInfo)
         version = (install_record.version if install_record and install_record.version
-                   else getattr(mod, "version", ""))
+                   else mod.version)
         self.add_widget(MDLabel(
             text=f"v{version}" if version else "",
             font_style="Label",

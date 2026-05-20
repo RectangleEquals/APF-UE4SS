@@ -64,7 +64,7 @@ class DeployImpactMixin:
                 template_dirs = [templates_root]
 
         for mod in mods_svc.get_ap_mods():
-            includes = getattr(mod, "capabilities_includes", [])
+            includes = mod.capabilities_includes
             if includes:
                 affected.append(mod)
 
@@ -81,8 +81,8 @@ class DeployImpactMixin:
         if not detection or not detection.ue4ss:
             return {}
 
-        components = getattr(mod_info, "components", ["lua"])
-        bp_pak_files = getattr(mod_info, "bp_pak_files", [])
+        components = mod_info.components
+        bp_pak_files = mod_info.bp_pak_files
         status = {}
         mods_dir = detection.ue4ss.mods_dir
 

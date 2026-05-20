@@ -403,7 +403,7 @@ class DeployContentMixin:
         """
         if not detection:
             return
-        components = getattr(mod_info, "components", ["lua"])
+        components = mod_info.components
         if any(c in components for c in ("lua", "cpp")):
             shutil.rmtree(str(mod_info.folder_path), ignore_errors=True)
             with self._lock:
@@ -411,7 +411,7 @@ class DeployContentMixin:
                     self._mods_txt.remove_entry(mod_info.folder_name)
                     self._mods_txt.save()
         if "blueprint" in components and detection.ue4ss and detection.ue4ss.logicmods_dir:
-            for pak in getattr(mod_info, "bp_pak_files", []):
+            for pak in mod_info.bp_pak_files:
                 pak_path = detection.ue4ss.logicmods_dir / pak
                 try:
                     pak_path.unlink(missing_ok=True)

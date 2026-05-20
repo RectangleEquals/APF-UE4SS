@@ -123,28 +123,28 @@ class LogPackager:
                 return str(p) if p else None
 
             data: dict = {
-                "is_ue_game": getattr(d, "is_ue_game", False) if d else False,
-                "valid": getattr(d, "valid", False) if d else False,
+                "is_ue_game": d.is_ue_game if d else False,
+                "valid": d.valid if d else False,
             }
             if platform_det:
                 data["platform"] = {
-                    "platform_dir": _str(getattr(platform_det, "platform_dir", None)),
+                    "platform_dir": _str(platform_det.platform_dir),
                 }
             if ue4ss:
                 data["ue4ss"] = {
-                    "ue4ss_dir": _str(getattr(ue4ss, "ue4ss_dir", None)),
-                    "mods_dir": _str(getattr(ue4ss, "mods_dir", None)),
-                    "logicmods_dir": _str(getattr(ue4ss, "logicmods_dir", None)),
-                    "missing": list(getattr(ue4ss, "missing", [])),
+                    "ue4ss_dir": _str(ue4ss.ue4ss_dir),
+                    "mods_dir": _str(ue4ss.mods_dir),
+                    "logicmods_dir": _str(ue4ss.logicmods_dir),
+                    "missing": list(ue4ss.missing),
                 }
             if fw_bins:
                 data["framework_binaries"] = {
-                    "installed": getattr(fw_bins, "installed", False),
+                    "installed": fw_bins.installed,
                 }
             if fw_mod:
                 data["framework_mod"] = {
-                    "mod_dir": _str(getattr(fw_mod, "mod_dir", None)),
-                    "framework_config_path": _str(getattr(fw_mod, "framework_config_path", None)),
+                    "mod_dir": _str(fw_mod.mod_dir),
+                    "framework_config_path": _str(fw_mod.framework_config_path),
                 }
             zf.writestr("detection.json", json.dumps(data, indent=2, default=str))
             self._included.append("detection.json")

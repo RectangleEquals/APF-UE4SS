@@ -224,7 +224,7 @@ class InstalledRowWidget(MDBoxLayout):
         if not result:
             return ""
         cached_content, _ = result
-        cached_ver = getattr(cached_content, "version", "")
+        cached_ver = cached_content.version
         if not cached_ver or cached_ver == r.version:
             return ""
         try:
@@ -246,8 +246,8 @@ class InstalledRowWidget(MDBoxLayout):
         components = r.components or []
         if not components:
             return {}
-        mods_dir      = getattr(detection, "mods_dir",      None)
-        logicmods_dir = getattr(detection, "logicmods_dir", None)
+        mods_dir      = detection.ue4ss.mods_dir      if detection.ue4ss else None
+        logicmods_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
         fn = r.folder_name
         status: dict = {}
         if "lua" in components:

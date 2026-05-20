@@ -15,12 +15,12 @@ logger = APFLogManager.get_logger(__name__)
 def _get_dep_info(mod, mod_by_id: dict) -> Tuple[str, str]:
     """Return (status, label) — status is 'error', 'warn', or 'ok'."""
     missing, incompat = [], []
-    for dep_str in (getattr(mod, "depends", None) or []):
+    for dep_str in (mod.depends or []):
         dep_id = dep_str.split(" ")[0].strip()
         if dep_id not in mod_by_id:
             short = dep_id.split(".")[-1] if "." in dep_id else dep_id
             missing.append(short)
-    for dep_str in (getattr(mod, "incompatible", None) or []):
+    for dep_str in (mod.incompatible or []):
         dep_id = dep_str.split(" ")[0].strip()
         if dep_id in mod_by_id:
             short = dep_id.split(".")[-1] if "." in dep_id else dep_id
@@ -41,7 +41,7 @@ def _topo_sort_ap_mods(ap_mods: list, id_to_folder: dict) -> list:
     folder_deps: dict = {}
     for m in rest:
         deps: set = set()
-        for dep_str in (getattr(m, "depends", None) or []):
+        for dep_str in (m.depends or []):
             dep_id = dep_str.split(" ")[0].strip()
             df = id_to_folder.get(dep_id)
             if df:
@@ -178,7 +178,9 @@ class LoadOrderController:
                 logger.warning(f"[load_order] get_bp_mods: failed to read install state: {exc}")
 
         # Orphan scan — unmanaged files in LogicMods/ not tracked by any install record
-        logicmods_dir = getattr(detection, "logicmods_dir", None) if detection else None
+        logicmods_dir = (
+            detection.ue4ss.logicmods_dir if (detection and detection.ue4ss) else None
+        )
         if logicmods_dir and logicmods_dir.is_dir():
             orphan_files = [
                 f.name for f in sorted(logicmods_dir.iterdir())
@@ -208,7 +210,7 @@ class LoadOrderController:
     # -----------------------------------------------------------------------
 
     def get_error_count(self, detection) -> int:
-        if not detection or not getattr(detection, "valid", False):
+        if not detection or not detection.valid:
             return 0
         mods_svc = self._host.get_service("mods")
         if not mods_svc:

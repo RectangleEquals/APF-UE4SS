@@ -229,10 +229,10 @@ class ContentDetailPanel(MDBoxLayout):
                 ))
             self.add_widget(asset_col)
     def _build_install_record(self, record) -> None:
-        if getattr(record, "deployed_at", ""):
+        if record.deployed_at:
             self._row("Installed", record.deployed_at[:10])
 
-        rec_ver = getattr(record, "version", "")
+        rec_ver = record.version
         if rec_ver:
             self._row("Inst. Version", rec_ver)
 
@@ -248,7 +248,7 @@ class ContentDetailPanel(MDBoxLayout):
                 logging.getLogger(__name__).warning("[content_detail] WARN: version compare failed: %s", exc)
                 self._row_colored("Registry Ver.", reg_ver, _COL_UPDATE)
 
-        components = getattr(record, "components", []) or []
+        components = record.components or []
         if components:
             health = self._component_health or {}
             chip_row = MDBoxLayout(

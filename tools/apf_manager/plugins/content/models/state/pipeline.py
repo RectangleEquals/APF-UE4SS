@@ -193,7 +193,11 @@ class InstallRecord:
             r.install_type = content.install_type
             if bp_pak_files_deployed:
                 r.bp_pak_files_deployed = bp_pak_files_deployed
+            # source only exists on GithubReleaseBinary — valid polymorphic getattr
             src = getattr(content, "source", None)
             if src:
                 r.source_tag = getattr(src, "tag", "") or ""
+                repo_obj = getattr(src, "repo", None)
+                if repo_obj:
+                    r.source_repo = getattr(repo_obj, "full_name", "") or ""
         return r

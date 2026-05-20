@@ -3,28 +3,32 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from kivy.animation import Animation
+from kivy.graphics import Color, InstructionGroup, Rectangle
 from kivy.metrics import dp
-from kivymd.uix.behaviors import HoverBehavior
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
+
+from ....content.views.chrome.hover_row import HoverRow
 
 _BG_ROW_EVEN = (0.11, 0.12, 0.15, 1)
 _BG_ROW_ODD  = (0.09, 0.10, 0.13, 1)
 _BG_HEADER   = (0.07, 0.08, 0.10, 1)
-_BG_HOVER    = (1, 1, 1, 0.06)
 
 _ROW_H   = 40   # dp — data row height
 _HDR_H   = 36   # dp — header row height
 
 
-class DevDataRow(HoverBehavior, MDBoxLayout):
+class DevDataRow(HoverRow):
     """
     Horizontal data row base class for DevTools tabs.
 
-    Fixed height (40 dp), alternating backgrounds, animated hover highlight,
-    and optional on_press callback.  Primary/name columns use size_hint_x=1;
-    action columns use explicit dp widths — both must match the header exactly.
+    Inherits HoverRow for correct proportional-alpha hover animation (matching
+    the Content tab row behavior).  The alternating row background is drawn via
+    canvas.before at position 0, beneath HoverRow's md_bg_color overlay layer.
+
+    Fixed height (40 dp), alternating backgrounds, optional on_press callback.
+    Primary/name columns use size_hint_x=1; action columns use explicit dp widths
+    — both must match the header row exactly.
     """
 
     def __init__(
@@ -35,39 +39,47 @@ class DevDataRow(HoverBehavior, MDBoxLayout):
         **kwargs,
     ) -> None:
         base_bg = _BG_ROW_EVEN if row_index % 2 == 0 else _BG_ROW_ODD
+        # md_bg_color starts transparent — HoverRow uses it as the overlay layer.
         super().__init__(
             orientation="horizontal",
             size_hint=(1, None),
             height=dp(_ROW_H),
             spacing=dp(8),
             padding=(dp(8), 0, dp(8), 0),
-            md_bg_color=base_bg,
+            md_bg_color=(0, 0, 0, 0),
             **kwargs,
         )
         self._base_bg = base_bg
         self._hover_enabled = hover
         self._on_press_cb = on_press
 
+        # Draw the static row background BEFORE the md_bg_color overlay rectangle.
+        # Inserting at index 0 guarantees our background is the lowest canvas layer.
+        grp = InstructionGroup()
+        self._bg_color_instr = Color(*base_bg)
+        self._bg_rect_instr  = Rectangle(pos=self.pos, size=self.size)
+        grp.add(self._bg_color_instr)
+        grp.add(self._bg_rect_instr)
+        self.canvas.before.insert(0, grp)
+        self.bind(pos=self._update_bg, size=self._update_bg)
+
+    def _update_bg(self, *_) -> None:
+        self._bg_rect_instr.pos  = self.pos
+        self._bg_rect_instr.size = self.size
+
     # -----------------------------------------------------------------------
-    # HoverBehavior callbacks
+    # HoverRow overrides — add the hover-enabled guard, delegate to super
     # -----------------------------------------------------------------------
 
-    def on_enter(self):
+    def on_enter(self) -> None:
         if not self._hover_enabled:
             return
-        Animation.cancel_all(self, "md_bg_color")
-        Animation(md_bg_color=_BG_HOVER, duration=0.08, t="out_quad").start(self)
+        super().on_enter()
 
-    def on_leave(self):
+    def on_leave(self) -> None:
         if not self._hover_enabled:
             return
-        Animation.cancel_all(self, "md_bg_color")
-        Animation(md_bg_color=self._base_bg, duration=0.12, t="out_quad").start(self)
-
-    def on_parent(self, widget, parent):
-        if parent is None:
-            Animation.cancel_all(self, "md_bg_color")
-            self.md_bg_color = self._base_bg
+        super().on_leave()
 
     # -----------------------------------------------------------------------
     # Press

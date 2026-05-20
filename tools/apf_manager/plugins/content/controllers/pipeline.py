@@ -77,6 +77,6 @@ class PipelineController:
             if gid:
                 return gid
         if profile:
-            name = getattr(profile, "display_name", None) or getattr(profile, "name", "")
+            name = profile.display_name
             return name.lower().replace(" ", "_") if name else ""
         return ""

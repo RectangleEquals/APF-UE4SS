@@ -275,7 +275,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
     def refresh(self, game_id: str, detection=None) -> None:
         self._game_id = game_id
         self._detection = detection
-        self._ue4ss_detected = bool(detection and getattr(detection, "valid", False))
+        self._ue4ss_detected = bool(detection and detection.valid)
         mods_svc = self._host.get_service("mods")
         self._framework_detected = bool(
             mods_svc and mods_svc.get_framework_mod_dir() is not None
@@ -534,7 +534,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         )
         section.add_widget(FrameworkStatusBanner(state="update_available", detail=detail))
 
-        has_detection = bool(self._detection and getattr(self._detection, "valid", False))
+        has_detection = bool(self._detection and self._detection.valid)
         dl_row = MDBoxLayout(
             orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(8),
         )
@@ -578,10 +578,13 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
             self._host.log(f"[downloads] Framework download failed: {msg}")
 
     def _install_framework_update(self, zip_path: Path) -> None:
-        if not (self._detection and getattr(self._detection, "valid", False)):
+        if not (self._detection and self._detection.valid):
             return
         import zipfile, shutil
-        platform_dir = getattr(self._detection, "platform_dir", None)
+        platform_dir = (
+            self._detection.platform.platform_dir
+            if (self._detection and self._detection.platform) else None
+        )
         if not platform_dir:
             return
         try:

@@ -146,7 +146,7 @@ class LoadOrderTab(MDBoxLayout):
         """Return the number of rows with dependency errors (for badge coloring)."""
         if not self._rows:
             return 0
-        if not (self._detection and getattr(self._detection, "valid", False)):
+        if not (self._detection and self._detection.valid):
             return 0
         all_mods = self._ctrl.scan_mods()
         mod_by_id = {m.mod_id: m for m in all_mods if m.mod_id}
@@ -174,8 +174,7 @@ class LoadOrderTab(MDBoxLayout):
 
         def _has_mods_txt_entry(m) -> bool:
             """BP-only mods have no mods.txt entry and are excluded from Load Order."""
-            components = getattr(m, "components", ["lua"])
-            return "lua" in components or "cpp" in components
+            return "lua" in m.components or "cpp" in m.components
 
         if self._mods_txt:
             order = self._mods_txt.get_order()
@@ -216,8 +215,7 @@ class LoadOrderTab(MDBoxLayout):
         # Load install_map for version numbers
         install_map: dict = {}
         if self._profile:
-            game_id = (getattr(self._profile, "game_id", None)
-                       or getattr(self._profile, "name", ""))
+            game_id = self._profile.game_id
             if game_id:
                 from ...models.state.install import InstallStateManager
                 from ...models.state.pipeline import InstallRecord
@@ -265,10 +263,7 @@ class LoadOrderTab(MDBoxLayout):
             self._list_layout.add_widget(kb_row)
 
         # BP Logic Mods section — locked, rendered after mods.txt list
-        _game_id = (
-            getattr(self._profile, "game_id", None)
-            or getattr(self._profile, "name", "")
-        ) if self._profile else ""
+        _game_id = self._profile.game_id if self._profile else ""
         self._add_bp_section(_game_id)
 
     # -----------------------------------------------------------------------

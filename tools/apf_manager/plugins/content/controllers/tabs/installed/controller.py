@@ -87,7 +87,7 @@ class InstalledController:
                 return deploy_svc.get_framework_uninstall_impact(mod)
         if hasattr(deploy_svc, "get_uninstall_impact"):
             return deploy_svc.get_uninstall_impact(mod)
-        return {"dependents": [], "components": list(getattr(mod, "components", [])),
+        return {"dependents": [], "components": list(mod.components),
                 "is_framework": False}
 
     def do_uninstall(self, install_record, detection, game_id: str) -> Tuple[bool, str]:
@@ -114,7 +114,7 @@ class InstalledController:
         """Remove a non-AP mod folder from the game directory."""
         import shutil
         try:
-            folder_path = getattr(mod, "folder_path", None)
+            folder_path = mod.folder_path if mod else None
             if folder_path and folder_path.is_dir():
                 shutil.rmtree(folder_path)
             mods_svc = self._host.get_service("mods")
@@ -133,7 +133,7 @@ class InstalledController:
         """Return (total_ap_mods, orphaned_count)."""
         mods = self.scan_mods()
         ap_mods  = [m for m in mods if m.is_ap_mod]
-        orphaned = sum(1 for m in ap_mods if getattr(m, "is_orphaned", False))
+        orphaned = sum(1 for m in ap_mods if m.is_orphaned)
         return len(ap_mods), orphaned
 
     # -----------------------------------------------------------------------
@@ -147,6 +147,6 @@ class InstalledController:
             if gid:
                 return gid
         if profile:
-            name = getattr(profile, "display_name", None) or getattr(profile, "name", "")
+            name = profile.display_name
             return name.lower().replace(" ", "_") if name else ""
         return ""

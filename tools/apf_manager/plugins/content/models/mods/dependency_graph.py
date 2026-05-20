@@ -71,7 +71,7 @@ def resolve_install_order(
 
     # Validate deps for each AP mod
     for mod in ap_mods + fw_mods:
-        for dep in getattr(mod, "dependencies", None) or []:
+        for dep in (mod.dependencies or []):
             if not isinstance(dep, DependencySpec):
                 continue
             dep_id = dep.mod_id
@@ -85,15 +85,15 @@ def resolve_install_order(
                     missing.append(dep_id)
 
     # Topological sort of AP mods (framework first, then by dep order)
-    id_to_mod = {getattr(m, "mod_id", ""): m for m in ap_mods if getattr(m, "mod_id", "")}
+    id_to_mod = {m.mod_id: m for m in ap_mods if m.mod_id}
 
     # Build dep graph: mod_id → set of mod_ids it depends on (within staged AP mods)
-    dep_graph: dict = {getattr(m, "mod_id", ""): set() for m in ap_mods if getattr(m, "mod_id", "")}
+    dep_graph: dict = {m.mod_id: set() for m in ap_mods if m.mod_id}
     for mod in ap_mods:
-        mid = getattr(mod, "mod_id", "")
+        mid = mod.mod_id
         if not mid:
             continue
-        for dep in getattr(mod, "dependencies", None) or []:
+        for dep in (mod.dependencies or []):
             if not isinstance(dep, DependencySpec) or dep.is_incompatible:
                 continue
             if dep.mod_id in id_to_mod:
@@ -115,7 +115,7 @@ def _kahn_sort(mods: list, dep_graph: dict) -> list:
         if not remaining:
             break
         for mod in list(remaining):
-            mid = getattr(mod, "mod_id", "")
+            mid = mod.mod_id
             deps = dep_graph.get(mid, set())
             if deps.issubset(resolved_ids):
                 result.append(mod)
@@ -148,7 +148,7 @@ def resolve_uninstall_cascade(
             return False
         if is_framework and record.capabilities_includes:
             return True
-        if on_id and on_id in (getattr(record, "dependencies", None) or []):
+        if on_id and on_id in (record.dependencies or []):
             return True
         return any(on_id in inc for inc in (record.capabilities_includes or []))
 

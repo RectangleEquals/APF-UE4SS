@@ -49,7 +49,7 @@ class ValidationService:
             ))
             return results
 
-        ap_mods = [m for m in mods if getattr(m, "is_ap_mod", False)]
+        ap_mods = [m for m in mods if m.is_ap_mod]
         mod_by_id = {m.mod_id: m for m in ap_mods if m.mod_id}
 
         from ...registry.resolver import _is_framework_mod_id
@@ -63,7 +63,7 @@ class ValidationService:
             ))
         else:
             fw_mod = fw_mods[0]
-            if getattr(fw_mod, "is_orphaned", False):
+            if fw_mod.is_orphaned:
                 results.append(ValidationResult(
                     label="Framework mod not managed",
                     detail="Framework mod found but not installed by APF Manager.",
@@ -84,7 +84,7 @@ class ValidationService:
                     ))
 
         for mod in ap_mods:
-            for dep_str in getattr(mod, "depends", []):
+            for dep_str in mod.depends:
                 dep_id = dep_str.split(" ")[0].strip()
                 if dep_id not in mod_by_id:
                     results.append(ValidationResult(
@@ -95,7 +95,7 @@ class ValidationService:
                     ))
 
         for mod in ap_mods:
-            for incompat_id in getattr(mod, "incompatible", []):
+            for incompat_id in mod.incompatible:
                 incompat_base = incompat_id.split(" ")[0].strip()
                 if incompat_base in mod_by_id:
                     results.append(ValidationResult(
@@ -117,7 +117,7 @@ class ValidationService:
             else:
                 seen_ids[mod.mod_id] = mod.folder_name
 
-        has_bp_mods = any("blueprint" in getattr(m, "components", []) for m in ap_mods)
+        has_bp_mods = any("blueprint" in m.components for m in ap_mods)
         if has_bp_mods and detection.ue4ss and detection.ue4ss.mods_dir:
             bpml_dir = detection.ue4ss.mods_dir / "BPModLoaderMod"
             bpml_exists = bpml_dir.is_dir()
@@ -136,8 +136,8 @@ class ValidationService:
                 ))
 
         for mod in ap_mods:
-            if "blueprint" in getattr(mod, "components", []):
-                for pak in getattr(mod, "bp_pak_files", []):
+            if "blueprint" in mod.components:
+                for pak in mod.bp_pak_files:
                     if detection.ue4ss and detection.ue4ss.logicmods_dir:
                         if not (detection.ue4ss.logicmods_dir / pak).exists():
                             results.append(ValidationResult(
@@ -156,7 +156,7 @@ class ValidationService:
                         break
 
         for mod in ap_mods:
-            if "cpp" in getattr(mod, "components", []) and detection.ue4ss and detection.ue4ss.mods_dir:
+            if "cpp" in mod.components and detection.ue4ss and detection.ue4ss.mods_dir:
                 dll_path = detection.ue4ss.mods_dir / mod.folder_name / "dlls" / "main.dll"
                 if not dll_path.exists():
                     results.append(ValidationResult(
