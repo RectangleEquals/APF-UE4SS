@@ -15,6 +15,9 @@ from kivymd.uix.label import MDLabel
 from kivymd.uix.textfield import MDTextField
 
 from ...controllers.tabs.dev_setup import DevSetupController
+from .....core.controllers.logging.manager import APFLogManager
+
+_log = APFLogManager.get_logger(__name__)
 
 
 class DevSetupTab(MDBoxLayout):
@@ -116,7 +119,8 @@ class DevSetupTab(MDBoxLayout):
             tk_root.withdraw()
             path_str = filedialog.askdirectory(title="Select Repository Root")
             tk_root.destroy()
-        except Exception:
+        except Exception as exc:
+            _log.warning("[dev_tools] Folder picker unavailable: %s", exc)
             return
         if not path_str:
             return

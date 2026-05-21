@@ -8,7 +8,7 @@ Features:
 """
 from __future__ import annotations
 
-import threading
+import threading  # MVC-TODO: _do_save_logs thread belongs in LogPackager controller
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 

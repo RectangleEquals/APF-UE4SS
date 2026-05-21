@@ -102,7 +102,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
     # Lifecycle
     # -----------------------------------------------------------------------
 
-    def on_game_changed(self, profile: Optional["GameProfile"]) -> None:
+    def on_game_changed(self, profile: Optional["GameProfile"], detection: Optional["DetectionResult"] = None) -> None:
         with self._lock:
             self._profile = profile
             self._mods_cache = []

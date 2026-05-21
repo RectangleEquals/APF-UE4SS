@@ -226,7 +226,7 @@ class CacheController:
         Groups by (category, game_id) so each logical bucket becomes one
         CacheSegment.  Pure computation — no I/O, no Kivy.
         """
-        from .....models.state.cache_stats import CacheSegment, CacheStats
+        from ....models.state.cache_stats import CacheSegment, CacheStats
         from collections import defaultdict
 
         # bucket key → (label, category, game_id, size_bytes, count, paths)
@@ -340,3 +340,105 @@ class CacheController:
             Clock.schedule_once(lambda dt: on_done(), 0)
 
         threading.Thread(target=_bg, daemon=True).start()
+
+    # -----------------------------------------------------------------------
+    # Cache rescan (AG-12: extracted from DownloadsTab view layer)
+    # -----------------------------------------------------------------------
+
+    def rescan(self, game_id: str, on_done: "Callable") -> None:
+        """
+        Scan the cache directory for this game_id in a background thread,
+        then call on_done(items) on the main Kivy thread.
+        """
+        from kivy.clock import Clock
+
+        def _bg():
+            items = self._scan_cache(game_id)
+            Clock.schedule_once(lambda dt: on_done(items), 0)
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _scan_cache(self, game_id: str) -> list:
+        from pathlib import Path
+        from ....controllers.download.service import _CACHE_DIR
+        from ....models.state.pipeline import ContentSerializer
+        from ....models.state.cache_item import CacheItem
+
+        items = []
+        if not _CACHE_DIR.is_dir():
+            return items
+
+        def _add_item(cache_dir: Path) -> None:
+            result = ContentSerializer().load_cache(cache_dir, log_fn=self._host.log)
+            if not result:
+                return
+            content, _ = result
+            if content.game_id != game_id:
+                if not content.game_id:
+                    logger.debug(
+                        "Skipping untagged cache entry at %s -- no game_id (pre-AB3 cache); "
+                        "re-download to associate with a game",
+                        cache_dir,
+                    )
+                return
+            items.append(CacheItem(cache_path=cache_dir, content=content))
+
+        _SKIP = {"github", "_framework"}
+
+        for repo_dir in _CACHE_DIR.iterdir():
+            if not repo_dir.is_dir() or repo_dir.name in _SKIP:
+                continue
+            if repo_dir.name == "_other":
+                for ue4ss_repo_dir in repo_dir.iterdir():
+                    if not ue4ss_repo_dir.is_dir():
+                        continue
+                    for tag_dir in ue4ss_repo_dir.iterdir():
+                        if tag_dir.is_dir():
+                            _add_item(tag_dir)
+                continue
+            for folder_dir in repo_dir.iterdir():
+                if not folder_dir.is_dir():
+                    continue
+                if folder_dir.name == "Templates":
+                    for game_dir in folder_dir.iterdir():
+                        if game_dir.is_dir():
+                            _add_item(game_dir)
+                    continue
+                _add_item(folder_dir)
+
+        return items
+
+    # -----------------------------------------------------------------------
+    # Docs access (AG-12: service routed through controller, not view)
+    # -----------------------------------------------------------------------
+
+    def get_framework_update_info(self):
+        """Return framework UpdateInfo, or None if the updates service is unavailable."""
+        if not self._host.has_service("updates"):
+            return None
+        return self._host.get_service("updates").get_update_info("framework")
+
+    def download_framework_update(self, update_info, dest, on_done) -> None:
+        """Trigger framework binary download via the updates service."""
+        if not self._host.has_service("updates"):
+            return
+        self._host.get_service("updates").download_update(
+            "framework", dest, on_done=on_done,
+        )
+
+    def open_docs_url(self, url: str, title: str, sidebar_mode: str = "verbose") -> None:
+        """Open a URL in the docs_viewer service."""
+        svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+        if svc and hasattr(svc, "open_url"):
+            svc.open_url(url, title=title, show_sidebar=True,
+                         show_mode_toggle=False, sidebar_mode=sidebar_mode)
+
+    def show_inline_docs(self, content: str, title: str,
+                         sidebar_mode: str = "verbose",
+                         allow_mode_toggle: bool = False) -> None:
+        """Show inline markdown content in the docs_viewer service."""
+        svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+        if svc and hasattr(svc, "show_inline"):
+            svc.show_inline(content=content, title=title,
+                            sidebar_mode=sidebar_mode,
+                            allow_mode_toggle=allow_mode_toggle)

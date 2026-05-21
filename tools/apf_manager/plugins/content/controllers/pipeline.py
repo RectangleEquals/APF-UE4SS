@@ -69,6 +69,11 @@ class PipelineController:
             count += 1
         return count
 
+    def rescan_mods(self) -> None:
+        """Force mods rescan — call after any deploy/undeploy to refresh orphan state."""
+        if self._host.has_service("mods"):
+            self._host.get_service("mods").rescan()
+
     def get_game_id(self, profile) -> str:
         """Derive game_id from registry service or fall back to profile."""
         if self._host.has_service("registry"):

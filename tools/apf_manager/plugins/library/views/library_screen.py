@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+import threading  # MVC-TODO: _refresh_steam and _check_ue4ss_badge threads belong in LibraryController
 import webbrowser
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -158,10 +158,7 @@ class LibraryScreen(MDBoxLayout):
     def _initial_load(self) -> None:
         self.refresh()
         threading.Thread(target=self._refresh_steam, daemon=True).start()
-        if self._host.has_service("updates"):
-            self._host.get_service("updates").check_all(
-                on_done=self._apply_update_dot
-            )
+        self._ctrl.check_updates_all(on_done=self._apply_update_dot)
         # Subscribe so UE4SS badges update immediately after detection changes
         # (e.g. after installing UE4SS from the game hub content tab)
         if hasattr(self._host, "subscribe_state_change"):
@@ -170,12 +167,8 @@ class LibraryScreen(MDBoxLayout):
     def _apply_update_dot(self) -> None:
         if self._settings_badge_btn is None:
             return
-        updates_svc = (self._host.get_service("updates")
-                       if self._host.has_service("updates") else None)
-        if not updates_svc:
-            return
-        mgr = updates_svc.get_update_info("manager")
-        apw = updates_svc.get_update_info("apworld")
+        mgr = self._ctrl.get_update_info("manager")
+        apw = self._ctrl.get_update_info("apworld")
         has_update = (
             (mgr and mgr.is_update_available)
             or (apw and apw.is_update_available)
@@ -398,6 +391,7 @@ class LibraryScreen(MDBoxLayout):
 
     def _on_dir_chosen(self, selection: list) -> None:
         if not selection:
+            self._show_snackbar("Action cancelled.")
             return
         selected = Path(selection[0])
         game_root = self._ctrl.resolve_ue_root(selected)
@@ -569,12 +563,7 @@ class LibraryScreen(MDBoxLayout):
             app._sm.current = "settings"
 
     def _open_docs(self) -> None:
-        try:
-            svc = self._host.get_service("docs_viewer")
-            if svc:
-                svc.open()
-        except Exception as exc:
-            self._host.log(f"[library] Could not open docs: {exc}")
+        self._ctrl.open_docs()
 
     # -----------------------------------------------------------------------
     # Search

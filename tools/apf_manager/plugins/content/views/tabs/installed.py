@@ -329,12 +329,8 @@ class InstalledTab(MDBoxLayout):
             if (self._detection and self._detection.platform) else None
         )
 
-        updates_svc = (
-            self._host.get_service("updates")
-            if self._host.has_service("updates") else None
-        )
-        ue4ss_update_info = updates_svc.get_update_info("ue4ss")      if updates_svc else None
-        fw_update_info    = updates_svc.get_update_info("framework")  if updates_svc else None
+        ue4ss_update_info = self._ctrl.get_update_info("ue4ss")
+        fw_update_info    = self._ctrl.get_update_info("framework")
 
         section = MDBoxLayout(
             orientation="vertical", size_hint_y=None, adaptive_height=True,

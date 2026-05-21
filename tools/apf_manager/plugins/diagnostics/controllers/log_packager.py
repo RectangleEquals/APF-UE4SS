@@ -88,7 +88,7 @@ class LogPackager:
         try:
             fw_ver = apworld_ver = mgr_ver = "?"
             try:
-                from .....__version__ import __version__, __framework_version__
+                from ....__version__ import __version__, __framework_version__
                 mgr_ver = __version__
                 fw_ver = __framework_version__
             except Exception as exc:

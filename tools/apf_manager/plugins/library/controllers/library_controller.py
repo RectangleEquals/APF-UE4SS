@@ -133,6 +133,30 @@ class LibraryController:
         cache.get(app_id, on_loaded=on_loaded)
         return None
 
+    def check_updates_all(self, on_done: Callable) -> None:
+        """Trigger update check for all components via the updates service."""
+        if self._host.has_service("updates"):
+            self._host.get_service("updates").check_all(on_done=on_done)
+
+    def get_update_info(self, component: str):
+        """Return UpdateInfo for the given component, or None."""
+        if not self._host.has_service("updates"):
+            return None
+        return self._host.get_service("updates").get_update_info(component)
+
+    def get_manager_update_info(self):
+        """Return UpdateInfo for the manager component, or None."""
+        return self.get_update_info("manager")
+
+    def open_docs(self) -> None:
+        """Open the docs viewer if the service is available."""
+        try:
+            svc = self._host.get_service("docs_viewer")
+            if svc:
+                svc.open()
+        except Exception as exc:
+            logger.warning("[library] Could not open docs: %s", exc)
+
     def _get_thumbnail_cache(self) -> Optional[ThumbnailCache]:
         if self._thumbnail_cache is None:
             try:

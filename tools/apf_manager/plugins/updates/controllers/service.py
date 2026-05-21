@@ -174,7 +174,7 @@ class UpdatesService:
 
     def _check_manager(self) -> None:
         try:
-            from ...__version__ import __version__ as current_version
+            from ....__version__ import __version__ as current_version
             from ....core.models.semver import SemVer
             api = self._make_apf_api()
             latest = api.get_latest_release_typed()

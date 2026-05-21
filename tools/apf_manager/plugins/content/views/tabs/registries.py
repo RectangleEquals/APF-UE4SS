@@ -202,7 +202,7 @@ class RegistriesTab(MDBoxLayout):
     def _refresh_registries(self) -> None:
         self._entry_rows.clear()
         self._registries_list.clear_widgets()
-        if not self._host.has_service("registry"):
+        if not self._ctrl.has_registry_service():
             self._registries_list.add_widget(MDLabel(
                 text="Registry service unavailable.",
                 size_hint_y=None,

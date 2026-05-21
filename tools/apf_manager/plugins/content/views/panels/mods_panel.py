@@ -95,10 +95,7 @@ class ModsSectionMixin:
             _title = getattr(mod, "name", folder)
 
             def _open_readme(*_, url=_docs.readme_url, title=_title):
-                docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
-                if docs_svc and hasattr(docs_svc, "open_url"):
-                    docs_svc.open_url(url, title=title, show_sidebar=True,
-                                      show_mode_toggle=False, sidebar_mode="verbose")
+                self._ctrl.open_docs_url(url, title=title)
 
             actions.append({"icon": "file-document-outline", "tooltip": "View Readme",
                             "callback": _open_readme})
@@ -125,15 +122,11 @@ class ModsSectionMixin:
 
     def _open_other_docs(self, docs_path: str, owner: str, repo: str,
                           registry_owner: str = "", registry_repo: str = "") -> None:
-        docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
-        if not docs_svc:
-            return
         raw_owner = registry_owner or owner
         raw_repo  = registry_repo  or repo
         raw_url = f"https://raw.githubusercontent.com/{raw_owner}/{raw_repo}/HEAD/{docs_path}"
         title = docs_path.rsplit("/", 1)[-1].replace("_", " ").replace(".md", "").title()
-        if hasattr(docs_svc, "open_url"):
-            docs_svc.open_url(raw_url, title=title, show_sidebar=True, show_mode_toggle=False)
+        self._ctrl.open_docs_url(raw_url, title=title)
 
     def _other_row(self, item, index: int) -> MDBoxLayout:
         from ..rows.content_row import ContentRowWidget
@@ -170,10 +163,7 @@ class ModsSectionMixin:
             _title = getattr(item, "name", "Docs")
 
             def _open_docs(*_, url=_docs.readme_url, title=_title):
-                docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
-                if docs_svc and hasattr(docs_svc, "open_url"):
-                    docs_svc.open_url(url, title=title, show_sidebar=True,
-                                      show_mode_toggle=False, sidebar_mode="verbose")
+                self._ctrl.open_docs_url(url, title=title)
 
             actions.append({"icon": "file-document-outline", "tooltip": "View Docs",
                             "callback": _open_docs})
@@ -311,14 +301,12 @@ class ModsSectionMixin:
             _name = getattr(item, "name", "Release Notes")
 
             def _show_changelog(*_, _cl=changelog, _nm=_name):
-                docs_svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
-                if docs_svc and hasattr(docs_svc, "show_inline"):
-                    docs_svc.show_inline(
-                        content=_cl,
-                        title=f"{_nm} — Release Notes",
-                        sidebar_mode="verbose",
-                        allow_mode_toggle=False,
-                    )
+                self._ctrl.show_inline_docs(
+                    content=_cl,
+                    title=f"{_nm} — Release Notes",
+                    sidebar_mode="verbose",
+                    allow_mode_toggle=False,
+                )
 
             panel.add_widget(MDButton(
                 MDButtonText(text="Release Notes"),

@@ -26,7 +26,9 @@ _PLUGIN_JSON = Path(__file__).parent.parent / "plugin.json"
 def _load_meta() -> dict:
     try:
         return json.loads(_PLUGIN_JSON.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("[devtools] Failed to load plugin.json: %s", exc)
         return {}
 
 

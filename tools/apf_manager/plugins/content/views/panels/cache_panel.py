@@ -12,8 +12,7 @@ from kivymd.uix.label import MDLabel
 
 from ..chrome.constants import COL_DIM
 
-if TYPE_CHECKING:
-    from ..tabs.downloads import _CacheItem
+from ...models.state.cache_item import CacheItem
 
 
 _BG_ITEM = (0.13, 0.13, 0.13, 1)
@@ -32,7 +31,7 @@ class CachePanelMixin:
     # Row + detail builders
     # -----------------------------------------------------------------------
 
-    def _cache_row(self, ci: "_CacheItem") -> MDBoxLayout:
+    def _cache_row(self, ci: "CacheItem") -> MDBoxLayout:
         from ..rows.content_row import ContentRowWidget
         cache_key = str(ci.cache_path)
         expanded  = cache_key in self._expanded_cache
@@ -52,7 +51,7 @@ class CachePanelMixin:
         ))
         return container
 
-    def _cache_detail(self, ci: "_CacheItem") -> MDBoxLayout:
+    def _cache_detail(self, ci: "CacheItem") -> MDBoxLayout:
         from ...models.descriptors.types import GithubReleaseBinary as _GRB
         from ..panels.content_detail_panel import ContentDetailPanel
 
@@ -79,23 +78,18 @@ class CachePanelMixin:
         # X-2: Release Notes — opens docs viewer; omitted if service unavailable
         if isinstance(ci.content, _GRB) and ci.content.source and ci.content.source.changelog:
             changelog = ci.content.source.changelog
-            docs_svc = (
-                self._host.get_service("docs_viewer")
-                if self._host.has_service("docs_viewer") else None
-            )
-            if docs_svc and hasattr(docs_svc, "show_inline"):
-                def _show_release_notes(*_, _cl=changelog, _nm=ci.display_name, _svc=docs_svc):
-                    _svc.show_inline(
-                        content=_cl,
-                        title=f"{_nm} — Release Notes",
-                        sidebar_mode="verbose",
-                        allow_mode_toggle=False,
-                    )
-                outer.add_widget(MDButton(
-                    MDButtonText(text="Release Notes"),
-                    style="text", size_hint_y=None, height=dp(36),
-                    on_release=_show_release_notes,
-                ))
+            def _show_release_notes(*_, _cl=changelog, _nm=ci.display_name):
+                self._ctrl.show_inline_docs(
+                    content=_cl,
+                    title=f"{_nm} — Release Notes",
+                    sidebar_mode="verbose",
+                    allow_mode_toggle=False,
+                )
+            outer.add_widget(MDButton(
+                MDButtonText(text="Release Notes"),
+                style="text", size_hint_y=None, height=dp(36),
+                on_release=_show_release_notes,
+            ))
 
         return outer
 
@@ -128,7 +122,7 @@ class CachePanelMixin:
     # Actions — delegate to CacheController
     # -----------------------------------------------------------------------
 
-    def _remove_cached(self, ci: "_CacheItem") -> None:
+    def _remove_cached(self, ci: "CacheItem") -> None:
         """Delete a single item and refresh the panel."""
         self._selected_cache.discard(str(ci.cache_path))
         self._ctrl.delete(ci)

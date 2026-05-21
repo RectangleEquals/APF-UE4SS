@@ -68,10 +68,9 @@ class StagingMixin:
             return
 
         def _bg():
-            staged = self.get_staged()
-            for mod in staged:
-                on_progress(f"Installing {mod.name}…")
-                # TODO: download mod files and run install steps
-            on_done(True, f"Installed {len(staged)} mod(s).")
+            raise NotImplementedError(
+                "Staging install workflow not yet implemented — "
+                "use DownloadsTab cache-based install instead."
+            )
 
         threading.Thread(target=_bg, daemon=True).start()

@@ -329,7 +329,7 @@ class ContentPipelinePanel(PluginPanel):
             self._tab_content.set_framework_state(ue4ss_ok, fw_dir, fw_conflict)
 
         if self._tab_downloads:
-            self._tab_downloads.refresh(game_id, detection=detection)
+            self._tab_downloads.refresh(game_id, detection=detection, fw_dir=fw_dir)
 
         if self._tab_installed:
             if hasattr(self._tab_installed, "set_framework_state"):
@@ -413,9 +413,7 @@ class ContentPipelinePanel(PluginPanel):
 
     def _on_install_state_changed(self) -> None:
         # Force rescan so newly deployed mods appear with correct orphan/source state.
-        mods_svc = self._host.get_service("mods") if self._host else None
-        if mods_svc:
-            mods_svc.rescan()
+        self._ctrl.rescan_mods()
         self._fw_state = self._ctrl.get_framework_state()
         detection = self._fw_state.get("detection")
         if self._tab_load_order:

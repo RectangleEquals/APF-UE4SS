@@ -140,6 +140,12 @@ class InstalledController:
     # Game ID derivation
     # -----------------------------------------------------------------------
 
+    def get_update_info(self, component: str):
+        """Return UpdateInfo for 'ue4ss' or 'framework', or None if service unavailable."""
+        if not self._host.has_service("updates"):
+            return None
+        return self._host.get_service("updates").get_update_info(component)
+
     def get_game_id(self, profile) -> str:
         if self._host.has_service("registry"):
             svc = self._host.get_service("registry")

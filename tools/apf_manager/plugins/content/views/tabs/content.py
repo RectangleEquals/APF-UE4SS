@@ -119,7 +119,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         elif self._ue4ss_ok and self._fw_dir is None:
             self._list.add_widget(self._no_framework_notice())
 
-        if not self._host.has_service("registry"):
+        if not self._ctrl.has_registry_service():
             self._list.add_widget(self._empty_label("No registry service available."))
             return
 
@@ -194,7 +194,7 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
     def _load_other_items_bg(self) -> None:
         """Fetch UE4SS + framework Other items in a background thread, then refresh."""
-        import threading
+        import threading  # MVC-TODO: move _load_other_items_bg thread to ContentController
 
         game_id = self._game_id
 

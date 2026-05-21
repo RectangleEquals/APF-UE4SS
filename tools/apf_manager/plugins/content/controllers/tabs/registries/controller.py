@@ -159,6 +159,9 @@ class RegistriesController:
     # Internal
     # -----------------------------------------------------------------------
 
+    def has_registry_service(self) -> bool:
+        return bool(self._svc())
+
     def _svc(self):
         if self._host.has_service("registry"):
             return self._host.get_service("registry")

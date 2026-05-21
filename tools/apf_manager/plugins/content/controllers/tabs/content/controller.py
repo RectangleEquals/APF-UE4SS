@@ -143,6 +143,9 @@ class ContentController:
     # Internal
     # -----------------------------------------------------------------------
 
+    def has_registry_service(self) -> bool:
+        return bool(self._registry_svc())
+
     def _registry_svc(self):
         if self._host.has_service("registry"):
             return self._host.get_service("registry")

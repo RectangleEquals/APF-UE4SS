@@ -14,13 +14,14 @@ Cache storage: ~/.apf_manager/cache/<owner>+<repo>/<folder>/
 
 from __future__ import annotations
 
-import threading
+import threading  # MVC-TODO: _queue_lock remains here; extract queue management to DownloadQueueController
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
 from ...models.descriptors.base import ContentDescriptor
+from ...models.state.cache_item import CacheItem
 
 from kivy.clock import Clock
 from kivy.metrics import dp
@@ -112,75 +113,7 @@ class _QueueItem:
 # Cached item (on-disk)
 # ---------------------------------------------------------------------------
 
-class _CacheItem:
-    """A downloaded content item sitting in the local cache."""
-
-    def __init__(self, cache_path: Path, content: ContentDescriptor):
-        self.cache_path = cache_path
-        self.content = content
-
-    @property
-    def category(self) -> str:
-        ct = self.content.content_type
-        if ct == "template":
-            return "template"
-        if ct in ("github_release_binary", "external_url_binary", "manual_binary"):
-            return "other"
-        return "mod"
-
-    @property
-    def display_name(self) -> str:
-        return self.content.name or self.content.content_type or "Unknown"
-
-    @property
-    def version(self) -> str:
-        return self.content.version or ""
-
-    @property
-    def game_name(self) -> str:
-        return self.content.game_id or ""
-
-    @property
-    def install_type(self) -> str:
-        return getattr(self.content, "install_type", "") or ""
-
-    @property
-    def folder_name(self) -> str:
-        from ...models.descriptors.types import ModDescriptor as _MD
-        if isinstance(self.content, _MD):
-            return self.content.folder_name or ""
-        _src = getattr(self.content, "source", None)
-        if _src and _src.folder:
-            return _src.folder.split("/")[-1]
-        return self.content.name or ""
-
-    @property
-    def owner(self) -> str:
-        _src = getattr(self.content, "source", None)
-        if _src and _src.repo:
-            return _src.repo.owner
-        return ""
-
-    @property
-    def repo(self) -> str:
-        _src = getattr(self.content, "source", None)
-        if _src and _src.repo:
-            return _src.repo.repo
-        return ""
-
-    @property
-    def components(self) -> list:
-        from ...models.descriptors.types import ModDescriptor as _MD
-        if isinstance(self.content, _MD) and self.content.components:
-            return self.content.components.types
-        return []
-
-    @property
-    def bp_pak_files(self) -> list:
-        from ...models.descriptors.types import ModDescriptor as _MD
-        if isinstance(self.content, _MD) and self.content.components:
-            return self.content.components.bp_pak_files
-        return []
+# CacheItem is defined in models/state/cache_item.py — imported above.
 
     @property
     def size_mb(self) -> float:
@@ -206,7 +139,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         self._on_switch_to_installed = on_switch_to_installed
 
         self._queue: list[_QueueItem] = []
-        self._cached: list[_CacheItem] = []
+        self._cached: list[CacheItem] = []
         self._queue_lock = threading.Lock()
         self._game_id: str = ""
         self._detection = None
@@ -267,14 +200,11 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
     # Public API
     # -----------------------------------------------------------------------
 
-    def refresh(self, game_id: str, detection=None) -> None:
+    def refresh(self, game_id: str, detection=None, fw_dir=None) -> None:
         self._game_id = game_id
         self._detection = detection
         self._ue4ss_detected = bool(detection and detection.valid)
-        mods_svc = self._host.get_service("mods")
-        self._framework_detected = bool(
-            mods_svc and mods_svc.get_framework_mod_dir() is not None
-        ) if self._ue4ss_detected else False
+        self._framework_detected = bool(fw_dir is not None) if self._ue4ss_detected else False
         self._cache_dirty = False
         self._scan_cache_and_rebuild()
 
@@ -308,56 +238,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _scan_cache_and_rebuild(self) -> None:
-        def _bg():
-            items = self._scan_cache()
-            Clock.schedule_once(lambda dt: self._set_cached(items), 0)
-        threading.Thread(target=_bg, daemon=True).start()
-
-    def _scan_cache(self) -> list[_CacheItem]:
-        items = []
-        if not _CACHE_DIR.is_dir():
-            return items
-        from ...models.state.pipeline import ContentSerializer
-
-        def _add_item(cache_dir: Path) -> None:
-            result = ContentSerializer().load_cache(cache_dir, log_fn=self._host.log)
-            if not result:
-                return
-            content, _ = result
-            if content.game_id != self._game_id:
-                if not content.game_id:
-                    logger.debug(
-                        "Skipping untagged cache entry at %s -- no game_id (pre-AB3 cache); "
-                        "re-download to associate with a game",
-                        cache_dir,
-                    )
-                return
-            items.append(_CacheItem(cache_path=cache_dir, content=content))
-
-        _SKIP = {"github", "_framework"}
-
-        for repo_dir in _CACHE_DIR.iterdir():
-            if not repo_dir.is_dir() or repo_dir.name in _SKIP:
-                continue
-            if repo_dir.name == "_other":
-                for ue4ss_repo_dir in repo_dir.iterdir():
-                    if not ue4ss_repo_dir.is_dir():
-                        continue
-                    for tag_dir in ue4ss_repo_dir.iterdir():
-                        if tag_dir.is_dir():
-                            _add_item(tag_dir)
-                continue
-            for folder_dir in repo_dir.iterdir():
-                if not folder_dir.is_dir():
-                    continue
-                if folder_dir.name == "Templates":
-                    for game_dir in folder_dir.iterdir():
-                        if game_dir.is_dir():
-                            _add_item(game_dir)
-                    continue
-                _add_item(folder_dir)
-
-        return items
+        self._ctrl.rescan(self._game_id, on_done=self._set_cached)
 
     def _set_cached(self, items: list) -> None:
         self._cached = items
@@ -482,10 +363,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         )
 
     def _maybe_add_updates_section(self) -> None:
-        updates_svc = self._host.get_service("updates")
-        if not updates_svc:
-            return
-        fw_info = updates_svc.get_update_info("framework")
+        fw_info = self._ctrl.get_framework_update_info()
         if not (fw_info and fw_info.is_update_available and fw_info.latest_stable):
             return
 
@@ -525,14 +403,11 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         self._content.add_widget(section)
 
     def _download_framework(self, update_info) -> None:
-        updates_svc = self._host.get_service("updates")
-        if not updates_svc:
-            return
         latest_tag = (update_info.latest_stable.tag_name
                       if (update_info and update_info.latest_stable) else "unknown")
         dest = _CACHE_DIR / "_framework" / f"framework-{latest_tag}.zip"
-        updates_svc.download_update(
-            "framework", dest,
+        self._ctrl.download_framework_update(
+            update_info, dest,
             on_done=lambda ok, msg: Clock.schedule_once(
                 lambda dt: self._on_fw_download_done(ok, msg, dest), 0
             ),
