@@ -12,6 +12,9 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional, TYPE_CHECKING
 
+from ..logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
+
 if TYPE_CHECKING:
     from ...models.config import APFConfig
     from ..plugin_host import PluginHost
@@ -65,8 +68,8 @@ class SettingsController:
                 if panel and hasattr(panel, "mark_downloads_stale"):
                     panel.mark_downloads_stale()
                     break
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[settings] Failed to notify downloads stale: %s", exc)
 
     def schedule_reset_app_data(self) -> str:
         """Write the pending-reset marker. Returns status message."""

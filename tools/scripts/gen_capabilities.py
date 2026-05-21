@@ -30,7 +30,7 @@ _SCRIPT_DIR = Path(__file__).parent
 _APF_MANAGER_DIR = _SCRIPT_DIR.parent / "apf_manager"
 sys.path.insert(0, str(_APF_MANAGER_DIR.parent))  # makes "plugins.mods..." importable
 
-from apf_manager.plugins.mods.capabilities_builder import CapabilitiesBuilder  # noqa: E402
+from apf_manager.plugins.content.models.mods.capabilities import CapabilitiesBuilder  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

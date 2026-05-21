@@ -7,10 +7,13 @@ Saved to ~/.apf_manager/config.json (user home, survives app updates).
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 
 def _config_path() -> Path:
@@ -105,11 +108,11 @@ class APFConfig:
                         shutil.rmtree(child, ignore_errors=True)
                     else:
                         child.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("[config] Failed to remove app data item %s: %s", child, exc)
             marker.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("[config] Failed to process pending reset marker: %s", exc)
 
     def load(self) -> None:
         if not self._path.exists():

@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from ..models.plugin import PluginContribution, PluginInfo
+from .logging.manager import APFLogManager
+_host_logger = APFLogManager.get_logger(__name__)
 
 # The apf_manager package root (tools/apf_manager/).
 # Used to detect whether a plugin is a built-in (inside the package)
@@ -335,8 +337,8 @@ class PluginHost:
                     svc.on_game_changed(profile)
                 else:
                     svc.on_game_changed(profile, detection)
-            except Exception:
-                pass
+            except Exception as exc:
+                _host_logger.warning("[plugin_host] on_game_changed failed for service %r: %s", svc_id, exc)
 
     def refresh_detection(self) -> Optional["DetectionResult"]:
         """Re-run full UE detection for the current game and broadcast the result.

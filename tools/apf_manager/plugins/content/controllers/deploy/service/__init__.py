@@ -14,6 +14,8 @@ from typing import Optional, TYPE_CHECKING
 from .content import DeployContentMixin
 from .load_order import DeployLoadOrderMixin
 from .impact import DeployImpactMixin
+from ......core.controllers.logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from ......core.models.config import GameProfile
@@ -44,6 +46,6 @@ class DeployService(DeployContentMixin, DeployLoadOrderMixin, DeployImpactMixin)
             for entry in state.get_all():
                 if entry.get("install_type") == install_type:
                     return entry.get("version", "unknown") or "unknown"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[deploy] Failed to look up installed version for install_type=%r: %s", install_type, exc)
         return "unknown"

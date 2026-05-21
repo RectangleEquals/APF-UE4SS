@@ -7,6 +7,8 @@ import re
 from ...models.ue.ue4ss import UE4SSInfo
 from ...models.ue.mod import ModDetectionInfo
 from .framework import FRAMEWORK_MOD_RE
+from ..logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
 
 # archipelago.<game_id>.<mod_name> — two dots after "archipelago"
 PRIORITY_AP_MOD_RE = re.compile(r"^archipelago\.[^.]+\.[^.]+$")
@@ -51,8 +53,8 @@ class ModDetector:
                         if mod_id:
                             is_priority_ap = bool(PRIORITY_AP_MOD_RE.match(mod_id))
                             is_framework = bool(FRAMEWORK_MOD_RE.match(mod_id))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("[mods] Failed to parse manifest in %s: %s", mod_dir.name, exc)
 
                 results.append(ModDetectionInfo(
                     folder_name=mod_dir.name,
@@ -64,6 +66,6 @@ class ModDetector:
                     has_lua=has_lua,
                     has_cpp=has_cpp,
                 ))
-        except (PermissionError, OSError):
-            pass
+        except (PermissionError, OSError) as exc:
+            logger.debug("[mods] Permission/OS error scanning mods directory: %s", exc)
         return results

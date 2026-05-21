@@ -322,11 +322,16 @@ class RegistriesTab(MDBoxLayout):
         self._set_add_status("Refreshing\u2026", (0.7, 0.7, 0.7, 1))
 
         def _on_refresh_done():
-            self._set_add_status("", (0.7, 0.7, 0.7, 1))
-            self._refresh_registries()
-            self._show_snackbar("Registries refreshed.")
-            if self._on_registry_changed:
-                self._on_registry_changed()
+            from kivy.clock import Clock
+
+            def _ui(dt):
+                self._set_add_status("", (0.7, 0.7, 0.7, 1))
+                self._refresh_registries()
+                self._show_snackbar("Registries refreshed.")
+                if self._on_registry_changed:
+                    self._on_registry_changed()
+
+            Clock.schedule_once(_ui, 0)
 
         self._ctrl.refresh_all(on_done=_on_refresh_done)
 

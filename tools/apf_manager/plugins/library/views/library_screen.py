@@ -25,6 +25,9 @@ from kivymd.uix.textfield import MDTextField
 from ..controllers import LibraryController
 from .widgets import CarouselSection, AddGameTile, GameTile
 from ....core.views.widgets.tip_icon_button import ImageIconButton
+from ....core.controllers.logging.manager import APFLogManager
+
+_log = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from ....core.controllers.plugin_host import PluginHost
@@ -508,8 +511,8 @@ class LibraryScreen(MDBoxLayout):
                 Clock.schedule_once(
                     lambda dt: self._on_image_chosen([path], chosen_image, status_lbl), 0)
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("[library] tkinter file picker unavailable, falling back to plyer: %s", exc)
         try:
             from plyer import filechooser
             filechooser.open_file(

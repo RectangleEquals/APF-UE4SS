@@ -993,7 +993,7 @@ class RegistryResolver:
         Invalid subfolders (mixed stems, unrecognised combinations) are still returned
         with is_valid=False so the viewer can display a warning to the user.
         """
-        from ....models.descriptors.bp_component import parse_bp_mods
+        from ...models.descriptors.bp_component import parse_bp_mods
 
         try:
             lm_contents = api.list_contents(lm_path) or []

@@ -161,8 +161,8 @@ class DeployImpactMixin:
             if dirpath.is_dir():
                 try:
                     dirpath.rmdir()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.debug("[impact] Could not prune directory %s (likely not empty): %s", dirpath, exc)
 
     def get_template_status(self, template_entry, game_name: str) -> dict:
         """

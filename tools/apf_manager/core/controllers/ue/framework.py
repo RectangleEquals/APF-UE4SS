@@ -10,6 +10,8 @@ from ...models.ue.platform import UEPlatformInfo
 from ...models.ue.ue4ss import UE4SSInfo
 from ...models.ue.framework import FrameworkBinariesInfo, FrameworkModInfo
 from ._helpers import _find_file_ci
+from ..logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
 
 FRAMEWORK_MOD_RE = re.compile(r"^archipelago\.[^.]+\.framework$")
 
@@ -62,6 +64,6 @@ class FrameworkDetector:
                     )
                 except Exception:
                     continue
-        except (PermissionError, OSError):
-            pass
+        except (PermissionError, OSError) as exc:
+            logger.debug("[framework] Permission/OS error scanning framework mod directory: %s", exc)
         return None

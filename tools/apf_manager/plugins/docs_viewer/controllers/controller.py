@@ -31,14 +31,14 @@ def _get_framework_version() -> str:
         )
         if m:
             return m.group(1)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[docs] Framework version not readable from CMakeLists.txt: %s", exc)
     try:
         from ...__version__ import __framework_version__
         if __framework_version__ and __framework_version__ != "?":
             return __framework_version__
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[docs] __framework_version__ not available: %s", exc)
     return "?"
 
 
@@ -46,7 +46,8 @@ def _load_plugin_meta() -> dict:
     meta_path = _PLUGIN_DIR / "plugin.json"
     try:
         return json.loads(meta_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        logger.warning("[docs] Failed to load plugin.json: %s", exc)
         return {}
 
 
@@ -59,8 +60,8 @@ def _load_github_css() -> str:
     if css_path.exists():
         try:
             return css_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[docs] Failed to load github-markdown-dark.css: %s", exc)
     return ""
 
 
@@ -339,8 +340,8 @@ class DocsController:
                     if h:
                         entry.commit = h[:7]
                         entry.commit_url = f"{repo_url}/commit/{h}" if repo_url else ""
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[docs] Failed to get git log for %s: %s", entry.path, exc)
 
         fw_version = _get_framework_version()
 

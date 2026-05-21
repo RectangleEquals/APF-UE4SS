@@ -299,7 +299,8 @@ class ContentPipelinePanel(PluginPanel):
             self._warning_bar_icon.icon = "alert"
             self._warning_bar_icon.text_color = (0.9, 0.6, 0.1, 1)
             self._warning_bar_lbl.text = (
-                "Framework mod not installed — Templates and Mods cannot be deployed."
+                "AP Framework mod not installed — Templates require it; "
+                "Mods can deploy but will not function without it."
             )
             self._warning_bar_lbl.text_color = (0.9, 0.6, 0.1, 1)
             self._warning_bar.md_bg_color = (0.18, 0.14, 0.06, 1)
@@ -411,17 +412,25 @@ class ContentPipelinePanel(PluginPanel):
     # ------------------------------------------------------------------
 
     def _on_install_state_changed(self) -> None:
-        # Re-query framework state so child tabs receive fresh detection data.
+        # Force rescan so newly deployed mods appear with correct orphan/source state.
+        mods_svc = self._host.get_service("mods") if self._host else None
+        if mods_svc:
+            mods_svc.rescan()
         self._fw_state = self._ctrl.get_framework_state()
         detection = self._fw_state.get("detection")
-        game_id = self._ctrl.get_game_id(self._profile)
         if self._tab_load_order:
             self._tab_load_order.refresh(self._profile, detection)
         if self._tab_installed:
             self._tab_installed.refresh(self._profile, detection)
-        # Refresh content tab so installed-state badges update on mod rows
+        # Forward updated framework state so the content tab banner reflects reality
+        # immediately (set_framework_state calls _do_refresh internally — do not also
+        # call refresh(game_id) here, as the subsequent background load would overwrite it).
         if self._tab_content:
-            self._tab_content.refresh(game_id)
+            self._tab_content.set_framework_state(
+                self._fw_state.get("ue4ss_ok", False),
+                self._fw_state.get("fw_dir"),
+                self._fw_state.get("fw_conflict", []),
+            )
         # Rescan downloads cache so install-status indicators stay current
         if self._tab_downloads:
             self._tab_downloads._scan_cache_and_rebuild()
@@ -437,7 +446,14 @@ class ContentPipelinePanel(PluginPanel):
         """Re-query framework state and refresh detection-sensitive UI after any detection change."""
         self._fw_state = self._ctrl.get_framework_state()
         self._update_warning_bar(self._fw_state)
+        ue4ss_ok = bool(self._fw_state.get("ue4ss_ok", False))
+        # Forward updated framework state so the content tab banner reflects the new detection
+        if self._tab_content:
+            self._tab_content.set_framework_state(
+                ue4ss_ok,
+                self._fw_state.get("fw_dir"),
+                self._fw_state.get("fw_conflict", []),
+            )
         # Refresh registries tab UE4SS status card so it reflects the new detection state
         if self._tab_registries:
-            ue4ss_ok = bool(self._fw_state.get("ue4ss_ok", False))
             self._tab_registries._refresh_ue4ss_card(ue4ss_ok)

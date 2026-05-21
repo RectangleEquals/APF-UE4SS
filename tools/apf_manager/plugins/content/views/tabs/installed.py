@@ -18,6 +18,9 @@ import re
 import webbrowser
 from typing import Optional, TYPE_CHECKING
 
+from .....core.controllers.logging.manager import APFLogManager
+_log = APFLogManager.get_logger(__name__)
+
 from kivy.metrics import dp
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.widget import Widget
@@ -382,8 +385,8 @@ class InstalledTab(MDBoxLayout):
                         if rec.install_type and "ue4ss" in rec.install_type:
                             ue4ss_record = rec
                             break
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("[installed] Failed to read UE4SS install record: %s", exc)
 
         # Fallback A: GitHub URL — always shown when source_repo is known (independent of version)
         if ue4ss_record and ue4ss_record.source_repo:
@@ -418,8 +421,8 @@ class InstalledTab(MDBoxLayout):
                             m = re.search(r'\b(\d+\.\d+\.\d+[\w.-]*)', text)
                             if m:
                                 ue4ss_version = f"{m.group(1)}?"
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("[installed] Failed to extract UE4SS version from changelog: %s", exc)
 
         _SEMVER_RE = re.compile(r'^\d+\.\d+')
         if ue4ss_ok and ue4ss_version:

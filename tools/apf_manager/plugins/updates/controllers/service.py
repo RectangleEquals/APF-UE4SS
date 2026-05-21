@@ -27,6 +27,9 @@ from typing import Optional, Callable
 
 from ....core.models.remote.release import RepoRelease
 from ..models.update import UpdateInfo
+from ....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 
 _WORLDS_DIR     = Path.home() / ".apf_manager" / "worlds"
@@ -202,8 +205,8 @@ class UpdatesService:
             )
             with self._lock:
                 self._manager_info = info
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[updates] Manager update check failed: %s", exc)
 
     def _check_framework_bg(self, game_id: str) -> None:
         try:
@@ -242,8 +245,8 @@ class UpdatesService:
             )
             with self._lock:
                 self._framework_info = info
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[updates] Framework update check failed: %s", exc)
 
     def _check_apworld(self) -> None:
         try:
@@ -282,8 +285,8 @@ class UpdatesService:
             )
             with self._lock:
                 self._apworld_info = info
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[updates] APWorld update check failed: %s", exc)
 
     def _check_ue4ss(self, owner: str = "UE4SS-RE",
                      repo: str = "RE-UE4SS") -> None:
@@ -324,7 +327,8 @@ class UpdatesService:
                 is_update_available=is_update,
                 is_pre_available=bool(latest_pre),
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("[updates] UE4SS update check failed for %s/%s: %s", owner, repo, exc)
             return UpdateInfo(
                 component="ue4ss",
                 current="unknown",

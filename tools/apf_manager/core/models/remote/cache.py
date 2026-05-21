@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 import time
 from pathlib import Path
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 
 # Default TTLs (seconds)
@@ -109,8 +112,8 @@ class GitHubCache:
         if self._meta_path.exists():
             try:
                 return json.loads(self._meta_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("[cache] Corrupt cache meta at %s; resetting: %s", self._meta_path, exc)
         return {"entries": {}}
 
     def _save_meta(self) -> None:
@@ -118,5 +121,5 @@ class GitHubCache:
             self._meta_path.write_text(
                 json.dumps(self._meta, indent=2), encoding="utf-8"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("[cache] Failed to persist cache meta to %s: %s", self._meta_path, exc)

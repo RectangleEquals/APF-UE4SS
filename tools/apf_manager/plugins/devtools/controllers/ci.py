@@ -8,6 +8,9 @@ import threading
 import time
 from typing import Callable
 
+from ....core.controllers.logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
+
 _POLL_INTERVAL       = 10
 _POLL_TIMEOUT        = 600
 _POST_DISPATCH_DELAY = 6
@@ -35,12 +38,12 @@ class CIManager:
                 api = self._api(token)
                 resp = api.client.rest.actions.create_workflow_dispatch(
                     self._owner, self._repo, workflow_id,
-                    {"ref": ref, "inputs": inputs or {}},
+                    data={"ref": ref, "inputs": inputs or {}},
                 )
                 try:
                     api.update_rate_limit(resp.headers)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[ci] Failed to update rate limit after dispatch: %s", exc)
                 on_status("dispatched")
 
                 time.sleep(_POST_DISPATCH_DELAY)
@@ -134,10 +137,11 @@ class CIManager:
             )
             try:
                 api.update_rate_limit(resp.headers)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[ci] Failed to update rate limit after create_branch: %s", exc)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("[ci] Failed to create branch %r: %s", name, exc)
             return False
 
     def delete_branch(self, name: str, token: str) -> bool:
@@ -146,8 +150,9 @@ class CIManager:
             resp = api.client.rest.git.delete_ref(self._owner, self._repo, f"heads/{name}")
             try:
                 api.update_rate_limit(resp.headers)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[ci] Failed to update rate limit after delete_branch: %s", exc)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("[ci] Failed to delete branch %r: %s", name, exc)
             return False

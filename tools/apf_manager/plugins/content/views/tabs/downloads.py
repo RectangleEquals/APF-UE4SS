@@ -32,7 +32,6 @@ from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.progressindicator import MDLinearProgressIndicator
 
 from .....core.controllers.logging.manager import APFLogManager
-from .....core.views.widgets.tip_icon_button import TipIconButton
 
 logger = APFLogManager.get_logger(__name__)
 from ..chrome.constants import COL_DIM
@@ -217,7 +216,7 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         self._collapsed_sections: set[str] = set()
         self._expanded_cache: set[str] = set()
         self._cache_dirty: bool = False
-        self._title_label = None
+        self._cache_graph = None
         self._progress_bars: dict = {}
         self._progress_labels: dict = {}
         self._last_progress_time: dict = {}
@@ -230,20 +229,16 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
     # -----------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        from ..widgets.cache_graph_widget import CacheGraphWidget
         toolbar = MDBoxLayout(
-            orientation="horizontal", size_hint_y=None, height=dp(48),
-            md_bg_color=(0.12, 0.16, 0.20, 1), padding=(dp(8), 0), spacing=dp(4),
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=(0.12, 0.16, 0.20, 1),
         )
-        self._title_label = MDLabel(
-            text="Downloads", font_style="Title", role="medium",
-            size_hint_x=1, halign="left",
+        self._cache_graph = CacheGraphWidget(
+            on_click=self._open_cache_detail,
+            on_refresh=self._scan_cache_and_rebuild,
         )
-        toolbar.add_widget(self._title_label)
-        toolbar.add_widget(TipIconButton(
-            icon="refresh",
-            tooltip_text="Rescan cache",
-            on_release=lambda *_: self._scan_cache_and_rebuild(),
-        ))
+        toolbar.add_widget(self._cache_graph)
         self.add_widget(toolbar)
 
         self.add_widget(MDLabel(
@@ -383,53 +378,25 @@ class DownloadsTab(QueuePanelMixin, CachePanelMixin, MDBoxLayout):
         "other":    ("Other",     "package-variant"),
     }
 
-    def _update_title_size(self) -> None:
-        if not self._title_label:
+    def _update_cache_graph(self) -> None:
+        if not self._cache_graph:
             return
-        try:
-            cache_root = Path.home() / ".apf_manager" / "cache"
-            if not cache_root.exists():
-                self._title_label.text = "Downloads"
-                return
+        stats = self._ctrl.compute_stats(self._cached, self._game_id)
+        self._cache_graph.update(stats)
 
-            total_bytes = 0
-            game_bytes = 0
-            for item in self._cached:
-                try:
-                    size = sum(f.stat().st_size for f in item.cache_path.rglob("*") if f.is_file())
-                except Exception as exc:
-                    self._host.log(f"[downloads] WARN: failed to stat cache files at {item.cache_path}: {exc}")
-                    size = 0
-                total_bytes += size
-                if item.category != "other" and self._game_id and item.game_name == self._game_id:
-                    game_bytes += size
-
-            def _fmt(b: int) -> str:
-                if b >= 1_073_741_824:
-                    return f"{b / 1_073_741_824:.1f} GB"
-                if b >= 1_048_576:
-                    return f"{b / 1_048_576:.1f} MB"
-                if b >= 1_024:
-                    return f"{b / 1_024:.1f} KB"
-                return f"{b} B"
-
-            if total_bytes == 0:
-                self._title_label.text = "Downloads"
-            elif self._game_id and game_bytes > 0:
-                self._title_label.text = (
-                    f"Downloads — Total: {_fmt(total_bytes)} — This game: {_fmt(game_bytes)}"
-                )
-            else:
-                self._title_label.text = f"Downloads — Total: {_fmt(total_bytes)}"
-        except Exception as exc:
-            self._host.log(f"[downloads] WARN: failed to compute cache size: {exc}")
-            self._title_label.text = "Downloads"
+    def _open_cache_detail(self, stats) -> None:
+        from ..dialogs.cache_detail_dialog import CacheDetailDialog
+        CacheDetailDialog(
+            stats=stats,
+            ctrl=self._ctrl,
+            on_refresh=self._scan_cache_and_rebuild,
+        ).open()
 
     def _rebuild_ui(self) -> None:
         # Drop stale progress bar references before clearing the widget tree
         self._progress_bars.clear()
         self._content.clear_widgets()
-        self._update_title_size()
+        self._update_cache_graph()
 
         self._maybe_add_updates_section()
 

@@ -214,3 +214,129 @@ class CacheController:
             except Exception as exc:
                 logger.warning(f"Failed to remove {ci.cache_path}: {exc}")
         self._on_refresh()
+
+    # -----------------------------------------------------------------------
+    # Cache stats (AG-7)
+    # -----------------------------------------------------------------------
+
+    def compute_stats(self, items: list, game_id: str) -> "CacheStats":
+        """
+        Build a CacheStats instance from a flat list of _CacheItem objects.
+
+        Groups by (category, game_id) so each logical bucket becomes one
+        CacheSegment.  Pure computation — no I/O, no Kivy.
+        """
+        from .....models.state.cache_stats import CacheSegment, CacheStats
+        from collections import defaultdict
+
+        # bucket key → (label, category, game_id, size_bytes, count, paths)
+        buckets: dict = {}
+
+        def _bucket_key(cat: str, gid: str) -> str:
+            return f"{cat}|{gid}"
+
+        def _bucket_label(cat: str, gid: str) -> str:
+            if cat == "other":
+                return "Binaries / Other"
+            game_name = (gid.replace("_", " ").title() if gid else "Unknown")
+            if cat == "template":
+                return f"{game_name} Templates"
+            return f"{game_name} Mods"
+
+        total_bytes = 0
+
+        for ci in items:
+            cat = getattr(ci, "category", "mod")
+            gid = getattr(ci, "game_name", "") or ""
+            key = _bucket_key(cat, gid)
+            try:
+                size = sum(f.stat().st_size for f in ci.cache_path.rglob("*") if f.is_file())
+            except Exception as exc:
+                logger.warning("[cache_stats] Failed to stat %s: %s", ci.cache_path, exc)
+                size = 0
+            total_bytes += size
+            if key not in buckets:
+                buckets[key] = {
+                    "label": _bucket_label(cat, gid),
+                    "category": cat,
+                    "game_id": gid,
+                    "size_bytes": 0,
+                    "item_count": 0,
+                    "cache_paths": [],
+                }
+            buckets[key]["size_bytes"] += size
+            buckets[key]["item_count"] += 1
+            buckets[key]["cache_paths"].append(ci.cache_path)
+
+        segments = [
+            CacheSegment(
+                label=b["label"],
+                category=b["category"],
+                game_id=b["game_id"],
+                size_bytes=b["size_bytes"],
+                item_count=b["item_count"],
+                cache_paths=b["cache_paths"],
+            )
+            for b in buckets.values()
+        ]
+        return CacheStats(segments=segments, total_bytes=total_bytes, game_id=game_id)
+
+    def free_segments(self, segments: list, on_done: "Callable") -> None:
+        """Delete all cache_paths from each segment in a background thread, then call on_done()."""
+        import shutil
+        import threading
+        from kivy.clock import Clock
+
+        def _bg():
+            for seg in segments:
+                for path in seg.cache_paths:
+                    try:
+                        shutil.rmtree(path, ignore_errors=True)
+                    except Exception as exc:
+                        logger.warning("[cache] free_segments: failed to remove %s: %s", path, exc)
+            Clock.schedule_once(lambda dt: on_done(), 0)
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def free_game(self, game_id: str, cached_items: list, on_done: "Callable") -> None:
+        """Delete all mods and templates for a specific game_id, then call on_done()."""
+        import shutil
+        import threading
+        from kivy.clock import Clock
+
+        targets = [
+            ci.cache_path for ci in cached_items
+            if getattr(ci, "game_name", "") == game_id
+            and getattr(ci, "category", "mod") in ("mod", "template")
+        ]
+
+        def _bg():
+            for path in targets:
+                try:
+                    shutil.rmtree(path, ignore_errors=True)
+                except Exception as exc:
+                    logger.warning("[cache] free_game: failed to remove %s: %s", path, exc)
+            Clock.schedule_once(lambda dt: on_done(), 0)
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def free_category(self, category: str, cached_items: list, on_done: "Callable") -> None:
+        """Delete all cached items of a given category, then call on_done()."""
+        import shutil
+        import threading
+        from kivy.clock import Clock
+
+        targets = [
+            ci.cache_path for ci in cached_items
+            if getattr(ci, "category", "mod") == category
+        ]
+
+        def _bg():
+            for path in targets:
+                try:
+                    shutil.rmtree(path, ignore_errors=True)
+                except Exception as exc:
+                    logger.warning("[cache] free_category: failed to remove %s: %s", path, exc)
+            Clock.schedule_once(lambda dt: on_done(), 0)
+
+        threading.Thread(target=_bg, daemon=True).start()

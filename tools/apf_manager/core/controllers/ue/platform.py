@@ -7,6 +7,8 @@ from typing import Optional
 from ...models.ue.game import UEGameInfo
 from ...models.ue.platform import UEPlatformInfo
 from ._helpers import _find_dir_ci
+from ..logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
 
 _KNOWN_ARCHES = ("Win64", "WinGDK", "Win32")
 
@@ -25,6 +27,6 @@ class UEPlatformDetector:
             for d in game_info.binaries_dir.iterdir():
                 if d.is_dir():
                     return UEPlatformInfo(platform_dir=d, arch=d.name)
-        except (PermissionError, OSError):
-            pass
+        except (PermissionError, OSError) as exc:
+            logger.debug("[platform] Permission/OS error scanning Binaries/ directory: %s", exc)
         return None

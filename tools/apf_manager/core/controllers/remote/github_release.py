@@ -19,6 +19,9 @@ from typing import Callable, Optional, TYPE_CHECKING
 from githubkit.exception import RequestFailed, RateLimitExceeded, RequestTimeout
 import httpx as _httpx
 
+from ..logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
+
 from ...models.remote.release import ReleaseAuthor, ReleaseFile, RepoRelease
 from ...models.remote.cache import TTL_RELEASES
 
@@ -203,8 +206,8 @@ class GitHubReleaseManager:
             if cached is not None:
                 try:
                     return json.loads(cached)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[github_release] Corrupt latest-release cache; re-fetching: %s", exc)
 
         try:
             resp = self._api.client.rest.repos.get_latest_release(
@@ -228,8 +231,8 @@ class GitHubReleaseManager:
                 self._api._on_status("warn", f"GitHub unreachable — using cached release info ({exc})")
                 try:
                     return json.loads(stale)
-                except Exception:
-                    pass
+                except Exception as exc2:
+                    logger.warning("[github_release] Corrupt stale release cache during network failure: %s", exc2)
             self._api._on_status("error", f"GitHub unreachable and no cached release info ({exc})")
             return None
 
@@ -250,7 +253,8 @@ class GitHubReleaseManager:
             stale = self._api._cache.get_stale(cache_key)
             try:
                 return json.loads(stale) if stale else []
-            except Exception:
+            except Exception as exc:
+                logger.warning("[github_release] Corrupt stale releases-list cache: %s", exc)
                 return []
 
         if not force_refresh:
@@ -258,8 +262,8 @@ class GitHubReleaseManager:
             if cached is not None:
                 try:
                     return json.loads(cached)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[github_release] Corrupt releases-list cache; re-fetching: %s", exc)
 
         try:
             resp = self._api.client.rest.repos.list_releases(

@@ -91,8 +91,8 @@ class LogPackager:
                 from .....__version__ import __version__, __framework_version__
                 mgr_ver = __version__
                 fw_ver = __framework_version__
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[log_packager] Version info not available: %s", exc)
             dev_mode = getattr(self._host, "dev_mode", False) if self._host else False
             data = {
                 "apf_manager_version": mgr_ver,

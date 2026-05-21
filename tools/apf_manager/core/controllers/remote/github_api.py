@@ -26,6 +26,9 @@ import httpx as _httpx
 
 from ...models.remote.cache import GitHubCache, TTL_CONTENTS, TTL_FILES, TTL_RELEASES
 
+from ..logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
+
 _USER_AGENT = "APFManager/1.0"
 
 # Bundled PAT — centralized location for all plugins that need GitHub auth
@@ -136,8 +139,8 @@ class GitHubAPI:
             if cached is not None:
                 try:
                     return json.loads(cached)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[github_api] Corrupt cache entry for %s; re-fetching: %s", cache_key, exc)
 
         try:
             resp = self._client.rest.repos.get_content(self._owner, self._repo, path)
@@ -296,8 +299,8 @@ class GitHubAPI:
         if cached is not None:
             try:
                 return json.loads(cached)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[github_api] Corrupt search cache for %s; re-fetching: %s", query, exc)
 
         try:
             resp = self._client.rest.search.repos(q=query, per_page=per_page)
@@ -514,8 +517,8 @@ class GitHubAPI:
                 token = data.get("token", "").strip()
                 if token:
                     return token, "user_override"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[github_api] Failed to read user token override at %s: %s", user_override, exc)
         # 2. Bundled token file
         if bundled_path:
             p = Path(bundled_path)
@@ -524,8 +527,8 @@ class GitHubAPI:
                     token = p.read_text(encoding="utf-8").strip()
                     if token:
                         return token, "bundled"
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("[github_api] Failed to read bundled token at %s: %s", p, exc)
         # 3. Unauthenticated
         return None, "unauthenticated"
 
@@ -579,8 +582,8 @@ class GitHubAPI:
                     "warn",
                     f"GitHub rate limit low: {rem_int} requests remaining",
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[github_api] Failed to parse rate limit headers: %s", exc)
 
     # -----------------------------------------------------------------------
     # Internals — error handlers
@@ -629,8 +632,8 @@ class GitHubAPI:
         if stale:
             try:
                 return json.loads(stale)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[github_api] Corrupt stale cache for %s: %s", cache_key, exc)
         return None
 
 
@@ -686,8 +689,8 @@ def _load_rate_limit_cache() -> None:
                 _rate_limit_global[source] = (
                     info["remaining"], info["limit"], reset_ts
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("[github_api] Failed to load rate limit cache from disk: %s", exc)
 
 
 def _save_rate_limit_cache() -> None:
@@ -699,8 +702,8 @@ def _save_rate_limit_cache() -> None:
             for src, (r, l, ts) in _rate_limit_global.items()
         }
         _RATE_LIMIT_CACHE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("[github_api] Failed to persist rate limit cache to disk: %s", exc)
 
 
 # Load persisted state on module import so the proactive gate is active from the

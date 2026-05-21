@@ -28,8 +28,8 @@ def _save_devtools_config(data: dict) -> None:
     try:
         _DEVTOOLS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
         _DEVTOOLS_CONFIG.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("[dev_setup] Failed to save devtools config: %s", exc)
 
 
 class DevSetupController:

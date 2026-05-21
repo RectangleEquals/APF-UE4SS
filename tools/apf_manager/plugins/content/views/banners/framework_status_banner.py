@@ -64,8 +64,9 @@ class FrameworkStatusBanner(MDBoxLayout):
             icon_color = color or COL_WARN
             text = (
                 detail or
-                "Framework mod not installed — Templates and Mods cannot be deployed. "
-                "Install it via the Other section or Registries tab."
+                "AP Framework mod not installed — Templates require it to deploy. "
+                "Mods can still be deployed but will not function correctly at runtime. "
+                "Find the AP Framework Mod in the Mods section after adding a registry."
             )
             text_color = color or COL_WARN
 

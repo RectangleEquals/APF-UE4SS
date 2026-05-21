@@ -164,6 +164,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
             try:
                 mods = resolver.traverse(url, cache)
             except Exception as exc:
+                logger.error("[registry] Traversal failed for %s: %s", url, exc, exc_info=True)
                 on_done(False, f"Traversal failed: {exc}")
                 return
 
@@ -272,6 +273,7 @@ class RegistryService(DiscoveryMixin, StagingMixin, SharingMixin):
             try:
                 mods = resolver.traverse(url, cache)
             except Exception as exc:
+                logger.error("[registry] Traversal failed for %s: %s", url, exc, exc_info=True)
                 on_done(False, f"Traversal failed: {exc}")
                 return
 

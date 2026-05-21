@@ -31,6 +31,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import os
 import struct
@@ -39,6 +40,8 @@ import threading
 import time
 from multiprocessing.shared_memory import SharedMemory
 from typing import Callable, Optional
+
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +136,8 @@ def _webview_process_main(
             if _out:
                 try:
                     Path(_out).write_text(data, encoding="utf-8")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.debug("[html_viewer] Failed to write confirm output file: %s", exc)
             self.close()
 
     api = _API()
@@ -164,7 +167,8 @@ def _webview_process_main(
                     break
                 try:
                     mx, my, mw, mh, minimized = struct.unpack_from("iiiii", shm.buf)
-                except Exception:
+                except Exception as exc:
+                    _log.debug("[html_viewer] _track: SharedMemory read failed, stopping: %s", exc)
                     break
                 is_min = bool(minimized)
                 if is_min != _prev_min[0]:
@@ -177,13 +181,13 @@ def _webview_process_main(
                         w.move(nx, ny)
                         _last_xy[0] = nx
                         _last_xy[1] = ny
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("[html_viewer] _track: unexpected error, stopping: %s", exc)
         finally:
             try:
                 shm.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("[html_viewer] _track: failed to close SharedMemory: %s", exc)
 
     threading.Thread(target=_track, daemon=True).start()
     webview.start(gui="edgechromium")
@@ -239,8 +243,8 @@ class HTMLViewerService:
         def _write_shm(x: int, y: int, w: int, h: int, minimized: bool = False) -> None:
             try:
                 struct.pack_into("iiiii", shm.buf, 0, x, y, w, h, 1 if minimized else 0)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("[html_viewer] _write_shm failed: %s", exc)
 
         # Overlay handles ModalView, Clock polling, Window binding.
         # It returns the clamped (final_w, final_h) for the subprocess.
@@ -255,11 +259,12 @@ class HTMLViewerService:
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                 f.write(final_html)
-        except Exception:
+        except Exception as exc:
+            _log.warning("[html_viewer] Failed to write HTML to temp file: %s", exc)
             try:
                 os.close(tmp_fd)
-            except OSError:
-                pass
+            except OSError as close_exc:
+                _log.debug("[html_viewer] Failed to close temp file descriptor: %s", close_exc)
 
         def _monitor() -> None:
             from kivy.clock import Clock
@@ -285,13 +290,13 @@ class HTMLViewerService:
                 try:
                     shm.close()
                     shm.unlink()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.debug("[html_viewer] Failed to release SharedMemory: %s", exc)
 
                 try:
                     os.unlink(tmp_path)
-                except OSError:
-                    pass
+                except OSError as exc:
+                    _log.debug("[html_viewer] Failed to delete temp HTML file: %s", exc)
 
                 if on_closed:
                     from kivy.clock import Clock as _C

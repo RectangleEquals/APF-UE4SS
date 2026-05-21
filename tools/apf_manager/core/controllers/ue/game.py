@@ -6,6 +6,9 @@ from typing import Optional
 
 from ...models.ue.game import UEGameInfo
 from ._helpers import _find_dir_ci
+from ..logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 
 class UEGameDetector:
@@ -34,8 +37,8 @@ class UEGameDetector:
                  if p.is_file() and p.suffix.lower() == ".exe"),
                 None,
             )
-        except (PermissionError, OSError):
-            pass
+        except (PermissionError, OSError) as exc:
+            logger.debug("[game_detect] Permission error scanning game root for stub exe: %s", exc)
 
         # Find the shortname subdir: has both Content/Paks and Binaries/
         try:
@@ -60,7 +63,7 @@ class UEGameDetector:
                         content_paks_dir=paks,
                         binaries_dir=binaries,
                     )
-        except (PermissionError, OSError):
-            pass
+        except (PermissionError, OSError) as exc:
+            logger.debug("[game_detect] Permission error scanning game root subdirectories: %s", exc)
 
         return None

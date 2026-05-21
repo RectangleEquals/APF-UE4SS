@@ -10,6 +10,9 @@ from typing import Optional, Callable, TYPE_CHECKING
 from .steam_scanner import SteamLibrary
 from .thumbnail_cache import ThumbnailCache
 from ..models.steam import SteamGame
+from ....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 
 if TYPE_CHECKING:
     from ....core.models.config import APFConfig, GameProfile
@@ -31,8 +34,8 @@ def _dirs_at_depth(path: Path, depth: int) -> list[Path]:
         for child in path.iterdir():
             if child.is_dir():
                 result.extend(_dirs_at_depth(child, depth - 1))
-    except (PermissionError, OSError):
-        pass
+    except (PermissionError, OSError) as exc:
+        logger.debug("[library] Permission error traversing %s: %s", path, exc)
     return result
 
 
@@ -134,6 +137,6 @@ class LibraryController:
         if self._thumbnail_cache is None:
             try:
                 self._thumbnail_cache = ThumbnailCache()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[library] Failed to initialize ThumbnailCache: %s", exc)
         return self._thumbnail_cache

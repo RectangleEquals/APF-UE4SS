@@ -7,9 +7,12 @@ convert_body(md_text)  — HTML body fragment only (for SPA content injection)
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import markdown as _md
+
+_log = logging.getLogger(__name__)
 
 _CSS_PATH = Path(__file__).parent.parent / "assets" / "github-markdown-dark.css"
 
@@ -38,8 +41,8 @@ def _load_css() -> str:
     if _CSS_PATH.exists():
         try:
             return _CSS_PATH.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("[html_builder] Failed to load CSS: %s", exc)
     return ""
 
 

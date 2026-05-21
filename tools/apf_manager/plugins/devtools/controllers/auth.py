@@ -10,6 +10,9 @@ import webbrowser
 from pathlib import Path
 from typing import Callable, Optional
 
+from ....core.controllers.logging.manager import APFLogManager
+logger = APFLogManager.get_logger(__name__)
+
 CLIENT_ID = "Iv23lit3nZrD90Tu2AG2"
 
 _USER_TOKEN_PATH = Path.home() / ".apf_manager" / "github_token.json"
@@ -83,8 +86,8 @@ class GitHubAuth:
         if _USER_TOKEN_PATH.exists():
             try:
                 _USER_TOKEN_PATH.unlink()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[auth] Failed to remove token file at %s: %s", _USER_TOKEN_PATH, exc)
 
     def refresh_async(
         self,
@@ -120,8 +123,8 @@ class GitHubAuth:
                 json.dumps({"token": self._token or ""}, indent=2),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[auth] Failed to persist token to %s: %s", _USER_TOKEN_PATH, exc)
 
     def _fetch_user_info(self, token: Optional[str], repo_owner: str, repo_name: str) -> bool:
         if not token:

@@ -793,8 +793,8 @@ class RegistryViewer:
                 logger.warning(f"Failed to read viewer result file: {exc}")
             try:
                 os.unlink(output_file)
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("[viewer] Failed to remove temp output file %s: %s", output_file, exc)
 
             if result.get("action") == "confirm":
                 selected_ids: list[str] = result.get("selected", [])

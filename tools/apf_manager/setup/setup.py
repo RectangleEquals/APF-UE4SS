@@ -144,8 +144,8 @@ try:
     _kv_data = Path(_kv.__file__).parent / 'data'
     if _kv_data.exists():
         INCLUDE_FILES.append((str(_kv_data), 'lib/kivy/data'))
-except ImportError:
-    pass
+except ImportError as _exc:
+    print(f"[build] WARN: kivy not found, skipping kivy data files: {_exc}", file=sys.stderr)
 
 # KivyMD font/image data — Material Design icon fonts and logo images
 try:
@@ -155,8 +155,8 @@ try:
         _p = _kvmd_dir / _subdir
         if _p.exists():
             INCLUDE_FILES.append((str(_p), f'lib/kivymd/{_subdir}'))
-except ImportError:
-    pass
+except ImportError as _exc:
+    print(f"[build] WARN: kivymd not found, skipping kivymd data files: {_exc}", file=sys.stderr)
 
 # Markdown — copy full source package to lib/markdown/
 # cx_Freeze's static tracer partially traces markdown (finds __init__ but misses internal
@@ -184,8 +184,8 @@ try:
     _clr_loader_dir = Path(_clr_loader_pkg.__file__).parent
     if _clr_loader_dir.exists():
         INCLUDE_FILES.append((str(_clr_loader_dir), 'lib/clr_loader'))
-except ImportError:
-    pass
+except ImportError as _exc:
+    print(f"[build] WARN: clr_loader not found, .NET runtime support may be unavailable: {_exc}", file=sys.stderr)
 
 # pythonnet — copy full package to lib/pythonnet/ (includes Python.Runtime.dll)
 # pythonnet.__init__.load() computes: Path(__file__).parent / "runtime" / "Python.Runtime.dll"
@@ -195,8 +195,8 @@ try:
     _pythonnet_dir = Path(_pythonnet_pkg.__file__).parent
     if _pythonnet_dir.exists():
         INCLUDE_FILES.append((str(_pythonnet_dir), 'lib/pythonnet'))
-except ImportError:
-    pass
+except ImportError as _exc:
+    print(f"[build] WARN: pythonnet not found, .NET runtime support may be unavailable: {_exc}", file=sys.stderr)
 
 # SDL DLLs — bundle all SDL generations at the exe root for consistency.
 # SDL3: KivyMD master loads dynamically; never auto-detected by cx_Freeze — must be explicit.
@@ -286,8 +286,8 @@ def _gen_version_file() -> None:
         )
         if m:
             fw_ver = m.group(1)
-    except Exception:
-        pass
+    except Exception as _exc:
+        print(f"[build] WARN: Could not read framework version from CMakeLists.txt: {_exc}", file=sys.stderr)
 
     # Short git hash
     build_id = "unknown"
@@ -297,8 +297,8 @@ def _gen_version_file() -> None:
             text=True,
             cwd=str(ROOT.parent.parent),
         ).strip()
-    except Exception:
-        pass
+    except Exception as _exc:
+        print(f"[build] WARN: Could not get git hash (build_id will be 'unknown'): {_exc}", file=sys.stderr)
 
     version_file = ROOT / "__version__.py"
     version_file.write_text(

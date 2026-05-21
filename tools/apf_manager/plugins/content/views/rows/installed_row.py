@@ -146,6 +146,17 @@ class InstalledRowWidget(MDBoxLayout):
                 "callback": _trigger_uninstall,
             })
 
+        # Build the typed detail panel (with component health chips) before the row
+        # widget so it can be injected via detail_widget= — prevents BaseContentRow
+        # from also building a generic panel when expanded, which would duplicate it.
+        from ..panels.content_detail_panel import ContentDetailPanel
+        component_status = self._compute_component_status()
+        detail = ContentDetailPanel(
+            content=content,
+            install_record=self._record,
+            component_health=component_status or None,
+        )
+
         row_widget = ContentRowWidget(
             content=content,
             row_index=self._row_index,
@@ -154,6 +165,7 @@ class InstalledRowWidget(MDBoxLayout):
             on_expand=self._on_expand,
             actions=actions,
             install_record=self._record,
+            detail_widget=detail,
         )
         self.add_widget(row_widget)
 
@@ -194,18 +206,6 @@ class InstalledRowWidget(MDBoxLayout):
             bar.add_widget(upd)
 
         self.add_widget(bar)
-
-        # ------------------------------------------------------------------
-        # Expanded detail panel (component health chips rendered inside)
-        # ------------------------------------------------------------------
-        if self._expanded:
-            from ..panels.content_detail_panel import ContentDetailPanel
-            component_status = self._compute_component_status()
-            self.add_widget(ContentDetailPanel(
-                content=content,
-                install_record=self._record,
-                component_health=component_status or None,
-            ))
 
     # ------------------------------------------------------------------
     # Helpers

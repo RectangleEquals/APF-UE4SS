@@ -277,8 +277,8 @@ class CITab(MDBoxLayout):
     def _open_url(self, url: str) -> None:
         try:
             webbrowser.open(url)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[ci_tab] Failed to open URL %r: %s", url, exc)
 
     def _set_wf_status(self, msg: str, ok: bool = True) -> None:
         if not self._wf_status_lbl:
