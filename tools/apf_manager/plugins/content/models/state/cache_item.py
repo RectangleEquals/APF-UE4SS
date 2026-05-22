@@ -72,6 +72,15 @@ class CacheItem:
         return []
 
     @property
+    def size_mb(self) -> float:
+        """Disk size of this cached item in megabytes."""
+        try:
+            total = sum(f.stat().st_size for f in self.cache_path.rglob("*") if f.is_file())
+            return total / 1_048_576
+        except Exception:
+            return 0.0
+
+    @property
     def bp_pak_files(self) -> list:
         from ..descriptors.types import ModDescriptor as _MD
         if isinstance(self.content, _MD) and self.content.components:

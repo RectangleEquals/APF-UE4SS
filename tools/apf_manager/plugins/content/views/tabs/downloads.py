@@ -115,16 +115,6 @@ class _QueueItem:
 
 # CacheItem is defined in models/state/cache_item.py — imported above.
 
-    @property
-    def size_mb(self) -> float:
-        try:
-            total = sum(f.stat().st_size for f in self.cache_path.rglob("*") if f.is_file())
-            return total / (1024 * 1024)
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("[downloads_tab] WARN: failed to compute cache size for %s: %s", self.cache_path, exc)
-            return 0.0
-
 
 # ---------------------------------------------------------------------------
 # Main widget

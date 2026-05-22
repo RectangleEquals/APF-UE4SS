@@ -7,6 +7,7 @@ X-4: After UE4SS install, calls host.notify_state_change("detection") so the
 """
 from __future__ import annotations
 
+import threading
 from typing import Callable, Optional
 
 from ......core.controllers.logging.manager import APFLogManager
@@ -284,7 +285,6 @@ class CacheController:
     def free_segments(self, segments: list, on_done: "Callable") -> None:
         """Delete all cache_paths from each segment in a background thread, then call on_done()."""
         import shutil
-        import threading
         from kivy.clock import Clock
 
         def _bg():
@@ -301,7 +301,6 @@ class CacheController:
     def free_game(self, game_id: str, cached_items: list, on_done: "Callable") -> None:
         """Delete all mods and templates for a specific game_id, then call on_done()."""
         import shutil
-        import threading
         from kivy.clock import Clock
 
         targets = [
@@ -323,7 +322,6 @@ class CacheController:
     def free_category(self, category: str, cached_items: list, on_done: "Callable") -> None:
         """Delete all cached items of a given category, then call on_done()."""
         import shutil
-        import threading
         from kivy.clock import Clock
 
         targets = [
