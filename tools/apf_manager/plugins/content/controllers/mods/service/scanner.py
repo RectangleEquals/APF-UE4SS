@@ -72,7 +72,16 @@ class ModScannerMixin:
                 continue
             info = ModScannerMixin._load_mod(entry)
             if info.is_ap_mod and install_state is not None:
-                info.is_orphaned = not install_state.is_managed(info.folder_name)
+                is_managed = install_state.is_managed(info.folder_name)
+                if not is_managed and info.mod_id:
+                    is_managed = install_state.find_by_mod_id(info.mod_id) is not None
+                info.is_orphaned = not is_managed
+                if info.is_orphaned:
+                    import logging
+                    logging.getLogger(__name__).debug(
+                        "[scanner] Orphan: %s (folder_name=%r, mod_id=%r)",
+                        info.folder_name, info.folder_name, info.mod_id,
+                    )
             results.append(info)
         return results
 

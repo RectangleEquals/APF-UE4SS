@@ -163,7 +163,9 @@ class InstalledTab(MDBoxLayout):
 
             row_idx = 0
             for mod in ap_mods:
-                ir = install_map.get(mod.folder_name)
+                ir = install_map.get(mod.folder_name) or (
+                    install_map.get(mod.mod_id) if mod.mod_id else None
+                )
                 is_orphaned = ir is None   # on disk but no tracked install record
 
                 if ir:
@@ -680,6 +682,9 @@ class InstalledTab(MDBoxLayout):
             self._host.log(
                 f"[installed] Uninstall failed for {install_record.folder_name}: {exc}"
             )
+
+        # Refresh detection before broadcasting so all listeners see fresh disk state.
+        self._ctrl.refresh_detection_state()
 
         if hasattr(self._host, "notify_state_change"):
             Clock.schedule_once(lambda dt: self._host.notify_state_change("install"), 0)

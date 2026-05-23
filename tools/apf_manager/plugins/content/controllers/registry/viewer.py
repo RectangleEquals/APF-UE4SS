@@ -408,10 +408,20 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
             spa_type = "cpp_dir"
         elif ntype == "bp_dir":
             spa_type = "bp_dir"
+        elif ntype == "logicmods_folder":
+            spa_type = "logicmods_folder"
         elif ntype == "bp_subfolder":
             spa_type = "bp_subfolder"
         elif ntype == "bp_subfolder_invalid":
             spa_type = "bp_subfolder_invalid"
+        elif ntype == "standalone_bp":
+            spa_type = "standalone_bp"
+        elif ntype == "standalone_bp_invalid":
+            spa_type = "standalone_bp_invalid"
+        elif ntype == "associated_bp":
+            spa_type = "associated_bp"
+        elif ntype == "associated_bp_invalid":
+            spa_type = "associated_bp_invalid"
         else:
             spa_type = "dir"
 
@@ -515,13 +525,61 @@ def _folder_tree_to_spa_nodes(tree: "FolderTreeNode") -> list[dict]:
         elif spa_type == "cpp_dir":
             base.update({"component_label": "C++ module"})
         elif spa_type == "bp_dir":
-            base.update({"component_label": "Blueprint Logic Mod"})
+            # Nested LogicMods/ inside a mod folder — associated BP container
+            sf_count = sum(
+                1 for c in node.children
+                if c.node_type in ("associated_bp", "associated_bp_invalid")
+            )
+            base.update({
+                "component_label": "Blueprint Logic Mod",
+                "subfolder_count": sf_count,
+            })
+        elif spa_type == "logicmods_folder":
+            # Root-level LogicMods/ — standalone BP registry container (not selectable)
+            mod_count = sum(
+                1 for c in node.children
+                if c.node_type in ("standalone_bp", "standalone_bp_invalid")
+            )
+            base.update({
+                "component_label": "Blueprint Logic Mods",
+                "mod_count": mod_count,
+                "selectable": False,
+                "checked": False,
+            })
         elif spa_type in ("bp_subfolder", "bp_subfolder_invalid"):
+            # Legacy flat-mode associated BP nodes (from _build_tree_nodes path)
             is_valid = node.is_valid
-            warnings = node.bp_warnings
             base.update({
                 "is_valid": is_valid,
-                "bp_warnings": warnings,
+                "bp_warnings": node.bp_warnings,
+                "selectable": is_valid,
+                "checked": False,
+                "disabled": not is_valid,
+            })
+        elif spa_type in ("standalone_bp", "standalone_bp_invalid"):
+            # Root-level LogicMods/<name>/ — selectable standalone BP mod
+            is_valid = node.is_valid
+            bp_files = [c.name for c in node.children if c.node_type == "file"]
+            base.update({
+                "is_valid": is_valid,
+                "bp_warnings": node.bp_warnings,
+                "bp_files": bp_files,
+                "bp_type": _get_bp_type_label(bp_files),
+                "folder": node.path,
+                "selectable": is_valid,
+                "checked": is_valid,
+                "disabled": not is_valid,
+            })
+        elif spa_type in ("associated_bp", "associated_bp_invalid"):
+            # mod/LogicMods/<name>/ — BP subfolder bundled with a parent mod
+            is_valid = node.is_valid
+            bp_files = [c.name for c in node.children if c.node_type == "file"]
+            base.update({
+                "is_valid": is_valid,
+                "bp_warnings": node.bp_warnings,
+                "bp_files": bp_files,
+                "bp_type": _get_bp_type_label(bp_files),
+                "folder": node.path,
                 "selectable": is_valid,
                 "checked": False,
                 "disabled": not is_valid,
@@ -626,12 +684,14 @@ def _apply_initial_selection(nodes: list[dict], initial_selected_content: Option
                     node["checked"] = (f"mod:{mid}" in sc_set or f"framework_mod:{mid}" in sc_set)
                 elif ntype == "non_ap_mod":
                     node["checked"] = f"mod:{node.get('folder', '')}" in sc_set
-                elif ntype == "bp_mod":
-                    node["checked"] = f"mod:{node.get('folder', '')}" in sc_set
-                elif ntype == "bp_subfolder":
-                    # Cascade: checked if and only if the parent is checked
+                elif ntype in ("bp_mod", "standalone_bp"):
+                    # standalone_bp folder = "LogicMods/<name>"; sc stores "mod:LogicMods/<name>"
+                    folder = node.get("folder", "") or node.get("path", "")
+                    node["checked"] = f"mod:{folder}" in sc_set
+                elif ntype in ("bp_subfolder", "associated_bp"):
+                    # Cascade: checked only when parent is checked and this subfolder is valid
                     node["checked"] = parent_checked and node.get("is_valid", True)
-                elif ntype == "bp_subfolder_invalid":
+                elif ntype in ("bp_subfolder_invalid", "standalone_bp_invalid", "associated_bp_invalid"):
                     node["checked"] = False
                 elif ntype == "template":
                     node["checked"] = f"template:{node.get('path', '')}" in sc_set
@@ -716,7 +776,8 @@ class RegistryViewer:
                         matched = next((m for m in mods if m.mod_id == mid), None)
                         if matched:
                             id_to_mod[n["id"]] = matched
-                    elif ntype in ("non_ap_mod", "bp_mod"):
+                    elif ntype in ("non_ap_mod", "bp_mod", "standalone_bp"):
+                        # standalone_bp: folder = "LogicMods/<name>" matches DiscoveredMod.folder
                         folder = n.get("folder") or n.get("path")
                         if folder:
                             matched = next(
@@ -800,21 +861,33 @@ class RegistryViewer:
                 selected_ids: list[str] = result.get("selected", [])
                 dropped = [sid for sid in selected_ids if sid not in id_to_mod]
                 if dropped:
-                    ue4ss_dropped  = [sid for sid in dropped if sid.startswith("ue4ss:")]
-                    bp_sf_dropped  = [sid for sid in dropped if sid.startswith("bp_subfolder:")]
-                    other_dropped  = [
+                    # These ID prefixes are intentionally not in id_to_mod — they are
+                    # either handled via a dedicated pathway or carried by their parent.
+                    _CARRIED_PREFIXES = (
+                        "bp_subfolder:",       # flat-mode associated BP (carried by parent)
+                        "associated_bp:",      # folder-tree associated BP (carried by parent)
+                        "standalone_bp_invalid:",  # invalid — not selectable
+                        "associated_bp_invalid:",  # invalid — not selectable
+                    )
+                    ue4ss_dropped = [sid for sid in dropped if sid.startswith("ue4ss:")]
+                    bp_carried_dropped = [
                         sid for sid in dropped
-                        if not sid.startswith("ue4ss:") and not sid.startswith("bp_subfolder:")
+                        if any(sid.startswith(p) for p in _CARRIED_PREFIXES)
+                    ]
+                    other_dropped = [
+                        sid for sid in dropped
+                        if not sid.startswith("ue4ss:")
+                        and not any(sid.startswith(p) for p in _CARRIED_PREFIXES)
                     ]
                     if ue4ss_dropped:
                         logger.debug(
                             "Skipping %d UE4SS option ID(s) -- handled via separate UE4SS pathway: %s",
                             len(ue4ss_dropped), ue4ss_dropped[:3],
                         )
-                    if bp_sf_dropped:
+                    if bp_carried_dropped:
                         logger.debug(
                             "Skipping %d BP subfolder ID(s) -- carried by parent mod selection: %s",
-                            len(bp_sf_dropped), bp_sf_dropped[:3],
+                            len(bp_carried_dropped), bp_carried_dropped[:3],
                         )
                     if other_dropped:
                         logger.warning(
@@ -824,11 +897,13 @@ class RegistryViewer:
                 selected_mods = [
                     id_to_mod[sid] for sid in selected_ids if sid in id_to_mod
                 ]
-                # Deduplicate
+                # Deduplicate by (owner, repo, mod_id or folder).
+                # Using mod_id alone would collapse multiple non-AP/standalone-BP mods
+                # from the same repo (they all have mod_id="") into a single entry.
                 seen = set()
                 deduped = []
                 for m in selected_mods:
-                    key = (m.owner, m.repo, m.mod_id)
+                    key = (m.owner, m.repo, m.mod_id or m.folder)
                     if key not in seen:
                         seen.add(key)
                         deduped.append(m)

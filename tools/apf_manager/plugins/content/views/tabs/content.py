@@ -163,16 +163,13 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
 
                 row_idx = 0
                 for pkg_id, pkg_mods in pkg_groups.items():
-                    if len(pkg_mods) > 1:
-                        pkg_collapsed = f"pkg:{pkg_id}" in self._collapsed
-                        self._list.add_widget(self._package_header(pkg_id, pkg_mods, pkg_collapsed))
-                        if not pkg_collapsed:
-                            for mod in pkg_mods:
-                                self._list.add_widget(self._mod_row(mod, row_idx, indent=True))
-                                row_idx += 1
-                    else:
-                        self._list.add_widget(self._mod_row(pkg_mods[0], row_idx))
-                        row_idx += 1
+                    # Always show a collapsible registry group header, even for single-mod packages.
+                    pkg_collapsed = f"pkg:{pkg_id}" in self._collapsed
+                    self._list.add_widget(self._package_header(pkg_id, pkg_mods, pkg_collapsed))
+                    if not pkg_collapsed:
+                        for mod in pkg_mods:
+                            self._list.add_widget(self._mod_row(mod, row_idx, indent=True))
+                            row_idx += 1
         elif not templates:
             self._list.add_widget(self._empty_label(
                 "No content available.\nAdd a registry in the Registries tab."
@@ -299,6 +296,9 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         else:
             self._checked.discard(key)
         self._sync_queue_btn()
+        # Rebuild so package header reflects the updated child check state.
+        if key.startswith("mod:"):
+            Clock.schedule_once(lambda dt: self._do_refresh(), 0)
 
     def _check_all(self, checked: bool) -> None:
         from ...models.descriptors.types import GithubReleaseBinary as _GRB

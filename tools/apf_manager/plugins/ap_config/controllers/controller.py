@@ -66,3 +66,15 @@ class APConfigController:
 
     def has_service(self) -> bool:
         return self._svc() is not None
+
+    def get_dependency_state(self) -> dict:
+        """Return {"ue4ss_ok": bool, "fw_installed": bool, "missing": list[str]}."""
+        detection = self._host.get_detection()
+        ue4ss_ok = bool(detection and detection.ue4ss)
+        fw_installed = self.has_framework_mod
+        missing = []
+        if not ue4ss_ok:
+            missing.append("UE4SS")
+        if not fw_installed:
+            missing.append("AP Framework Mod")
+        return {"ue4ss_ok": ue4ss_ok, "fw_installed": fw_installed, "missing": missing}

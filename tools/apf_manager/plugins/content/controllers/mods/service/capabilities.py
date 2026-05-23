@@ -51,21 +51,46 @@ class ModCapabilitiesMixin:
         _FRAMEWORK_MOD_RE = re.compile(r"^archipelago\.[a-z0-9_]+\.framework$")
         results: list[Path] = []
         if not self._mods_dir or not self._mods_dir.is_dir():
+            logger.debug(
+                "[capabilities] Framework mod scan skipped: mods_dir unavailable (%s)",
+                self._mods_dir,
+            )
             return results
         for entry in sorted(self._mods_dir.iterdir()):
             if not entry.is_dir():
                 continue
-            if not (entry / "framework_config.json").exists():
+            cfg_path = entry / "framework_config.json"
+            if not cfg_path.exists():
                 continue
             manifest_path = entry / "manifest.json"
             if not manifest_path.exists():
+                logger.debug(
+                    "[capabilities] %s has framework_config.json but no manifest.json — skipping",
+                    entry.name,
+                )
                 continue
             try:
                 raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if _FRAMEWORK_MOD_RE.match(raw.get("mod_id", "")):
+                mid = raw.get("mod_id", "")
+                if _FRAMEWORK_MOD_RE.match(mid):
                     results.append(entry)
+                    logger.info(
+                        "[capabilities] Framework mod found: %s (mod_id=%r)", entry.name, mid
+                    )
+                else:
+                    logger.debug(
+                        "[capabilities] %s has framework_config.json but mod_id %r "
+                        "does not match framework pattern — skipping",
+                        entry.name, mid,
+                    )
             except Exception as exc:
-                logger.warning(f"Failed to read manifest at {manifest_path}: {exc}")
+                logger.warning("Failed to read manifest at %s: %s", manifest_path, exc)
+        if not results:
+            logger.debug(
+                "[capabilities] No framework mod found in %s (scanned %d dirs)",
+                self._mods_dir,
+                sum(1 for e in self._mods_dir.iterdir() if e.is_dir()),
+            )
         return results
 
     def get_framework_mod_dir(self) -> Optional[Path]:

@@ -27,9 +27,7 @@ class ModsSectionMixin:
         any_checked = any(_mod_key(m) in self._checked for m in pkg_mods)
 
         def _on_pkg_check(val: bool) -> None:
-            was = any(_mod_key(m) in self._checked for m in pkg_mods)
-            if val == was:
-                return
+            # Always cascade to ALL children — no early return for partial-check state.
             for m in pkg_mods:
                 k = _mod_key(m)
                 self._checked.add(k) if val else self._checked.discard(k)
@@ -100,6 +98,18 @@ class ModsSectionMixin:
             actions.append({"icon": "file-document-outline", "tooltip": "View Readme",
                             "callback": _open_readme})
 
+        # Detect associated BP subfolders bundled with this mod (Gap B).
+        _comps = getattr(mod, "components", None)
+        bp_subfolders = list(getattr(_comps, "bp_subfolders", None) or []) if _comps else []
+        valid_bp_sfs = [sf for sf in bp_subfolders if sf.get("is_valid")]
+
+        # Combined detail widget: ContentDetailPanel + BP subfolders section when expanded
+        detail_widget = None
+        if expanded and valid_bp_sfs:
+            detail_widget = self._build_mod_bp_detail(
+                mod, key, valid_bp_sfs, install_record, known_ids
+            )
+
         outer = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
         row_widget = ContentRowWidget(
             content=mod, row_index=index,
@@ -109,6 +119,7 @@ class ModsSectionMixin:
             actions=actions,
             known_mod_ids=known_ids,
             install_record=install_record,
+            detail_widget=detail_widget,
         )
         if indent:
             inner = MDBoxLayout(orientation="horizontal", size_hint_y=None, adaptive_height=True)
@@ -119,6 +130,67 @@ class ModsSectionMixin:
         else:
             outer.add_widget(row_widget)
         return outer
+
+    def _build_mod_bp_detail(self, mod, key: str, valid_bp_sfs: list,
+                              install_record, known_ids) -> MDBoxLayout:
+        """Combined detail widget: ContentDetailPanel + associated BP subfolders section."""
+        from ..panels.content_detail_panel import ContentDetailPanel
+        from ..chrome.constants import COL_DIM
+
+        combined = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
+
+        # Standard mod detail panel
+        detail_panel = ContentDetailPanel(
+            content=mod, install_record=install_record, known_mod_ids=known_ids
+        )
+        combined.add_widget(detail_panel)
+
+        # Associated BP subfolders section
+        bp_section = MDBoxLayout(
+            orientation="vertical", size_hint_y=None, adaptive_height=True,
+            md_bg_color=(0.09, 0.10, 0.12, 1),
+            padding=[dp(16), dp(4), dp(8), dp(8)], spacing=dp(4),
+        )
+        sep = MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.2, 0.2, 0.25, 1))
+        bp_section.add_widget(sep)
+        bp_section.add_widget(MDLabel(
+            text="Associated Blueprint Mods",
+            font_style="Label", role="small",
+            size_hint_y=None, height=dp(18),
+            theme_text_color="Custom", text_color=COL_DIM,
+        ))
+
+        parent_checked = key in self._checked
+        for sf in valid_bp_sfs:
+            sf_row = MDBoxLayout(
+                orientation="horizontal", size_hint_y=None, height=dp(28),
+                padding=[dp(8), 0, 0, 0], spacing=dp(8),
+            )
+            chk = MDCheckbox(
+                size_hint=(None, None), size=(dp(20), dp(20)),
+                pos_hint={"center_y": 0.5},
+                disabled=True,
+            )
+            chk.active = parent_checked
+            sf_row.add_widget(chk)
+            sf_row.add_widget(MDLabel(
+                text=sf.get("name", ""),
+                font_style="Label", role="small",
+                size_hint=(1, 1),
+            ))
+            bp_type_str = _bp_type_str(sf.get("files", []))
+            if bp_type_str:
+                sf_row.add_widget(MDLabel(
+                    text=bp_type_str,
+                    font_style="Label", role="small",
+                    size_hint=(None, 1), width=dp(88),
+                    halign="right",
+                    theme_text_color="Custom", text_color=COL_DIM,
+                ))
+            bp_section.add_widget(sf_row)
+
+        combined.add_widget(bp_section)
+        return combined
 
     def _open_other_docs(self, docs_path: str, owner: str, repo: str,
                           registry_owner: str = "", registry_repo: str = "") -> None:
@@ -326,3 +398,15 @@ def _fmt_bytes(n: int) -> str:
             return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
         n /= 1024
     return f"{n:.1f} TB"
+
+
+def _bp_type_str(files: list) -> str:
+    """Return a short BP file-type label (PAK, UCAS/UTOC, PAK+UCAS/UTOC) from a file list."""
+    exts = {f.rsplit(".", 1)[-1].lower() for f in files if "." in f}
+    if "pak" in exts and ("ucas" in exts or "utoc" in exts):
+        return "PAK+UCAS/UTOC"
+    if "ucas" in exts or "utoc" in exts:
+        return "UCAS/UTOC"
+    if "pak" in exts:
+        return "PAK"
+    return ""

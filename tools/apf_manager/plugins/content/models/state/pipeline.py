@@ -146,7 +146,9 @@ class InstallRecord:
 
     def to_dict(self) -> dict:
         d = dataclasses.asdict(self)
-        return {k: v for k, v in d.items() if v not in (None, "", [], {})}
+        # Always preserve identity fields even when empty so orphan detection stays reliable.
+        _REQUIRED = {"folder_name", "mod_id"}
+        return {k: v for k, v in d.items() if v not in (None, [], {}) or k in _REQUIRED}
 
     @classmethod
     def from_dict(cls, d: dict) -> "InstallRecord":

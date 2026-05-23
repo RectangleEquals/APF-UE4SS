@@ -31,13 +31,21 @@ class InstalledController:
         mods_svc = self._host.get_service("mods")
         return mods_svc.rescan() if mods_svc else []
 
+    def refresh_detection_state(self) -> None:
+        """Re-detect UE4SS state after an uninstall — call before notify_state_change."""
+        try:
+            self._host.refresh_detection()
+        except Exception as exc:
+            logger.warning("[installed] Post-uninstall re-detect failed: %s", exc)
+
     # -----------------------------------------------------------------------
     # Install state
     # -----------------------------------------------------------------------
 
     def get_install_map(self, game_id: str) -> dict:
         """
-        Return {folder_name: InstallRecord} for all tracked installs.
+        Return a lookup dict for all tracked installs.
+        Keys: folder_name when present; mod_id as fallback when folder_name is empty.
         Returns empty dict if game_id is empty or state file is missing.
         """
         if not game_id:
@@ -45,11 +53,16 @@ class InstalledController:
         try:
             from ....models.state.install import InstallStateManager
             from ....models.state.pipeline import InstallRecord
-            return {
-                d.get("folder_name", ""): InstallRecord.from_dict(d)
-                for d in InstallStateManager(game_id).get_all()
-                if d.get("folder_name")
-            }
+            result: dict = {}
+            for d in InstallStateManager(game_id).get_all():
+                fn = d.get("folder_name", "")
+                mid = d.get("mod_id", "")
+                rec = InstallRecord.from_dict(d)
+                if fn:
+                    result[fn] = rec
+                elif mid:
+                    result[mid] = rec
+            return result
         except Exception as exc:
             logger.warning(f"get_install_map failed: {exc}")
             return {}

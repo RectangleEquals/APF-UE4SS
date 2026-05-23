@@ -85,8 +85,14 @@ class InstallStateManager:
                 return entry
         return None
 
+    def find_by_mod_id(self, mod_id: str) -> Optional[dict]:
+        return next((e for e in self._data if e.get("mod_id") == mod_id), None)
+
     def is_managed(self, folder_name: str) -> bool:
         return self.find(folder_name) is not None
+
+    def is_managed_by_mod_id(self, mod_id: str) -> bool:
+        return self.find_by_mod_id(mod_id) is not None
 
     def is_pak_managed(self, pak_filename: str) -> bool:
         return self.find_by_pak(pak_filename) is not None

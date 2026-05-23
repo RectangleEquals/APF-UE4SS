@@ -51,10 +51,17 @@ class ContentController:
                 return svc.get_framework_releases_for_content() or []
         return []
 
-    def get_updates_service(self):
-        if self._host.has_service("updates"):
-            return self._host.get_service("updates")
-        return None
+    def get_ue4ss_update_info(self):
+        """Return UE4SS UpdateInfo, or None if the updates service is unavailable."""
+        if not self._host.has_service("updates"):
+            return None
+        return self._host.get_service("updates").get_update_info("ue4ss")
+
+    def get_framework_update_info(self):
+        """Return framework UpdateInfo, or None if the updates service is unavailable."""
+        if not self._host.has_service("updates"):
+            return None
+        return self._host.get_service("updates").get_update_info("framework")
 
     # -----------------------------------------------------------------------
     # Staged validation (pre-download)
@@ -138,6 +145,27 @@ class ContentController:
             + [(o, "other")    for o in o_other]
         )
         return queue_items, missing
+
+    # -----------------------------------------------------------------------
+    # Docs viewer delegation (MVC: views call these, never the service directly)
+    # -----------------------------------------------------------------------
+
+    def open_docs_url(self, url: str, title: str, sidebar_mode: str = "verbose") -> None:
+        """Open a URL in the docs_viewer service."""
+        svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+        if svc and hasattr(svc, "open_url"):
+            svc.open_url(url, title=title, show_sidebar=True,
+                         show_mode_toggle=False, sidebar_mode=sidebar_mode)
+
+    def show_inline_docs(self, content: str, title: str,
+                         sidebar_mode: str = "verbose",
+                         allow_mode_toggle: bool = False) -> None:
+        """Show inline markdown content in the docs_viewer service."""
+        svc = self._host.get_service("docs_viewer") if self._host.has_service("docs_viewer") else None
+        if svc and hasattr(svc, "show_inline"):
+            svc.show_inline(content=content, title=title,
+                            sidebar_mode=sidebar_mode,
+                            allow_mode_toggle=allow_mode_toggle)
 
     # -----------------------------------------------------------------------
     # Internal

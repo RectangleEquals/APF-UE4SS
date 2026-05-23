@@ -104,8 +104,12 @@ class FolderTreeNode:
     """
     One node in the hierarchical folder tree shown by the Repo Viewer.
     node_type: "root" | "dir" | "mod_dir" | "non_ap_mod" | "template_dir"
-               | "lua_dir" | "cpp_dir" | "bp_dir"
-               | "bp_subfolder" | "bp_subfolder_invalid"
+               | "lua_dir" | "cpp_dir"
+               | "bp_dir"            — nested LogicMods/ inside a mod folder (associated BP container)
+               | "logicmods_folder"  — root-level LogicMods/ (standalone BP registry container)
+               | "bp_subfolder" | "bp_subfolder_invalid"   — legacy flat-mode associated BP nodes
+               | "standalone_bp" | "standalone_bp_invalid" — root LogicMods/<name>/ (selectable standalone)
+               | "associated_bp" | "associated_bp_invalid" — mod/LogicMods/<name>/ (bundled with parent)
                | "file" | "submodule"
     """
     node_type: str
@@ -707,12 +711,21 @@ class RegistryResolver:
             conflict=is_conflict,
         )
 
-        # BP Logic Mods directory: scan subfolders and build typed child nodes
+        # BP Logic Mods directory: scan subfolders and build typed child nodes.
+        # Distinguish root-level LogicMods/ (standalone BP registry container, epath has no "/")
+        # from nested mod/LogicMods/ (associated BP component inside a parent mod, epath has "/").
         if node_type == "bp_dir":
+            is_root_logicmods = "/" not in epath
+            if is_root_logicmods:
+                # Root-level: this folder is the standalone-BP registry container
+                node.node_type = "logicmods_folder"
             subfolder_entries = self._scan_logicmods_folder(epath, api, owner, repo)
             sf_children: list[FolderTreeNode] = []
             for sf_entry in subfolder_entries:
-                sf_type = "bp_subfolder" if sf_entry["is_valid"] else "bp_subfolder_invalid"
+                if is_root_logicmods:
+                    sf_type = "standalone_bp" if sf_entry["is_valid"] else "standalone_bp_invalid"
+                else:
+                    sf_type = "associated_bp" if sf_entry["is_valid"] else "associated_bp_invalid"
                 sf_path = f"{epath}/{sf_entry['name']}"
                 sf_node = FolderTreeNode(
                     node_type=sf_type,

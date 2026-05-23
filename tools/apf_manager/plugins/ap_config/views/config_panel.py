@@ -6,6 +6,12 @@ Sections (collapsible):
     Logging     — level (dropdown), file, console, append           [expanded]
     Timeouts    — connection/registration/ipc/action + retry        [collapsed]
     Threading   — polling interval, queue size, shutdown timeout    [collapsed]
+
+Dependency guard:
+    Requires BOTH UE4SS and the AP Framework Mod.
+    Subscribes to both "detection" and "install" state changes.
+    Shows a full-screen guard view when either dependency is missing;
+    live-swaps to the config form when both are present.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from kivymd.uix.dialog import (
     MDDialog, MDDialogHeadlineText, MDDialogSupportingText,
     MDDialogButtonContainer,
 )
-from kivymd.uix.label import MDLabel
+from kivymd.uix.label import MDIcon, MDLabel
 from kivymd.uix.menu import MDDropdownMenu
 from kivymd.uix.selectioncontrol import MDSwitch
 from kivymd.uix.textfield import MDTextField
@@ -40,25 +46,8 @@ _LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"]
 
 
 class _ClickableRow(ButtonBehavior, MDBoxLayout):
-    """Full-width clickable row. Only this widget's on_release is bound to _toggle();
-    the child chevron MDIconButton has no on_release, so there is exactly one call
-    regardless of where in the header the user clicks."""
+    """Full-width clickable row that delegates release to _toggle()."""
     pass
-
-
-class _SectionHeader(MDLabel):
-    def __init__(self, text: str, **kwargs):
-        super().__init__(
-            text=text,
-            font_style="Title",
-            role="large",
-            size_hint=(1, None),
-            height=dp(36),
-            padding=[dp(4), 0],
-            theme_text_color="Custom",
-            text_color=(0.55, 0.75, 0.95, 1),
-            **kwargs,
-        )
 
 
 class _CollapsibleSection(MDBoxLayout):
@@ -148,90 +137,72 @@ class APConfigPanel(PluginPanel):
         super().__init__(**kwargs)
         self._host = host
         self._ctrl = APConfigController(host)
+        self._profile: Optional["GameProfile"] = None
+        # Form state
         self._fields: dict[str, MDTextField] = {}
         self._checks: dict[str, MDSwitch] = {}
         self._menus: dict[str, MDDropdownMenu] = {}
         self._dirty: bool = False
         self._dirty_bound: bool = False
+        self._form_built: bool = False
+        # Dialog / nav state
         self._unsaved_dialog: Optional[MDDialog] = None
         self._pending_nav_label: Optional[str] = None
-        self._build_ui()
+        # Subscription guard
+        self._subscribed: bool = False
+        self._build_chrome()
 
     # -----------------------------------------------------------------------
-    # PluginPanel lifecycle
+    # Chrome build (always-visible toolbar + dynamic body container)
     # -----------------------------------------------------------------------
 
-    def on_activate(self, game_profile: "GameProfile") -> None:
-        for menu in self._menus.values():
-            menu.dismiss()
-        if self._ctrl.has_service():
-            self._ctrl.activate(game_profile)
-        Clock.schedule_once(lambda dt: self._set_framework_state(), 0)
-
-    def _set_framework_state(self) -> None:
-        ctrl = self._ctrl
-        has_mod = ctrl.has_framework_mod
-        has_cfg = ctrl.config_exists
-
-        self._mod_subtitle.text = ctrl.framework_mod_name or ""
-
-        if not has_mod:
-            self._save_btn.disabled = True
-            self._reload_btn.disabled = True
-            self._set_status(
-                "Framework mod not installed — deploy the framework from the Content hub."
-            )
-            return
-
-        self._save_btn.disabled = False
-        self._reload_btn.disabled = not has_cfg
-
-        if not self._dirty:
-            self._populate()
-
-        if not has_cfg:
-            self._set_status(
-                "No existing config — defaults shown. Save to create framework_config.json."
-            )
-
-    def on_deactivate(self) -> None:
-        for menu in self._menus.values():
-            menu.dismiss()
-
-    def can_deactivate(self) -> bool:
-        if self._dirty:
-            self._show_unsaved_dialog()
-            return False
-        return True
-
-    # -----------------------------------------------------------------------
-    # UI build
-    # -----------------------------------------------------------------------
-
-    def _build_ui(self) -> None:
+    def _build_chrome(self) -> None:
         self.orientation = "vertical"
 
-        toolbar = MDBoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56),
-                              md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4))
+        toolbar = MDBoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(56),
+            md_bg_color=(0.15, 0.2, 0.25, 1), padding=(dp(8), 0), spacing=dp(4),
+        )
         title_box = MDBoxLayout(orientation="vertical", size_hint_x=1, spacing=0,
                                 padding=(0, dp(4), 0, dp(4)))
-        title_box.add_widget(MDLabel(text="Configure", font_style="Title", role="large",
-                                     size_hint_y=None, height=dp(28), halign="left"))
-        self._mod_subtitle = MDLabel(text="", font_style="Body", role="small",
-                                     size_hint_y=None, height=dp(16), halign="left",
-                                     theme_text_color="Secondary")
+        title_box.add_widget(MDLabel(
+            text="Configure", font_style="Title", role="large",
+            size_hint_y=None, height=dp(28), halign="left",
+        ))
+        self._mod_subtitle = MDLabel(
+            text="", font_style="Body", role="small",
+            size_hint_y=None, height=dp(16), halign="left",
+            theme_text_color="Secondary",
+        )
         title_box.add_widget(self._mod_subtitle)
         toolbar.add_widget(title_box)
-        self._save_btn = TipIconButton(icon="content-save", tooltip_text="Save config",
-                                       on_release=lambda *_: self._on_save())
-        self._reload_btn = TipIconButton(icon="refresh", tooltip_text="Reload from disk",
-                                         on_release=lambda *_: self._on_reload())
+
+        self._save_btn = TipIconButton(
+            icon="content-save", tooltip_text="Save config",
+            on_release=lambda *_: self._on_save(),
+        )
+        self._reload_btn = TipIconButton(
+            icon="refresh", tooltip_text="Reload from disk",
+            on_release=lambda *_: self._on_reload(),
+        )
         toolbar.add_widget(self._save_btn)
         toolbar.add_widget(self._reload_btn)
-        self._toolbar = toolbar
         self.add_widget(toolbar)
 
-        scroll = ScrollView(size_hint=(1, 1))
+        # Dynamic body: swapped between guard view and content view
+        self._body = MDBoxLayout(orientation="vertical", size_hint=(1, 1))
+        self.add_widget(self._body)
+
+    # -----------------------------------------------------------------------
+    # Lazy form build (only when first showing content view)
+    # -----------------------------------------------------------------------
+
+    def _ensure_form_built(self) -> None:
+        if self._form_built:
+            return
+        self._form_built = True
+
+        self._form_scroll = ScrollView(size_hint=(1, 1))
         form = MDBoxLayout(
             orientation="vertical",
             size_hint_y=None,
@@ -239,8 +210,7 @@ class APConfigPanel(PluginPanel):
             padding=[dp(16), dp(8)],
             spacing=dp(4),
         )
-        scroll.add_widget(form)
-        self.add_widget(scroll)
+        self._form_scroll.add_widget(form)
         self._form = form
 
         self._status_label = MDLabel(
@@ -251,7 +221,6 @@ class APConfigPanel(PluginPanel):
             theme_text_color="Custom",
             text_color=(0.6, 0.6, 0.6, 1),
         )
-        self.add_widget(self._status_label)
 
         self._build_form()
 
@@ -271,7 +240,6 @@ class APConfigPanel(PluginPanel):
     def _mk_dropdown(self, key: str, items: list, hint: str = "") -> MDTextField:
         field = MDTextField(hint_text=hint, mode="outlined", size_hint=(0.6, 1))
         self._fields[key] = field
-
         menu_items = [
             {"text": v, "on_release": lambda x=v, k=key: self._on_dropdown_select(k, x)}
             for v in items
@@ -322,6 +290,187 @@ class APConfigPanel(PluginPanel):
         th_content.add_widget(_Row("Queue max size",      self._mk_field("threading.queue_max_size",       "1000", "int")))
         th_content.add_widget(_Row("Shutdown (ms)",       self._mk_field("threading.shutdown_timeout_ms",  "5000", "int")))
         f.add_widget(_CollapsibleSection("Threading", th_content, collapsed=True))
+
+    # -----------------------------------------------------------------------
+    # PluginPanel lifecycle
+    # -----------------------------------------------------------------------
+
+    def on_activate(self, game_profile: "GameProfile") -> None:
+        self._profile = game_profile
+        for menu in self._menus.values():
+            menu.dismiss()
+        # Subscribe to both detection and install — once per panel lifetime.
+        if not self._subscribed:
+            self._host.subscribe_state_change("detection", self._on_state_changed)
+            self._host.subscribe_state_change("install", self._on_state_changed)
+            self._subscribed = True
+        if self._ctrl.has_service():
+            self._ctrl.activate(game_profile)
+        Clock.schedule_once(lambda dt: self._refresh_view(), 0)
+
+    def on_deactivate(self) -> None:
+        for menu in self._menus.values():
+            menu.dismiss()
+
+    def can_deactivate(self) -> bool:
+        if self._dirty:
+            self._show_unsaved_dialog()
+            return False
+        return True
+
+    def _on_state_changed(self) -> None:
+        """Fires on both 'detection' and 'install' changes."""
+        if self._profile and self._ctrl.has_service():
+            self._ctrl.activate(self._profile)
+        Clock.schedule_once(lambda dt: self._refresh_view(), 0)
+
+    # -----------------------------------------------------------------------
+    # View switching: guard ↔ content
+    # -----------------------------------------------------------------------
+
+    def _refresh_view(self) -> None:
+        dep = self._ctrl.get_dependency_state()
+        ue4ss_ok = dep["ue4ss_ok"]
+        fw_installed = dep["fw_installed"]
+
+        self._body.clear_widgets()
+
+        if ue4ss_ok and fw_installed:
+            self._save_btn.disabled = False
+            self._reload_btn.disabled = not self._ctrl.config_exists
+            self._mod_subtitle.text = self._ctrl.framework_mod_name or ""
+            self._show_content_view()
+        else:
+            self._save_btn.disabled = True
+            self._reload_btn.disabled = True
+            self._mod_subtitle.text = ""
+            self._body.add_widget(self._build_guard_view(dep))
+
+    def _show_content_view(self) -> None:
+        """Add the pre-built form scroll to the body and populate if clean."""
+        self._ensure_form_built()
+        self._body.add_widget(self._form_scroll)
+        self._body.add_widget(self._status_label)
+        if not self._dirty:
+            self._populate()
+
+    def _build_guard_view(self, dep: dict) -> MDBoxLayout:
+        """Build and return a full-screen guard widget explaining what's missing."""
+        ue4ss_ok = dep["ue4ss_ok"]
+        fw_installed = dep["fw_installed"]
+
+        guard = MDBoxLayout(
+            orientation="vertical",
+            size_hint=(1, 1),
+            padding=[dp(40), dp(48), dp(40), dp(48)],
+            spacing=dp(20),
+        )
+
+        # Large alert icon
+        icon_row = MDBoxLayout(
+            orientation="horizontal", size_hint=(1, None), height=dp(72),
+        )
+        icon_row.add_widget(Widget(size_hint_x=1))
+        icon_row.add_widget(MDIcon(
+            icon="alert-circle-outline",
+            font_size=dp(60),
+            size_hint=(None, None), size=(dp(72), dp(72)),
+            pos_hint={"center_y": 0.5},
+            theme_icon_color="Custom",
+            icon_color=(0.85, 0.55, 0.1, 1),
+        ))
+        icon_row.add_widget(Widget(size_hint_x=1))
+        guard.add_widget(icon_row)
+
+        # Title
+        guard.add_widget(MDLabel(
+            text="Configure Unavailable",
+            font_style="Title", role="large",
+            size_hint=(1, None), height=dp(40),
+            halign="center",
+        ))
+
+        # Explanation
+        guard.add_widget(MDLabel(
+            text=(
+                "Configuration requires both UE4SS and the AP Framework Mod.\n"
+                "All settings are written to the framework mod's configuration file."
+            ),
+            size_hint=(1, None), adaptive_height=True,
+            halign="center",
+            theme_text_color="Custom",
+            text_color=(0.6, 0.6, 0.6, 1),
+        ))
+
+        # Live status indicator rows
+        status_box = MDBoxLayout(
+            orientation="vertical",
+            size_hint=(1, None), adaptive_height=True,
+            spacing=dp(8), padding=[dp(24), 0],
+        )
+        for req_label, ok in [("UE4SS", ue4ss_ok), ("AP Framework Mod", fw_installed)]:
+            row = MDBoxLayout(
+                orientation="horizontal",
+                size_hint=(1, None), height=dp(32),
+                spacing=dp(10),
+            )
+            row.add_widget(Widget(size_hint_x=1))
+            icon_color = (0.25, 0.8, 0.35, 1) if ok else (0.6, 0.6, 0.6, 1)
+            row.add_widget(MDIcon(
+                icon="check-circle-outline" if ok else "close-circle-outline",
+                font_size=dp(18),
+                size_hint=(None, 1), width=dp(22),
+                theme_icon_color="Custom", icon_color=icon_color,
+            ))
+            status_color = (0.25, 0.8, 0.35, 1) if ok else (0.6, 0.6, 0.6, 1)
+            row.add_widget(MDLabel(
+                text=f"{req_label}  {'— installed' if ok else '— not installed'}",
+                font_style="Body",
+                size_hint=(None, 1), width=dp(280),
+                halign="left", valign="middle",
+                theme_text_color="Custom", text_color=status_color,
+            ))
+            row.add_widget(Widget(size_hint_x=1))
+            status_box.add_widget(row)
+        guard.add_widget(status_box)
+
+        # Install instructions for missing components
+        if not ue4ss_ok or not fw_installed:
+            instr_box = MDBoxLayout(
+                orientation="vertical",
+                size_hint=(1, None), adaptive_height=True,
+                spacing=dp(4), padding=[dp(24), 0],
+            )
+            instr_box.add_widget(MDLabel(
+                text="To resolve:",
+                font_style="Label", role="medium",
+                size_hint=(1, None), height=dp(22),
+                halign="center",
+                theme_text_color="Secondary",
+            ))
+            if not ue4ss_ok:
+                instr_box.add_widget(MDLabel(
+                    text="→  UE4SS: install via the Content hub, Other section",
+                    font_style="Body", role="small",
+                    size_hint=(1, None), height=dp(24),
+                    halign="center",
+                    theme_text_color="Custom",
+                    text_color=(0.85, 0.85, 0.25, 1),
+                ))
+            if not fw_installed:
+                instr_box.add_widget(MDLabel(
+                    text="→  AP Framework Mod: install via the Content hub, Mods section",
+                    font_style="Body", role="small",
+                    size_hint=(1, None), height=dp(24),
+                    halign="center",
+                    theme_text_color="Custom",
+                    text_color=(0.85, 0.85, 0.25, 1),
+                ))
+            guard.add_widget(instr_box)
+
+        # Spacer to push content to vertical center
+        guard.add_widget(Widget(size_hint_y=1))
+        return guard
 
     # -----------------------------------------------------------------------
     # Populate / collect
@@ -525,4 +674,5 @@ class APConfigPanel(PluginPanel):
         self._set_status("Reloaded.")
 
     def _set_status(self, msg: str) -> None:
-        self._status_label.text = msg
+        if hasattr(self, "_status_label"):
+            self._status_label.text = msg
