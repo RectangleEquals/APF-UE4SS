@@ -287,7 +287,7 @@ class RegistryResolver:
                 if _lm_sub_entry:
                     _bp_subfolders = self._scan_logicmods_folder(
                         _lm_sub_entry["path"], api, owner, repo)
-                    _bp_paks = [f for sf in _bp_subfolders for f in sf.get("files", [])]
+                    _bp_paks = [f"{sf['name']}/{f}" for sf in _bp_subfolders for f in sf.get("files", [])]
                 # Also collect any loose pak files directly in the mod folder (legacy)
                 _loose_paks = [
                     e["name"] for e in sub_contents
@@ -368,7 +368,7 @@ class RegistryResolver:
                 _folder_leaf = folder_path.split("/")[-1] if "/" in folder_path else folder_path
                 _bp_subfolders_ap = self._scan_logicmods_folder(
                     _lm_entry["path"], api, owner, repo)
-                _bp_pak_files = [f for sf in _bp_subfolders_ap for f in sf.get("files", [])]
+                _bp_pak_files = [f"{sf['name']}/{f}" for sf in _bp_subfolders_ap for f in sf.get("files", [])]
                 if _bp_pak_files:
                     _detected.append("blueprint")
             _bp_combined = bool(_bp_pak_files) and (_has_lua or _has_cpp)

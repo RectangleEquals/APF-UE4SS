@@ -17,6 +17,9 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 from kivy.metrics import dp
+from .....core.controllers.logging.manager import APFLogManager
+
+logger = APFLogManager.get_logger(__name__)
 from kivy.uix.scrollview import ScrollView
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
@@ -212,10 +215,10 @@ class LoadOrderTab(MDBoxLayout):
 
         mod_by_id = {m.mod_id: m for m in all_mods if m.mod_id}
 
-        # Load install_map for version numbers
+        # Load install_map for version numbers — use slug game_id, not UUID
         install_map: dict = {}
         if self._profile:
-            game_id = self._profile.game_id
+            game_id = self._ctrl.get_game_id_slug(self._profile)
             if game_id:
                 from ...models.state.install import InstallStateManager
                 from ...models.state.pipeline import InstallRecord
@@ -263,7 +266,7 @@ class LoadOrderTab(MDBoxLayout):
             self._list_layout.add_widget(kb_row)
 
         # BP Logic Mods section — locked, rendered after mods.txt list
-        _game_id = self._profile.game_id if self._profile else ""
+        _game_id = self._ctrl.get_game_id_slug(self._profile) if self._profile else ""
         self._add_bp_section(_game_id)
 
     # -----------------------------------------------------------------------
@@ -414,7 +417,17 @@ class LoadOrderTab(MDBoxLayout):
             (i for i, r in enumerate(self._rows) if r._mod.folder_name == mod.folder_name),
             None,
         )
-        if idx is None or idx == 0:
+        if idx is None:
+            logger.warning(
+                "[load_order] Move up ignored: mod '%s' not found in displayed rows",
+                mod.folder_name,
+            )
+            return
+        if idx == 0:
+            logger.warning(
+                "[load_order] Move up blocked: '%s' is already at the top of the list",
+                mod.folder_name,
+            )
             return
 
         above_mod   = self._rows[idx - 1]._mod
@@ -423,7 +436,12 @@ class LoadOrderTab(MDBoxLayout):
 
         if is_fw:
             if above_mod.is_ap_mod:
-                return  # Framework must always lead AP mods — invalid state guard
+                logger.warning(
+                    "[load_order] Move up blocked: framework mod '%s' cannot move above "
+                    "AP mod '%s' — this indicates an invalid mods.txt state",
+                    mod.folder_name, above_mod.folder_name,
+                )
+                return
             self._swap_displayed(idx, idx - 1)
         elif mod.is_ap_mod and above_is_fw:
             self._cascade_ap_up(fw_idx=idx - 1, ap_idx=idx)
@@ -435,12 +453,31 @@ class LoadOrderTab(MDBoxLayout):
             (i for i, r in enumerate(self._rows) if r._mod.folder_name == mod.folder_name),
             None,
         )
-        if idx is None or idx >= len(self._rows) - 1:
+        if idx is None:
+            logger.warning(
+                "[load_order] Move down ignored: mod '%s' not found in displayed rows",
+                mod.folder_name,
+            )
+            return
+        if idx >= len(self._rows) - 1:
+            logger.warning(
+                "[load_order] Move down blocked: '%s' is already at the bottom of the "
+                "reorderable list (Keybinds is always pinned below)",
+                mod.folder_name,
+            )
             return
 
         if mod.mod_id and _FRAMEWORK_MOD_RE.match(mod.mod_id):
             self._cascade_framework_down(idx)
         else:
+            below_mod = self._rows[idx + 1]._mod
+            if below_mod.folder_name.lower() == "keybinds":
+                logger.warning(
+                    "[load_order] Move down blocked: '%s' cannot swap with Keybinds "
+                    "(Keybinds is always pinned at the absolute bottom)",
+                    mod.folder_name,
+                )
+                return
             self._swap_displayed(idx, idx + 1)
 
     def _cascade_framework_down(self, fw_idx: int) -> None:
@@ -459,7 +496,11 @@ class LoadOrderTab(MDBoxLayout):
             cluster_end += 1
 
         if cluster_end >= len(rows):
-            return  # No non-AP mod below — blocked
+            logger.warning(
+                "[load_order] Move down blocked: framework mod cluster cannot move further "
+                "down — no non-AP mod exists below the AP cluster"
+            )
+            return
 
         non_ap_row = rows[cluster_end]
         new_rows = (
@@ -480,7 +521,12 @@ class LoadOrderTab(MDBoxLayout):
         while non_ap_target >= 0 and rows[non_ap_target]._mod.is_ap_mod:
             non_ap_target -= 1
         if non_ap_target < 0:
-            return  # Blocked — no non-AP above the framework mod
+            logger.warning(
+                "[load_order] Move up blocked: AP mod '%s' + framework mod cluster "
+                "cannot move further up — no non-AP mod exists above the framework mod",
+                rows[ap_idx]._mod.folder_name if ap_idx < len(rows) else "unknown",
+            )
+            return
 
         new_rows = (
             rows[:non_ap_target]

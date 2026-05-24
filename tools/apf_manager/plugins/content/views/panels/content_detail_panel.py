@@ -254,10 +254,41 @@ class ContentDetailPanel(MDBoxLayout):
             chip_row = MDBoxLayout(
                 orientation="horizontal", size_hint_y=None, height=dp(28), spacing=dp(6),
             )
+            bp_file_status = None
             for comp in components:
-                ok = health.get(comp, True) if health else True
+                raw = health.get(comp, True) if health else True
+                if comp == "blueprint" and isinstance(raw, list):
+                    bp_file_status = raw
+                    ok = all(present for _, present in raw)
+                else:
+                    ok = bool(raw)
                 chip_row.add_widget(component_status_chip(comp, ok=ok))
             self.add_widget(chip_row)
+
+            # Per-file detail rows for blueprint component (replaces generic bool chip)
+            if bp_file_status:
+                bp_detail = MDBoxLayout(
+                    orientation="vertical", size_hint_y=None, adaptive_height=True,
+                    padding=[dp(4), dp(2), 0, dp(2)], spacing=dp(2),
+                )
+                for rel_path, exists in bp_file_status:
+                    frow = MDBoxLayout(
+                        orientation="horizontal", size_hint_y=None, height=dp(18), spacing=dp(6),
+                    )
+                    frow.add_widget(MDIcon(
+                        icon="check-circle-outline" if exists else "close-circle-outline",
+                        size_hint=(None, 1), width=dp(16),
+                        theme_icon_color="Custom",
+                        icon_color=COL_STATUS_OK if exists else COL_STATUS_MISS,
+                    ))
+                    frow.add_widget(MDLabel(
+                        text=f"LogicMods/{rel_path}",
+                        font_style="Label", role="small",
+                        size_hint=(1, 1), halign="left",
+                        theme_text_color="Custom", text_color=COL_DIM,
+                    ))
+                    bp_detail.add_widget(frow)
+                self.add_widget(bp_detail)
 
     # ------------------------------------------------------------------
     # Layout helpers

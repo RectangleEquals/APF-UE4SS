@@ -81,6 +81,13 @@ class LoadOrderController:
         deploy_svc = self._deploy_svc()
         return deploy_svc.mods_txt if deploy_svc else None
 
+    def get_game_id_slug(self, profile=None) -> str:
+        """Return the human-readable game ID slug for install state lookups."""
+        from ...utils import slug_game_id
+        _reg = (self._host.get_service("registry")
+                if self._host.has_service("registry") else None)
+        return slug_game_id(profile, _reg)
+
     def scan_mods(self) -> list:
         mods_svc = self._host.get_service("mods")
         return mods_svc.scan() if mods_svc else []
@@ -134,7 +141,7 @@ class LoadOrderController:
         new_order = [m.folder_name for m in sorted_mods] + non_ap
 
         try:
-            mods_txt.set_order(new_order)
+            mods_txt.reorder(new_order)
             mods_txt.save()
         except Exception as exc:
             logger.warning(f"fix_load_order save failed: {exc}")
@@ -169,11 +176,22 @@ class LoadOrderController:
                     pak_files = record.bp_pak_files_deployed or []
                     if not pak_files:
                         continue
-                    bp_list = parse_bp_mods(pak_files) or []
-                    if bp_list:
-                        name = record.name or record.folder_name or ""
-                        results.append((name, bp_list, True))
-                        managed_pak_names.update(record.bp_pak_files_deployed)
+                    managed_pak_names.update(pak_files)
+                    # Group files by subfolder prefix so parse_bp_mods() receives
+                    # plain filenames (not "SubfolderName/file.pak" paths).
+                    # Legacy flat paths (no "/") fall back to using folder_name.
+                    subfolders: dict[str, list[str]] = {}
+                    for pak in pak_files:
+                        parts = pak.split("/", 1)
+                        if len(parts) == 2:
+                            subfolders.setdefault(parts[0], []).append(parts[1])
+                        else:
+                            subfolders.setdefault(record.folder_name or "", []).append(pak)
+                    for sf_name, files in subfolders.items():
+                        bp_list = parse_bp_mods(files) or []
+                        if bp_list:
+                            display = sf_name or record.name or record.folder_name or ""
+                            results.append((display, bp_list, True))
             except Exception as exc:
                 logger.warning(f"[load_order] get_bp_mods: failed to read install state: {exc}")
 

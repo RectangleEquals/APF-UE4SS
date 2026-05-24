@@ -238,7 +238,13 @@ class InstalledRowWidget(MDBoxLayout):
         return ""
 
     def _compute_component_status(self) -> dict:
-        """Return per-component filesystem presence status for the installed mod."""
+        """
+        Return per-component filesystem presence status for the installed mod.
+
+        For 'blueprint', returns a list of (rel_path, exists) tuples when deployed
+        pak files are known, enabling ContentDetailPanel to show per-file detail rows
+        instead of a generic boolean chip.
+        """
         r = self._record
         detection = self._detection
         if not detection or not r.folder_name:
@@ -260,8 +266,11 @@ class InstalledRowWidget(MDBoxLayout):
             )
         if "blueprint" in components:
             paks = r.bp_pak_files_deployed or []
-            status["blueprint"] = bool(paks) and all(
-                logicmods_dir and (logicmods_dir / p).exists()
-                for p in paks
-            )
+            if paks and logicmods_dir:
+                # Rich per-file status: list of (relative_path, present_on_disk)
+                status["blueprint"] = [(p, (logicmods_dir / p).exists()) for p in paks]
+            elif paks:
+                status["blueprint"] = [(p, False) for p in paks]
+            else:
+                status["blueprint"] = False
         return status

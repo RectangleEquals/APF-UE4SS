@@ -429,9 +429,14 @@ class ContentPipelinePanel(PluginPanel):
                 self._fw_state.get("fw_dir"),
                 self._fw_state.get("fw_conflict", []),
             )
-        # Rescan downloads cache so install-status indicators stay current
+        # Refresh downloads tab with current detection so install-status and UE4SS gate are current
         if self._tab_downloads:
-            self._tab_downloads._scan_cache_and_rebuild()
+            game_id = self._ctrl.get_game_id(self._profile)
+            self._tab_downloads.refresh(
+                game_id,
+                detection=detection,
+                fw_dir=self._fw_state.get("fw_dir"),
+            )
         self._update_badges()
 
     def _on_registry_state_changed(self) -> None:

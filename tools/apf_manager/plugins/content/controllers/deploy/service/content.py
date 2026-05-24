@@ -36,7 +36,9 @@ class DeployContentMixin:
         from ....models.state.pipeline import InstallRecord
         from ....models.state.install import InstallStateManager
 
-        gid = game_id or content.game_id or (self._profile.game_id if self._profile else "")
+        from ...utils import slug_game_id
+        _reg = self._host.get_service("registry") if self._host.has_service("registry") else None
+        gid = game_id or content.game_id or slug_game_id(self._profile, _reg)
         record = InstallRecord.from_content(content, gid)
 
         if isinstance(content, TemplateDescriptor):
@@ -44,7 +46,9 @@ class DeployContentMixin:
         elif isinstance(content, BinaryDescriptor):
             record.binary_files_deployed = self._deploy_binary_content(cache_path, content, detection)
         elif isinstance(content, ModDescriptor):
-            self._deploy_mod_content(cache_path, content, detection)
+            deployed_bp_paths = self._deploy_mod_content(cache_path, content, detection)
+            if deployed_bp_paths is not None:
+                record.bp_pak_files_deployed = deployed_bp_paths
         else:
             raise TypeError(f"Unsupported content type: {content.content_type!r}")
 
@@ -57,7 +61,7 @@ class DeployContentMixin:
         cache_path: "Path",
         content,
         detection: "Optional[DetectionResult]",
-    ) -> None:
+    ) -> "Optional[list]":
         if not detection or not (detection.ue4ss and detection.ue4ss.mods_dir):
             raise RuntimeError("UE4SS mods directory not detected")
         components = content.components.types if content.components else ["lua"]
@@ -65,6 +69,7 @@ class DeployContentMixin:
         folder_name = content.folder_name
         t0 = time.monotonic()
 
+        deployed_bp: list[str] = []
         try:
             if any(c in components for c in ("lua", "cpp")):
                 dest = detection.ue4ss.mods_dir / folder_name
@@ -75,16 +80,27 @@ class DeployContentMixin:
                 if dest.exists():
                     shutil.rmtree(str(dest))
                     logger.debug(f"Removed existing install at {dest}")
-                # K-7: exclude .apf_cache; K-8 Fix B: exclude ue4ss.json
+                # Exclude .apf_cache, ue4ss.json (K-7/K-8) and LogicMods/ — associated
+                # BP paks are deployed separately to Content/Paks/LogicMods/, never to
+                # ue4ss/Mods/<name>/LogicMods/.
                 shutil.copytree(
                     str(cache_path), str(dest),
-                    ignore=shutil.ignore_patterns("enabled.txt", ".apf_cache", "ue4ss.json"),
+                    ignore=shutil.ignore_patterns(
+                        "enabled.txt", ".apf_cache", "ue4ss.json", "LogicMods"
+                    ),
                 )
                 n_files = sum(1 for _ in dest.rglob("*") if _.is_file())
-                logger.debug(f"Copied mod tree -> {dest}  ({n_files} files)")
+                logger.info(f"[deploy] '{folder_name}': {n_files} files deployed to {dest}")
                 with self._lock:
                     if self._mods_txt:
                         self._mods_txt.ensure_entry(folder_name, enabled=True)
+                        # Enforce APFrameworkMod-first ordering after every AP mod entry.
+                        _mods_dir = detection.ue4ss.mods_dir
+                        if _mods_dir and self._mods_txt.enforce_ap_ordering(_mods_dir):
+                            logger.info(
+                                "[deploy] mods.txt: AP ordering enforced "
+                                "(framework mod moved before AP mods)"
+                            )
                         self._mods_txt.save()
                         logger.debug(f"mods.txt updated for '{folder_name}'")
 
@@ -92,18 +108,56 @@ class DeployContentMixin:
                 lm_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
                 if lm_dir:
                     lm_dir.mkdir(parents=True, exist_ok=True)
-                    lm_src = cache_path / "LogicMods"
+                    # Standalone BP mods: pak files live at the cache root (no LogicMods/
+                    # subdir). Destination wraps them in a folder_name subfolder so they
+                    # land at LogicMods/<folder_name>/<file>.
+                    # Associated BP mods (combo mods): have a LogicMods/ subdir in the
+                    # cache; bp_pak_files already include the subfolder prefix, e.g.
+                    # "Better Backpacks/file.pak" (set by the resolver).
+                    is_standalone_bp = not (cache_path / "LogicMods").is_dir()
+                    lm_src = cache_path if is_standalone_bp else cache_path / "LogicMods"
+                    pak_count = 0
                     for pak in bp_pak_files:
                         src_pak = lm_src / pak
+                        if is_standalone_bp:
+                            dest_pak = lm_dir / folder_name / pak
+                            deployed_rel = f"{folder_name}/{pak}"
+                        else:
+                            dest_pak = lm_dir / pak
+                            deployed_rel = pak
                         if src_pak.exists():
-                            shutil.copy2(str(src_pak), str(lm_dir / pak))
-                            logger.debug(f"Copied pak '{pak}' -> {lm_dir}")
+                            dest_pak.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(src_pak), str(dest_pak))
+                            pak_count += 1
+                            deployed_bp.append(deployed_rel)
+                            logger.info(
+                                "[deploy] BP: copied '%s' -> %s",
+                                deployed_rel, dest_pak.parent,
+                            )
+                        else:
+                            logger.warning(
+                                "[deploy] BP pak not found: '%s' "
+                                "(tried lm_src=%s, cache_path=%s)",
+                                src_pak, lm_src, cache_path,
+                            )
+                    if pak_count == 0:
+                        logger.warning(
+                            "[deploy] '%s': no BP pak files were copied "
+                            "(bp_pak_files=%s, lm_src=%s)",
+                            folder_name, bp_pak_files, lm_src,
+                        )
+                else:
+                    logger.warning(
+                        "[deploy] '%s': cannot copy BP paks — logicmods_dir not detected",
+                        folder_name,
+                    )
 
             elapsed = time.monotonic() - t0
             logger.info(f"Deploy complete: '{folder_name}' ({elapsed:.2f}s)")
         except Exception as exc:
             logger.error(f"Deploy failed for '{folder_name}': {exc}")
             raise
+        return deployed_bp if "blueprint" in components else None
 
     def _deploy_template_content(self, cache_path: "Path", content) -> None:
         game_name = content.game_id or content.name or ""
@@ -245,9 +299,12 @@ class DeployContentMixin:
         elif record.content_type in ("github_release_binary", "external_url_binary", "manual_binary"):
             self._undeploy_binary_record(record, detection)
 
-        if self._profile:
+        from ...utils import slug_game_id
+        _reg = self._host.get_service("registry") if self._host.has_service("registry") else None
+        _gid = slug_game_id(self._profile, _reg)
+        if _gid:
             from ....models.state.install import InstallStateManager
-            InstallStateManager(self._profile.game_id).remove_record(record)
+            InstallStateManager(_gid).remove_record(record)
 
     def _undeploy_mod_record(
         self,
@@ -266,9 +323,17 @@ class DeployContentMixin:
                     self._mods_txt.remove_entry(record.folder_name)
                     self._mods_txt.save()
         if "blueprint" in components and detection.ue4ss and detection.ue4ss.logicmods_dir:
+            _lm_dir = detection.ue4ss.logicmods_dir
             for pak in (record.bp_pak_files_deployed or []):
                 try:
-                    (detection.ue4ss.logicmods_dir / pak).unlink(missing_ok=True)
+                    pak_path = _lm_dir / pak
+                    pak_path.unlink(missing_ok=True)
+                    parent = pak_path.parent
+                    if parent != _lm_dir:
+                        try:
+                            parent.rmdir()  # only removes if empty
+                        except OSError:
+                            pass
                 except Exception as exc:
                     logger.warning(f"Failed to remove pak '{pak}': {exc}")
 
@@ -347,12 +412,22 @@ class DeployContentMixin:
             lm_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
             if lm_dir:
                 lm_dir.mkdir(parents=True, exist_ok=True)
-                lm_src = cache_path / "LogicMods"
+                lm_src = (cache_path / "LogicMods"
+                          if (cache_path / "LogicMods").is_dir() else cache_path)
                 for pak in bp_pak_files:
                     src_pak = lm_src / pak
                     if src_pak.exists():
-                        shutil.copy2(str(src_pak), str(lm_dir / pak))
-        gid = game_id or (self._profile.game_id if self._profile else "")
+                        dest_pak = lm_dir / pak
+                        dest_pak.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(src_pak), str(dest_pak))
+                    else:
+                        logger.warning(
+                            "[deploy] deploy_mod: BP pak not found: '%s' "
+                            "(lm_src=%s)", src_pak, lm_src,
+                        )
+        from ...utils import slug_game_id
+        _reg = self._host.get_service("registry") if self._host.has_service("registry") else None
+        gid = game_id or slug_game_id(self._profile, _reg)
         if gid and metadata:
             from ....models.state.install import InstallStateManager
             from ....models.state.pipeline import InstallRecord
@@ -417,6 +492,9 @@ class DeployContentMixin:
                     pak_path.unlink(missing_ok=True)
                 except Exception as exc:
                     logger.warning(f"Failed to remove pak '{pak}' during undeploy: {exc}")
-        if self._profile:
+        from ...utils import slug_game_id
+        _reg = self._host.get_service("registry") if self._host.has_service("registry") else None
+        _gid = slug_game_id(self._profile, _reg)
+        if _gid:
             from ....models.state.install import InstallStateManager
-            InstallStateManager(self._profile.game_id).remove(mod_info.folder_name)
+            InstallStateManager(_gid).remove(mod_info.folder_name)

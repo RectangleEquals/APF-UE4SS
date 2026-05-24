@@ -15,7 +15,9 @@ class ModScannerMixin:
             self._mods_dir = None
             self._game_id = None
             return
-        self._game_id = profile.game_id
+        from ...utils import slug_game_id
+        _reg = self._host.get_service("registry") if self._host.has_service("registry") else None
+        self._game_id = slug_game_id(profile, _reg)
         detection = self._host.get_detection()
         if detection and detection.ue4ss and detection.ue4ss.mods_dir:
             self._mods_dir = detection.ue4ss.mods_dir

@@ -38,8 +38,6 @@ class CacheController:
         items: list,
         detection,
         game_id: str,
-        ue4ss_detected: bool,
-        framework_detected: bool,
         on_errors_only: Callable,
         on_warnings: Callable,
         on_proceed: Callable,
@@ -51,8 +49,7 @@ class CacheController:
         on_warnings(errors, warnings, proceed_fn) — soft warnings; view asks user
         on_proceed(sorted_items) — validation passed; view calls do_install()
         """
-        other_items = [ci for ci in items if getattr(ci, "category", "mod") == "other"]
-        mod_items   = [ci for ci in items if getattr(ci, "category", "mod") != "other"]
+        mod_items = [ci for ci in items if getattr(ci, "category", "mod") != "other"]
 
         validation_svc = self._host.get_service("validation")
         if validation_svc and detection and mod_items:
@@ -77,32 +74,33 @@ class CacheController:
         items: list,
         detection,
         game_id: str,
-        ue4ss_detected: bool,
-        framework_detected: bool,
         on_switch_to_installed: Optional[Callable] = None,
     ) -> None:
         """
         Deploy cached items to the game installation.
 
-        After install: rescans mods, re-detects UE4SS if newly installed,
-        notifies state changes, then calls on_switch_to_installed if provided.
+        Reads authoritative UE4SS/framework presence from the host at call time,
+        never from stale view-layer flags. After install: rescans mods, re-detects
+        UE4SS if newly installed, notifies state changes, then calls
+        on_switch_to_installed if provided.
         X-4: notifies "detection" state change so the pipeline warning bar refreshes.
         """
         deploy_svc = self._host.get_service("deploy")
         if not deploy_svc or not detection:
             return
 
-        # Mutable local flags — updated inline so same-batch UE4SS/framework installs
-        # unlock subsequent mod/template installs without a separate install run.
-        ue4ss_ok = ue4ss_detected
-        framework_ok = framework_detected
+        # Read authoritative detection state from host at call time — never stale view flags.
+        det = self._host.get_detection()
+        ue4ss_ok = bool(det and det.valid)
+        framework_ok = bool(det and det.framework_mod)
 
         for ci in list(items):
             try:
                 if ci.category == "template":
                     if not (ue4ss_ok and framework_ok):
                         logger.warning(
-                            f"Skipped template '{ci.display_name}': framework mod required"
+                            f"Skipped template '{ci.display_name}': "
+                            "UE4SS + framework mod required"
                         )
                         continue
                 elif ci.category == "mod":
@@ -111,9 +109,10 @@ class CacheController:
                         continue
                 deploy_svc.deploy_content(ci.cache_path, ci.content, detection, game_id)
                 logger.info(f"Installed '{ci.display_name}'")
-                # Update dep flags immediately so later items in this batch can use them.
+                # Update dep flags immediately so later items in the same batch unlock.
                 # After UE4SS installs, refresh detection synchronously so subsequent mods
-                # in this batch see the newly-created ue4ss/Mods/ directory.
+                # in this batch see the newly-created ue4ss/Mods/ directory, and reload
+                # the deploy service mods.txt manager so AP mods get their entries written.
                 if ci.category == "other":
                     it = getattr(ci.content, "install_type", "") or ""
                     if "ue4ss" in it:
@@ -131,6 +130,13 @@ class CacheController:
                                     logger.info(
                                         "[cache] Detection refreshed inline after UE4SS install"
                                     )
+                                    # Reload deploy service mods.txt now that UE4SS is on disk.
+                                    if hasattr(deploy_svc, "reload_mods_txt"):
+                                        deploy_svc.reload_mods_txt(fresh)
+                                        logger.info(
+                                            "[cache] Deploy service reloaded — "
+                                            "mods.txt now active for batch"
+                                        )
                                 else:
                                     logger.warning(
                                         "[cache] Post-UE4SS re-detect returned invalid result "
@@ -138,7 +144,8 @@ class CacheController:
                                     )
                             else:
                                 logger.warning(
-                                    "[cache] Cannot refresh detection inline: game_root unavailable"
+                                    "[cache] Cannot refresh detection inline: "
+                                    "game_root unavailable"
                                 )
                         except Exception as exc:
                             logger.warning(
@@ -146,6 +153,9 @@ class CacheController:
                             )
                     if "framework" in it:
                         framework_ok = True
+                elif getattr(ci.content, "content_type", "") == "framework_mod":
+                    # Framework Lua mod deployed — templates in same batch can now proceed.
+                    framework_ok = True
 
             except Exception as exc:
                 logger.error(f"Install failed for '{ci.display_name}': {exc}")

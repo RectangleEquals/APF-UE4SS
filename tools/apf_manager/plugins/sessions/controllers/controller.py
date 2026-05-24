@@ -57,7 +57,7 @@ class SessionsController:
     def get_dependency_state(self) -> dict:
         """Return {"ue4ss_ok": bool, "fw_installed": bool, "missing": list[str]}."""
         detection = self._host.get_detection()
-        ue4ss_ok = bool(detection and detection.ue4ss)
+        ue4ss_ok = bool(detection and detection.valid)
         fw_installed = bool(detection and detection.framework_mod)
         missing = []
         if not ue4ss_ok:

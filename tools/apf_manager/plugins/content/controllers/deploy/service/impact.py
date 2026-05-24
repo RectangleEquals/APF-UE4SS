@@ -22,10 +22,13 @@ class DeployImpactMixin:
         from ....models.state.install import InstallStateManager
         from ....models.state.pipeline import InstallRecord as _IR
         from ....models.mods.dependency_graph import resolve_uninstall_cascade
+        from ...utils import slug_game_id
         if not self._profile:
             return {"affected_mods": [], "template_dirs_removed": []}
 
-        all_records = [_IR.from_dict(d) for d in InstallStateManager(self._profile.game_id).get_all()]
+        _reg = self._host.get_service("registry") if self._host.has_service("registry") else None
+        _gid = slug_game_id(self._profile, _reg)
+        all_records = [_IR.from_dict(d) for d in (InstallStateManager(_gid).get_all() if _gid else [])]
         affected = resolve_uninstall_cascade(record, all_records)
 
         template_dirs: list[str] = []

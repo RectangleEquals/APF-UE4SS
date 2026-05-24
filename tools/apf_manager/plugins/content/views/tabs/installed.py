@@ -5,7 +5,8 @@ Shows ALL content deployed to the game directory:
   - Managed AP mods (installed via APF Manager) — registry source badge
   - Orphaned AP mods (not tracked by InstallStateManager) — folder-account badge
   - Non-AP mods (no mod_id) — Non-AP badge
-  - Manually installed BP pak files (in Content/Paks/LogicMods/, not tracked)
+  - Blueprint Logic Mods section: managed BP mods (content_type/install_type "bp_mod"),
+    unmanaged BP subdirectories in LogicMods/, and orphaned flat pak files
 
 NO enable/disable toggle — that lives in Load Order.
 Uninstall calls deploy_svc.undeploy_content() for full component cleanup.
@@ -208,13 +209,17 @@ class InstalledTab(MDBoxLayout):
             for mod in non_ap_mods:
                 self._list.add_widget(self._non_ap_row(mod, deploy_svc))
 
-            self._add_orphaned_bp_rows()
-
             if not ap_mods and not non_ap_mods:
                 self._list.add_widget(self._empty_label(
                     "No mods installed yet.\n"
                     "Download mods from the Content tab."
                 ))
+
+        # --- Blueprint Logic Mods section ---
+        if ue4ss_ok:
+            bp_section = self._bp_mods_section(install_map)
+            if bp_section:
+                self._list.add_widget(bp_section)
 
         # --- Templates section ---
         if not ue4ss_ok:
@@ -255,61 +260,225 @@ class InstalledTab(MDBoxLayout):
         ))
         return row
 
-    def _add_orphaned_bp_rows(self) -> None:
+    # -----------------------------------------------------------------------
+    # Blueprint Logic Mods section (AI-9)
+    # -----------------------------------------------------------------------
+
+    def _bp_mods_section(self, install_map: dict) -> Optional[MDBoxLayout]:
+        """
+        Build the Blueprint Logic Mods section.
+
+        Shows three distinct sub-types:
+        1. Managed BP mods — install records with content_type or install_type == 'bp_mod'
+        2. Unmanaged BP subdirectories — dirs in LogicMods/ not tracked by install state
+        3. Orphaned flat pak/ucas/utoc files — files directly in LogicMods/ root, not tracked
+        """
         logicmods_dir = (
             self._detection.ue4ss.logicmods_dir
             if (self._detection and self._detection.ue4ss) else None
         )
-        if not logicmods_dir or not logicmods_dir.is_dir():
-            return
-        from ...models.state.install import InstallStateManager
-        from ...models.descriptors.bp_component import parse_bp_mods
-        game_id = self._ctrl.get_game_id(self._profile)
-        state = InstallStateManager(game_id) if game_id else None
 
-        # Collect unmanaged BP files, then group them via typed model so that
-        # .ucas/.utoc pairs are removed atomically.
-        unmanaged = [
-            f.name for f in sorted(logicmods_dir.iterdir())
-            if f.suffix.lower() in (".pak", ".ucas", ".utoc")
-            and not (state and state.is_pak_managed(f.name))
+        # Pure BP mods have content_type="third_party_mod" and components=["blueprint"].
+        # No dedicated "bp_mod" content_type exists for standalone BP mods; detect by components.
+        managed_bp = [
+            r for r in install_map.values()
+            if r.content_type == "bp_mod"
+            or r.install_type == "bp_mod"
+            or (r.components and r.components == ["blueprint"])
         ]
-        if not unmanaged:
-            return
+        # Build the complete set of LogicMods subfolder names owned by any tracked record,
+        # including associated BP subfolders from combo mods (lua+blueprint, cpp+blueprint).
+        # This prevents combo mod BP subfolders from appearing as "unmanaged directories".
+        managed_folders: set[str] = set()
+        for r in install_map.values():
+            if "blueprint" not in (r.components or []):
+                continue
+            if r.components == ["blueprint"] and r.folder_name:
+                managed_folders.add(r.folder_name)
+            for pak in (r.bp_pak_files_deployed or []):
+                parts = pak.split("/", 1)
+                if len(parts) == 2:
+                    managed_folders.add(parts[0])
 
-        for bp_mod in (parse_bp_mods(unmanaged) or []):
+        unmanaged_subdirs: list = []
+        orphaned_flat: list = []
+
+        if logicmods_dir and logicmods_dir.is_dir():
+            game_id = self._ctrl.get_game_id(self._profile)
+            state = None
+            parse_bp_mods = None
+            try:
+                from ...models.state.install import InstallStateManager
+                from ...models.descriptors.bp_component import parse_bp_mods as _pbm
+                state = InstallStateManager(game_id) if game_id else None
+                parse_bp_mods = _pbm
+            except Exception as exc:
+                _log.warning("[installed] BP mod helpers unavailable: %s", exc)
+
+            flat_files = []
+            for entry in sorted(logicmods_dir.iterdir()):
+                if entry.is_dir():
+                    if entry.name not in managed_folders:
+                        unmanaged_subdirs.append(entry)
+                elif entry.suffix.lower() in (".pak", ".ucas", ".utoc"):
+                    if not (state and state.is_pak_managed(entry.name)):
+                        flat_files.append(entry.name)
+
+            if flat_files and parse_bp_mods:
+                orphaned_flat = parse_bp_mods(flat_files) or []
+
+        if not managed_bp and not unmanaged_subdirs and not orphaned_flat:
+            return None
+
+        total = len(managed_bp) + len(unmanaged_subdirs) + len(orphaned_flat)
+        section = MDBoxLayout(orientation="vertical", size_hint_y=None, adaptive_height=True)
+        section.add_widget(self._section_header("Blueprint Logic Mods", total))
+
+        for record in managed_bp:
+            section.add_widget(self._bp_managed_row(record, logicmods_dir))
+
+        for subdir in unmanaged_subdirs:
+            section.add_widget(self._bp_unmanaged_dir_row(subdir))
+
+        for bp_mod in orphaned_flat:
             file_paths = [logicmods_dir / fname for fname in bp_mod.files]
-            type_badge = bp_mod.display_type  # "PAK" or "UCAS/UTOC"
-            display_name = bp_mod.primary_name
+            section.add_widget(self._bp_orphan_file_row(bp_mod, file_paths))
 
-            row = MDBoxLayout(
-                orientation="horizontal", size_hint_y=None, height=dp(40),
-                md_bg_color=(0.16, 0.12, 0.07, 1), padding=[dp(8), dp(4)], spacing=dp(8),
-            )
+        return section
+
+    def _bp_managed_row(self, record, logicmods_dir) -> MDBoxLayout:
+        """Row for a managed BP mod (from install state, content_type/install_type='bp_mod')."""
+        bp_files = record.bp_pak_files_deployed or []
+        folder_name = record.folder_name or record.name
+        install_path = f"LogicMods/{folder_name}/"
+
+        row = MDBoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(44),
+            md_bg_color=_BG_ROW_AP, padding=[dp(8), dp(4)], spacing=dp(8),
+        )
+        if record.source_repo:
+            src_label = record.source_repo.split("/")[-1] if "/" in record.source_repo else record.source_repo
+            row.add_widget(badge_text(src_label, (0.3, 0.8, 0.6, 1)))
+        else:
+            row.add_widget(badge_text("Managed", (0.3, 0.8, 0.6, 1)))
+
+        name_col = MDBoxLayout(orientation="vertical", size_hint=(1, 1))
+        name_col.add_widget(MDLabel(
+            text=record.name or folder_name,
+            font_style="Body", size_hint_y=None, height=dp(22),
+            halign="left", valign="middle",
+        ))
+        name_col.add_widget(MDLabel(
+            text=install_path,
+            font_style="Label", role="small",
+            size_hint_y=None, height=dp(18),
+            halign="left", valign="middle",
+            theme_text_color="Custom", text_color=COL_DIM,
+        ))
+        row.add_widget(name_col)
+
+        if bp_files and logicmods_dir:
+            all_ok = all((logicmods_dir / p).exists() for p in bp_files)
             row.add_widget(MDIcon(
-                icon="folder-account", size_hint=(None, 1), width=dp(20),
-                theme_icon_color="Custom", icon_color=COL_WARN,
+                icon="check-circle-outline" if all_ok else "alert-circle-outline",
+                size_hint=(None, 1), width=dp(20),
+                theme_icon_color="Custom",
+                icon_color=COL_STATUS_OK if all_ok else COL_STATUS_MISS,
             ))
-            # Type badge
-            row.add_widget(MDLabel(
-                text=f"[{type_badge}]",
-                font_style="Label", role="small",
-                size_hint=(None, 1), width=dp(72),
-                halign="left", valign="middle",
-                theme_text_color="Custom", text_color=COL_WARN,
-            ))
-            row.add_widget(MDLabel(
-                text=f"{display_name}  •  Manually installed",
-                font_style="Body", size_hint=(1, 1),
-                halign="left", valign="middle",
-            ))
-            row.add_widget(MDButton(
-                MDButtonText(text="Remove"),
-                style="text", size_hint=(None, None), size=(dp(80), dp(28)),
-                pos_hint={"center_y": 0.5},
-                on_release=lambda *_, fps=file_paths: self._remove_bp_group(fps),
-            ))
-            self._list.add_widget(row)
+
+        def _remove(*_, rec=record):
+            self._on_uninstall(rec, False)
+
+        row.add_widget(MDButton(
+            MDButtonText(text="Remove"),
+            style="text", size_hint=(None, None), size=(dp(80), dp(28)),
+            pos_hint={"center_y": 0.5},
+            on_release=_remove,
+        ))
+        return row
+
+    def _bp_unmanaged_dir_row(self, subdir) -> MDBoxLayout:
+        """Row for an unmanaged BP mod subdirectory found in LogicMods/ but not tracked."""
+        pak_files = [
+            f for f in sorted(subdir.iterdir())
+            if f.is_file() and f.suffix.lower() in (".pak", ".ucas", ".utoc")
+        ] if subdir.is_dir() else []
+        n = len(pak_files)
+        install_path = f"LogicMods/{subdir.name}/"
+
+        row = MDBoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(44),
+            md_bg_color=(0.16, 0.12, 0.07, 1), padding=[dp(8), dp(4)], spacing=dp(8),
+        )
+        row.add_widget(MDIcon(
+            icon="folder-account", size_hint=(None, 1), width=dp(20),
+            theme_icon_color="Custom", icon_color=COL_WARN,
+        ))
+
+        name_col = MDBoxLayout(orientation="vertical", size_hint=(1, 1))
+        name_col.add_widget(MDLabel(
+            text=f"{subdir.name}  •  Manually installed",
+            font_style="Body", size_hint_y=None, height=dp(22),
+            halign="left", valign="middle",
+        ))
+        name_col.add_widget(MDLabel(
+            text=f"{install_path}  ({n} file{'s' if n != 1 else ''})",
+            font_style="Label", role="small",
+            size_hint_y=None, height=dp(18),
+            halign="left", valign="middle",
+            theme_text_color="Custom", text_color=COL_WARN,
+        ))
+        row.add_widget(name_col)
+
+        def _remove(*_, d=subdir):
+            import shutil
+            from kivy.clock import Clock
+            try:
+                shutil.rmtree(str(d), ignore_errors=True)
+            except Exception as exc:
+                self._host.log(f"[installed] Failed to remove BP mod dir {d.name}: {exc}")
+            Clock.schedule_once(lambda dt: self._do_refresh(), 0)
+
+        row.add_widget(MDButton(
+            MDButtonText(text="Remove"),
+            style="text", size_hint=(None, None), size=(dp(80), dp(28)),
+            pos_hint={"center_y": 0.5},
+            on_release=_remove,
+        ))
+        return row
+
+    def _bp_orphan_file_row(self, bp_mod, file_paths: list) -> MDBoxLayout:
+        """Row for orphaned flat pak/ucas/utoc files directly in LogicMods/ root."""
+        type_badge = bp_mod.display_type
+        display_name = bp_mod.primary_name
+
+        row = MDBoxLayout(
+            orientation="horizontal", size_hint_y=None, height=dp(40),
+            md_bg_color=(0.16, 0.12, 0.07, 1), padding=[dp(8), dp(4)], spacing=dp(8),
+        )
+        row.add_widget(MDIcon(
+            icon="folder-account", size_hint=(None, 1), width=dp(20),
+            theme_icon_color="Custom", icon_color=COL_WARN,
+        ))
+        row.add_widget(MDLabel(
+            text=f"[{type_badge}]",
+            font_style="Label", role="small",
+            size_hint=(None, 1), width=dp(72),
+            halign="left", valign="middle",
+            theme_text_color="Custom", text_color=COL_WARN,
+        ))
+        row.add_widget(MDLabel(
+            text=f"{display_name}  •  Manually installed",
+            font_style="Body", size_hint=(1, 1),
+            halign="left", valign="middle",
+        ))
+        row.add_widget(MDButton(
+            MDButtonText(text="Remove"),
+            style="text", size_hint=(None, None), size=(dp(80), dp(28)),
+            pos_hint={"center_y": 0.5},
+            on_release=lambda *_, fps=file_paths: self._remove_bp_group(fps),
+        ))
+        return row
 
     def _toggle_expand(self, key: str) -> None:
         if key in self._expanded:

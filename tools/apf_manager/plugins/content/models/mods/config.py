@@ -13,7 +13,8 @@ Protected footer (at absolute bottom when present, never moved):
 The footer is preserved only if it already existed in the file being read.
 Some UE4SS versions omit it — this is handled transparently.
 
-Framework mod ordering is enforced at the DeployService level, not here.
+Framework mod ordering is enforced via enforce_ap_ordering(), called by DeployService
+after each AP mod deploy to maintain the APFrameworkMod-first invariant.
 """
 
 from __future__ import annotations
@@ -182,6 +183,58 @@ class ModsTextManager:
     # -----------------------------------------------------------------------
     # Save
     # -----------------------------------------------------------------------
+
+    def enforce_ap_ordering(self, mods_dir: "Path") -> bool:
+        """Ensure APFrameworkMod precedes all other AP mods in the entry list.
+
+        Reads manifest.json from each entry's mod folder to determine whether it
+        is an AP mod (has 'mod_id') and whether it is the framework mod
+        (mod_id matches 'archipelago.<game>.framework').
+
+        Returns True if entries were reordered, False if the order was already correct.
+        Only rewrites in-memory entries; the caller must call save() afterwards.
+        """
+        import json
+        import re
+        _FRAMEWORK_RE = re.compile(r"^archipelago\.[a-z0-9_]+\.framework$")
+
+        def _mod_id(name: str) -> str:
+            try:
+                manifest = mods_dir / name / "manifest.json"
+                if manifest.exists():
+                    return json.loads(manifest.read_text(encoding="utf-8")).get("mod_id", "")
+            except Exception:
+                pass
+            return ""
+
+        # Locate the framework mod entry index
+        fw_idx = -1
+        fw_entry = None
+        for i, entry in enumerate(self._entries):
+            mid = _mod_id(entry.name)
+            if mid and _FRAMEWORK_RE.match(mid):
+                fw_idx = i
+                fw_entry = entry
+                break
+
+        if fw_entry is None:
+            return False  # No framework mod in mods.txt — nothing to enforce
+
+        # Find the first AP mod entry that appears before the framework mod
+        first_ap_before_fw = -1
+        for i in range(fw_idx):
+            mid = _mod_id(self._entries[i].name)
+            if mid and not _FRAMEWORK_RE.match(mid):
+                first_ap_before_fw = i
+                break
+
+        if first_ap_before_fw == -1:
+            return False  # Framework already leads all AP mods
+
+        # Move framework mod to just before the first AP mod that precedes it
+        self._entries.pop(fw_idx)
+        self._entries.insert(first_ap_before_fw, fw_entry)
+        return True
 
     def save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

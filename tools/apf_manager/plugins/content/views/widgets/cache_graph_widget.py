@@ -231,6 +231,9 @@ class CacheGraphWidget(HoverBehavior, MDBoxLayout):
     # ------------------------------------------------------------------
 
     def on_touch_up(self, touch):
+        # Refresh button owns its own touch — do not intercept it as a graph click.
+        if self._refresh_btn and self._refresh_btn.collide_point(*touch.pos):
+            return super().on_touch_up(touch)
         if self.collide_point(*touch.pos) and self._on_click and self._stats:
             if not self._stats.is_empty:
                 self._on_click(self._stats)

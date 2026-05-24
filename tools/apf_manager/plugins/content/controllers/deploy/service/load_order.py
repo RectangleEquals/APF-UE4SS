@@ -49,6 +49,16 @@ class DeployLoadOrderMixin:
         with self._lock:
             self._reload_mods_txt()
 
+    def reload_mods_txt(self, detection: "Optional[DetectionResult]") -> None:
+        """Reload mods.txt from a fresh detection result without changing the stored profile.
+
+        Called after an inline UE4SS detection refresh during a same-batch install so
+        that mods deployed in the same batch get their mods.txt entries written correctly.
+        """
+        with self._lock:
+            self._detection = detection
+            self._reload_mods_txt()
+
     def on_game_changed(self, profile, detection: "Optional[DetectionResult]") -> None:
         with self._lock:
             self._profile = profile

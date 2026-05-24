@@ -23,7 +23,7 @@ class CachePanelMixin:
 
     Requires host-owning class to expose:
       self._host, self._cached, self._selected_cache, self._expanded_cache,
-      self._detection, self._game_id, self._ue4ss_detected, self._framework_detected,
+      self._detection, self._game_id,
       self._on_switch_to_installed, self._ctrl (CacheController), self._rebuild_ui()
     """
 
@@ -151,8 +151,6 @@ class CachePanelMixin:
             items=items,
             detection=self._detection,
             game_id=self._game_id,
-            ue4ss_detected=self._ue4ss_detected,
-            framework_detected=self._framework_detected,
             on_errors_only=lambda errors, warnings: self._show_install_warn(
                 errors, warnings, allow_proceed=False,
             ),
@@ -168,8 +166,6 @@ class CachePanelMixin:
             items=sorted_items,
             detection=self._detection,
             game_id=self._game_id,
-            ue4ss_detected=self._ue4ss_detected,
-            framework_detected=self._framework_detected,
             on_switch_to_installed=self._on_switch_to_installed,
         )
 

@@ -86,7 +86,7 @@ class ModCapabilitiesMixin:
             except Exception as exc:
                 logger.warning("Failed to read manifest at %s: %s", manifest_path, exc)
         if not results:
-            logger.debug(
+            logger.info(
                 "[capabilities] No framework mod found in %s (scanned %d dirs)",
                 self._mods_dir,
                 sum(1 for e in self._mods_dir.iterdir() if e.is_dir()),
