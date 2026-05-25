@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(APFramework VERSION 0.3.0 LANGUAGES CXX C)
+project(APFramework VERSION 0.5.0 LANGUAGES CXX C)
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
