@@ -216,10 +216,10 @@ class InstalledTab(MDBoxLayout):
                 ))
 
         # --- Blueprint Logic Mods section ---
-        if ue4ss_ok:
-            bp_section = self._bp_mods_section(install_map)
-            if bp_section:
-                self._list.add_widget(bp_section)
+        # BP mods deploy to Content/Paks/LogicMods/ — no UE4SS dependency.
+        bp_section = self._bp_mods_section(install_map)
+        if bp_section:
+            self._list.add_widget(bp_section)
 
         # --- Templates section ---
         if not ue4ss_ok:
@@ -274,8 +274,9 @@ class InstalledTab(MDBoxLayout):
         3. Orphaned flat pak/ucas/utoc files — files directly in LogicMods/ root, not tracked
         """
         logicmods_dir = (
-            self._detection.ue4ss.logicmods_dir
-            if (self._detection and self._detection.ue4ss) else None
+            (self._detection.ue4ss.logicmods_dir if (self._detection and self._detection.ue4ss) else None)
+            or (self._detection.game.content_paks_dir / "LogicMods"
+                if (self._detection and self._detection.game and self._detection.game.content_paks_dir) else None)
         )
 
         # Pure BP mods have content_type="third_party_mod" and components=["blueprint"].
@@ -400,7 +401,7 @@ class InstalledTab(MDBoxLayout):
     def _bp_unmanaged_dir_row(self, subdir) -> MDBoxLayout:
         """Row for an unmanaged BP mod subdirectory found in LogicMods/ but not tracked."""
         pak_files = [
-            f for f in sorted(subdir.iterdir())
+            f for f in sorted(subdir.rglob("*"))
             if f.is_file() and f.suffix.lower() in (".pak", ".ucas", ".utoc")
         ] if subdir.is_dir() else []
         n = len(pak_files)

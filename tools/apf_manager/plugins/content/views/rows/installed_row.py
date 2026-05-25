@@ -253,7 +253,11 @@ class InstalledRowWidget(MDBoxLayout):
         if not components:
             return {}
         mods_dir      = detection.ue4ss.mods_dir      if detection.ue4ss else None
-        logicmods_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
+        logicmods_dir = (
+            (detection.ue4ss.logicmods_dir if detection.ue4ss else None)
+            or (detection.game.content_paks_dir / "LogicMods"
+                if (detection.game and detection.game.content_paks_dir) else None)
+        )
         fn = r.folder_name
         status: dict = {}
         if "lua" in components:

@@ -105,8 +105,15 @@ class CacheController:
                         continue
                 elif ci.category == "mod":
                     if not ue4ss_ok:
-                        logger.warning(f"Skipped mod '{ci.display_name}': UE4SS required")
-                        continue
+                        # BP-only mods (no mod_id, components=["blueprint"]) deploy to
+                        # Content/Paks/LogicMods/ and have no UE4SS hard dependency.
+                        _is_bp_only = (
+                            set(ci.components) == {"blueprint"}
+                            and not getattr(ci.content, "mod_id", "")
+                        )
+                        if not _is_bp_only:
+                            logger.warning(f"Skipped mod '{ci.display_name}': UE4SS required")
+                            continue
                 deploy_svc.deploy_content(ci.cache_path, ci.content, detection, game_id)
                 logger.info(f"Installed '{ci.display_name}'")
                 # Update dep flags immediately so later items in the same batch unlock.

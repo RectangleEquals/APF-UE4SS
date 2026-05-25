@@ -38,14 +38,26 @@ class ModCapabilitiesMixin:
 
     def _find_framework_mod_dirs(self) -> list[Path]:
         """
-        Scan mods_dir for all folders containing framework_config.json +
-        manifest.json whose mod_id matches 'archipelago.<game_id>.framework'.
+        Scan mods_dir for all folders whose manifest.json mod_id matches
+        'archipelago.<game_id>.framework'.
+
+        Result is cached until invalidated by rescan() or on_game_changed() to
+        avoid repeated disk scans within a single UI refresh cycle.
+
+        framework_config.json is a user-preferences file created by the
+        Configure screen (or manually).  Its absence means the user has not
+        configured the framework yet — not that it is uninstalled — so we do
+        not gate on it.  We log its presence for diagnostics only.
 
         Returns:
           []       — framework mod not installed
           [path]   — exactly one found (normal state)
           [p1, p2] — conflict: multiple framework mods present
         """
+        cached = getattr(self, "_framework_dirs_cache", None)
+        if cached is not None:
+            return cached
+
         import json
         import re
         _FRAMEWORK_MOD_RE = re.compile(r"^archipelago\.[a-z0-9_]+\.framework$")
@@ -55,42 +67,34 @@ class ModCapabilitiesMixin:
                 "[capabilities] Framework mod scan skipped: mods_dir unavailable (%s)",
                 self._mods_dir,
             )
+            self._framework_dirs_cache: list = results
             return results
         for entry in sorted(self._mods_dir.iterdir()):
             if not entry.is_dir():
                 continue
-            cfg_path = entry / "framework_config.json"
-            if not cfg_path.exists():
-                continue
             manifest_path = entry / "manifest.json"
             if not manifest_path.exists():
-                logger.debug(
-                    "[capabilities] %s has framework_config.json but no manifest.json — skipping",
-                    entry.name,
-                )
                 continue
             try:
                 raw = json.loads(manifest_path.read_text(encoding="utf-8"))
                 mid = raw.get("mod_id", "")
-                if _FRAMEWORK_MOD_RE.match(mid):
-                    results.append(entry)
-                    logger.info(
-                        "[capabilities] Framework mod found: %s (mod_id=%r)", entry.name, mid
-                    )
-                else:
-                    logger.debug(
-                        "[capabilities] %s has framework_config.json but mod_id %r "
-                        "does not match framework pattern — skipping",
-                        entry.name, mid,
-                    )
+                if not _FRAMEWORK_MOD_RE.match(mid):
+                    continue
+                configured = (entry / "framework_config.json").exists()
+                results.append(entry)
+                logger.info(
+                    "[capabilities] Framework mod found: %s (mod_id=%r, configured=%s)",
+                    entry.name, mid, configured,
+                )
             except Exception as exc:
-                logger.warning("Failed to read manifest at %s: %s", manifest_path, exc)
+                logger.warning("[capabilities] Failed to read manifest at %s: %s", manifest_path, exc)
         if not results:
-            logger.info(
+            logger.debug(
                 "[capabilities] No framework mod found in %s (scanned %d dirs)",
                 self._mods_dir,
                 sum(1 for e in self._mods_dir.iterdir() if e.is_dir()),
             )
+        self._framework_dirs_cache = results
         return results
 
     def get_framework_mod_dir(self) -> Optional[Path]:

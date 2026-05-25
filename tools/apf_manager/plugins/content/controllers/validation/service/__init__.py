@@ -203,10 +203,28 @@ class ValidationService:
                 registry_svc = self._host.get_service("registry")
                 candidates = registry_svc.get_framework_candidates(game_id) if registry_svc else []
                 if not candidates:
+                    # Framework mod is a soft dependency for AP mods — warn, never block.
+                    # UE4SS is the hard dep; framework enables Archipelago integration at runtime.
                     results.append(ValidationResult(
-                        label="No framework mod candidate",
-                        detail="AP mods require a core framework mod. Add a registry that includes one.",
-                        status="error",
+                        label="AP Framework mod unavailable",
+                        detail=(
+                            "No AP Framework mod is staged or installed, and none is available "
+                            "in any connected registry. AP mods can be downloaded and installed "
+                            "but Archipelago integration will not function at runtime without it. "
+                            "Consider adding a registry that includes the AP Framework mod."
+                        ),
+                        status="warn",
+                        source="Framework",
+                    ))
+                else:
+                    results.append(ValidationResult(
+                        label="AP Framework mod not staged",
+                        detail=(
+                            "AP mods work best with the AP Framework mod present. "
+                            "It is available in a connected registry but not currently staged — "
+                            "consider adding it to your selection."
+                        ),
+                        status="warn",
                         source="Framework",
                     ))
 

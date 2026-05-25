@@ -10,6 +10,7 @@ class ModScannerMixin:
     """Mixin for ModService: scan, rescan, get_mod, get_ap_mods, on_game_changed."""
 
     def on_game_changed(self, profile) -> None:
+        self._framework_dirs_cache = None   # invalidate on game switch
         if profile is None:
             self._mods = []
             self._mods_dir = None
@@ -29,6 +30,7 @@ class ModScannerMixin:
 
     def rescan(self) -> list:
         """Re-read the Mods directory and return the updated list."""
+        self._framework_dirs_cache = None   # invalidate so next call re-scans
         if self._mods_dir:
             self._mods = self._scan_with_state(self._mods_dir, self._game_id)
         return list(self._mods)

@@ -195,18 +195,42 @@ class LoadOrderController:
             except Exception as exc:
                 logger.warning(f"[load_order] get_bp_mods: failed to read install state: {exc}")
 
-        # Orphan scan — unmanaged files in LogicMods/ not tracked by any install record
+        # Orphan scan — files/dirs in LogicMods/ not tracked by any install record.
+        # Grouped by top-level directory (each dir = one BP mod); flat root files follow
+        # stem-matching. Directories are scanned recursively so nested pak files are found.
         logicmods_dir = (
-            detection.ue4ss.logicmods_dir if (detection and detection.ue4ss) else None
+            (detection.ue4ss.logicmods_dir if (detection and detection.ue4ss) else None)
+            or (detection.game.content_paks_dir / "LogicMods"
+                if (detection and detection.game and detection.game.content_paks_dir) else None)
         )
         if logicmods_dir and logicmods_dir.is_dir():
-            orphan_files = [
+            # Derive managed top-level subfolder names from "SubfolderName/..." pak paths.
+            managed_subfolders: set[str] = set()
+            for p in managed_pak_names:
+                parts = p.split("/", 1)
+                if len(parts) == 2:
+                    managed_subfolders.add(parts[0])
+
+            # Flat orphan files directly at LogicMods/ root.
+            orphan_flat = [
                 f.name for f in sorted(logicmods_dir.iterdir())
-                if f.suffix.lower() in (".pak", ".ucas", ".utoc")
+                if f.is_file() and f.suffix.lower() in (".pak", ".ucas", ".utoc")
                 and f.name not in managed_pak_names
             ]
-            for bp_mod in (parse_bp_mods(orphan_files) or []):
+            for bp_mod in (parse_bp_mods(orphan_flat) or []):
                 results.append((bp_mod.primary_name, [bp_mod], False))
+
+            # Orphaned top-level subdirectories: recursively find all pak files within.
+            for subdir in sorted(logicmods_dir.iterdir()):
+                if not subdir.is_dir() or subdir.name in managed_subfolders:
+                    continue
+                subdir_files = [
+                    f.name for f in sorted(subdir.rglob("*"))
+                    if f.is_file() and f.suffix.lower() in (".pak", ".ucas", ".utoc")
+                ]
+                if subdir_files:
+                    for bp_mod in (parse_bp_mods(subdir_files) or []):
+                        results.append((subdir.name, [bp_mod], False))
 
         return results
 

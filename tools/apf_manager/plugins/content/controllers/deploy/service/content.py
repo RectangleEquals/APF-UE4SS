@@ -62,12 +62,20 @@ class DeployContentMixin:
         content,
         detection: "Optional[DetectionResult]",
     ) -> "Optional[list]":
-        if not detection or not (detection.ue4ss and detection.ue4ss.mods_dir):
-            raise RuntimeError("UE4SS mods directory not detected")
         components = content.components.types if content.components else ["lua"]
         bp_pak_files = content.components.bp_pak_files if content.components else []
         folder_name = content.folder_name
         t0 = time.monotonic()
+
+        needs_ue4ss = any(c in components for c in ("lua", "cpp"))
+        if needs_ue4ss:
+            # Lua/C++ mods install to ue4ss/Mods/ — UE4SS must be present.
+            if not detection or not (detection.ue4ss and detection.ue4ss.mods_dir):
+                raise RuntimeError("UE4SS mods directory not detected")
+        else:
+            # BP-only mods install to Content/Paks/LogicMods/ — game content_paks_dir required.
+            if not detection or not (detection.game and detection.game.content_paks_dir):
+                raise RuntimeError("Game content directory not detected")
 
         deployed_bp: list[str] = []
         try:
@@ -105,7 +113,14 @@ class DeployContentMixin:
                         logger.debug(f"mods.txt updated for '{folder_name}'")
 
             if "blueprint" in components and bp_pak_files:
-                lm_dir = detection.ue4ss.logicmods_dir if detection.ue4ss else None
+                # Prefer the scanned logicmods_dir (populated after at least one BP pak exists);
+                # fall back to game.content_paks_dir/LogicMods so BP-only mods can deploy
+                # even when UE4SS is not yet installed.
+                lm_dir = (
+                    (detection.ue4ss.logicmods_dir if detection.ue4ss else None)
+                    or (detection.game.content_paks_dir / "LogicMods"
+                        if (detection.game and detection.game.content_paks_dir) else None)
+                )
                 if lm_dir:
                     lm_dir.mkdir(parents=True, exist_ok=True)
                     # Standalone BP mods: pak files live at the cache root (no LogicMods/

@@ -355,14 +355,12 @@ class ContentTab(TemplatesSectionMixin, ModsSectionMixin, MDBoxLayout):
         if not checked_mods and not checked_templates and not checked_other:
             return
 
-        # Run validation for hard errors/warnings before proceeding
+        # Pre-download validation — advisory only; downloads are never blocked.
+        # Dependency errors/warnings are informational at queue time; enforcement
+        # happens per-item at install time via do_install().
         if checked_mods:
             errors, warnings = self._ctrl.validate_staged(checked_mods, self._game_id)
-            if errors:
-                self._show_validation_dlg(errors, warnings, checked_mods, checked_templates,
-                                          checked_other, allow_proceed=False)
-                return
-            if warnings:
+            if errors or warnings:
                 self._show_validation_dlg(errors, warnings, checked_mods, checked_templates,
                                           checked_other, allow_proceed=True)
                 return
